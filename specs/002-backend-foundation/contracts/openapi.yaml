@@ -1,0 +1,399 @@
+openapi: 3.0.3
+info:
+  title: Webinar2Ebook API
+  description: Backend API for project persistence in Webinar2Ebook application
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns system health status
+      operationId: getHealth
+      tags:
+        - System
+      responses:
+        '200':
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /projects:
+    get:
+      summary: List all projects
+      description: Returns a list of all projects, sorted by most recently updated first
+      operationId: listProjects
+      tags:
+        - Projects
+      responses:
+        '200':
+          description: List of project summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectListResponse'
+
+    post:
+      summary: Create a new project
+      description: Creates a new project with the given name and webinar type
+      operationId: createProject
+      tags:
+        - Projects
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+      responses:
+        '201':
+          description: Project created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /projects/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Project ID
+        schema:
+          type: string
+
+    get:
+      summary: Get a project by ID
+      description: Returns the full project data
+      operationId: getProject
+      tags:
+        - Projects
+      responses:
+        '200':
+          description: Project found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      summary: Update a project
+      description: Replaces the entire project with the provided data
+      operationId: updateProject
+      tags:
+        - Projects
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectRequest'
+      responses:
+        '200':
+          description: Project updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      summary: Delete a project
+      description: Permanently deletes the project
+      operationId: deleteProject
+      tags:
+        - Projects
+      responses:
+        '200':
+          description: Project deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    # Enums
+    WebinarType:
+      type: string
+      enum:
+        - standard_presentation
+        - training_tutorial
+      description: Type of webinar content
+
+    # Nested Objects
+    OutlineItem:
+      type: object
+      required:
+        - id
+        - title
+        - level
+        - order
+      properties:
+        id:
+          type: string
+          description: Unique identifier within project
+        title:
+          type: string
+          minLength: 1
+          description: Chapter/section title
+        level:
+          type: integer
+          minimum: 1
+          maximum: 3
+          description: Hierarchy depth (1=chapter, 2=section, 3=subsection)
+        notes:
+          type: string
+          description: Optional notes
+        order:
+          type: integer
+          minimum: 0
+          description: Display order
+
+    Resource:
+      type: object
+      required:
+        - id
+        - label
+        - order
+      properties:
+        id:
+          type: string
+          description: Unique identifier within project
+        label:
+          type: string
+          minLength: 1
+          description: Display name
+        urlOrNote:
+          type: string
+          description: URL or free-text note
+        order:
+          type: integer
+          minimum: 0
+          description: Display order
+
+    Visual:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        selected:
+          type: boolean
+
+    StyleConfig:
+      type: object
+      properties:
+        audience:
+          type: string
+        tone:
+          type: string
+        depth:
+          type: string
+        targetPages:
+          type: integer
+
+    # Request/Response Schemas
+    CreateProjectRequest:
+      type: object
+      required:
+        - name
+        - webinarType
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Project name
+        webinarType:
+          $ref: '#/components/schemas/WebinarType'
+
+    UpdateProjectRequest:
+      type: object
+      required:
+        - name
+        - webinarType
+        - transcriptText
+        - outlineItems
+        - resources
+      properties:
+        name:
+          type: string
+          minLength: 1
+        webinarType:
+          $ref: '#/components/schemas/WebinarType'
+        transcriptText:
+          type: string
+        outlineItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutlineItem'
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Resource'
+        visuals:
+          type: array
+          items:
+            $ref: '#/components/schemas/Visual'
+        draftText:
+          type: string
+        styleConfig:
+          $ref: '#/components/schemas/StyleConfig'
+        finalTitle:
+          type: string
+        finalSubtitle:
+          type: string
+        creditsText:
+          type: string
+
+    ProjectSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        webinarType:
+          $ref: '#/components/schemas/WebinarType'
+        updatedAt:
+          type: string
+          format: date-time
+
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        webinarType:
+          $ref: '#/components/schemas/WebinarType'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        transcriptText:
+          type: string
+        outlineItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutlineItem'
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Resource'
+        visuals:
+          type: array
+          items:
+            $ref: '#/components/schemas/Visual'
+        draftText:
+          type: string
+        styleConfig:
+          $ref: '#/components/schemas/StyleConfig'
+        finalTitle:
+          type: string
+        finalSubtitle:
+          type: string
+        creditsText:
+          type: string
+
+    # Response Envelopes
+    HealthResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [ok]
+        error:
+          type: 'null'
+
+    ProjectListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectSummary'
+        error:
+          type: 'null'
+
+    ProjectResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Project'
+        error:
+          type: 'null'
+
+    DeleteResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            deleted:
+              type: boolean
+        error:
+          type: 'null'
+
+    ErrorResponse:
+      type: object
+      properties:
+        data:
+          type: 'null'
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              description: Machine-readable error code
+              enum:
+                - PROJECT_NOT_FOUND
+                - VALIDATION_ERROR
+                - INTERNAL_ERROR
+            message:
+              type: string
+              description: Human-readable error message
