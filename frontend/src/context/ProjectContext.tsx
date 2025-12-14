@@ -22,8 +22,11 @@ import {
   createProject as apiCreateProject,
   fetchProject as apiFetchProject,
   updateProject as apiUpdateProject,
+  uploadFile as apiUploadFile,
+  deleteFile as apiDeleteFile,
   ApiException,
 } from '../services/api'
+import type { Resource } from '../types/project'
 
 // Context value interface
 interface ProjectContextValue {
@@ -38,6 +41,10 @@ interface ProjectContextValue {
   clearProject: () => void
   goToList: () => void
   clearSaveError: () => void
+
+  // File resource methods
+  uploadResourceFile: (file: File) => Promise<Resource>
+  removeResourceFile: (resourceId: string, fileId: string) => Promise<void>
 
   // Computed values
   selectedVisuals: Visual[]
@@ -193,12 +200,25 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
         label: action.payload.label,
         urlOrNote: action.payload.urlOrNote ?? '',
         order: state.project.resources.length,
+        resourceType: 'url_or_note' as const,
       }
       return {
         ...state,
         project: {
           ...state.project,
           resources: [...state.project.resources, newResource],
+        },
+      }
+    }
+
+    case 'ADD_FILE_RESOURCE': {
+      if (!state.project) return state
+      // The payload is the complete resource from the server upload response
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          resources: [...state.project.resources, action.payload],
         },
       }
     }
@@ -455,6 +475,44 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
     dispatch({ type: 'SET_SAVE_ERROR', payload: null })
   }, [])
 
+  const uploadResourceFile = useCallback(async (file: File): Promise<Resource> => {
+    if (!state.project) {
+      throw new Error('No project loaded')
+    }
+
+    const uploadedResource = await apiUploadFile(state.project.id, file)
+
+    // Convert the uploaded resource to our Resource type
+    const resource: Resource = {
+      id: uploadedResource.id,
+      label: uploadedResource.label,
+      order: uploadedResource.order,
+      resourceType: 'file',
+      urlOrNote: '',
+      fileId: uploadedResource.fileId,
+      fileName: uploadedResource.fileName,
+      fileSize: uploadedResource.fileSize,
+      mimeType: uploadedResource.mimeType,
+      storagePath: uploadedResource.storagePath,
+    }
+
+    dispatch({ type: 'ADD_FILE_RESOURCE', payload: resource })
+
+    return resource
+  }, [state.project])
+
+  const removeResourceFile = useCallback(async (resourceId: string, fileId: string): Promise<void> => {
+    if (!state.project) {
+      throw new Error('No project loaded')
+    }
+
+    // Delete file from server
+    await apiDeleteFile(state.project.id, fileId)
+
+    // Remove from local state
+    dispatch({ type: 'REMOVE_RESOURCE', payload: resourceId })
+  }, [state.project])
+
   const contextValue = useMemo<ProjectContextValue>(() => {
     const selectedVisuals = state.project?.visuals.filter(v => v.selected) ?? []
     const hasProject = state.project !== null
@@ -469,10 +527,12 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       clearProject,
       goToList,
       clearSaveError,
+      uploadResourceFile,
+      removeResourceFile,
       selectedVisuals,
       hasProject,
     }
-  }, [state, createProject, openProject, saveProject, setActiveTab, clearProject, goToList, clearSaveError])
+  }, [state, createProject, openProject, saveProject, setActiveTab, clearProject, goToList, clearSaveError, uploadResourceFile, removeResourceFile])
 
   return <ProjectContext.Provider value={contextValue}>{children}</ProjectContext.Provider>
 }

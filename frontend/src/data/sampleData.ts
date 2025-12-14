@@ -63,18 +63,22 @@ export const SAMPLE_RESOURCES: Omit<Resource, 'id' | 'order'>[] = [
   {
     label: 'The Lean Startup by Eric Ries',
     urlOrNote: 'https://theleanstartup.com/',
+    resourceType: 'url_or_note',
   },
   {
     label: "Don't Make Me Think by Steve Krug",
     urlOrNote: 'Classic UX design principles',
+    resourceType: 'url_or_note',
   },
   {
     label: 'Product Management Resources',
     urlOrNote: 'https://www.productplan.com/learn/',
+    resourceType: 'url_or_note',
   },
   {
     label: 'User Research Handbook',
     urlOrNote: 'Internal company documentation on conducting user research',
+    resourceType: 'url_or_note',
   },
 ]
 

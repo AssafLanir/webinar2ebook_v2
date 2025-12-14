@@ -170,6 +170,79 @@
 
 ---
 
+## Phase 8: File Upload Support for Resources (Priority: P2)
+
+**Goal**: Users can attach files (PDF, PPT, PPTX, DOC, DOCX, JPG, JPEG, PNG) to projects as resources, in addition to URL/note resources
+
+**Independent Test**: Upload file to project → File saved to disk → Resource appears in list → Download works → Delete removes file
+
+### Tests for File Upload
+
+- [X] T062 [P] [FU] Create POST /projects/{id}/files upload test in `backend/tests/test_file_upload.py::test_upload_file_success`
+- [X] T063 [P] [FU] Create POST /projects/{id}/files validation tests (size, type) in `backend/tests/test_file_upload.py::test_upload_file_validation`
+- [X] T064 [P] [FU] Create GET /projects/{id}/files/{file_id} download test in `backend/tests/test_file_upload.py::test_download_file_success`
+- [X] T065 [P] [FU] Create DELETE /projects/{id}/files/{file_id} test in `backend/tests/test_file_upload.py::test_delete_file_success`
+- [X] T066 [P] [FU] Create test for file cleanup on project deletion in `backend/tests/test_file_upload.py::test_file_cleanup_on_project_delete`
+
+### Implementation - Backend Models & Config
+
+- [X] T067 [FU] Add ResourceType enum to `backend/src/models/project.py`
+- [X] T068 [FU] Extend Resource model with optional file fields in `backend/src/models/project.py`
+- [X] T069 [FU] Add allowed file types and size constants in `backend/src/models/project.py`
+- [X] T070 [P] [FU] Add FILE_TOO_LARGE and INVALID_FILE_TYPE exceptions in `backend/src/api/exceptions.py`
+- [X] T071 [FU] Add python-multipart and aiofiles dependencies in `backend/pyproject.toml`
+
+### Implementation - Backend File Service
+
+- [X] T072 [FU] Create FileService with upload method in `backend/src/services/file_service.py`
+- [X] T073 [FU] Implement file validation (size, mime type) in `backend/src/services/file_service.py`
+- [X] T074 [FU] Implement file download method in `backend/src/services/file_service.py`
+- [X] T075 [FU] Implement file delete method in `backend/src/services/file_service.py`
+- [X] T076 [FU] Implement project directory cleanup method in `backend/src/services/file_service.py`
+
+### Implementation - Backend API Routes
+
+- [X] T077 [FU] Create files router in `backend/src/api/routes/files.py`
+- [X] T078 [FU] Implement POST /projects/{id}/files endpoint in `backend/src/api/routes/files.py`
+- [X] T079 [FU] Implement GET /projects/{id}/files/{file_id} endpoint in `backend/src/api/routes/files.py`
+- [X] T080 [FU] Implement DELETE /projects/{id}/files/{file_id} endpoint in `backend/src/api/routes/files.py`
+- [X] T081 [FU] Register files router in main app in `backend/src/api/main.py`
+- [X] T082 [FU] Update delete_project to call file cleanup in `backend/src/services/project_service.py`
+
+### Implementation - Frontend Types & API
+
+- [X] T083 [FU] Add ResourceType and extend Resource interface in `frontend/src/types/project.ts`
+- [X] T084 [FU] Add uploadFile function (multipart/form-data) in `frontend/src/services/api.ts`
+- [X] T085 [FU] Add getFileDownloadUrl helper in `frontend/src/services/api.ts`
+- [X] T086 [FU] Add deleteFile function in `frontend/src/services/api.ts`
+
+### Implementation - Frontend UI Components
+
+- [X] T087 [FU] Create FileUploadZone component in `frontend/src/components/common/FileUploadZone.tsx`
+- [X] T088 [FU] Create FileResourceItem component in `frontend/src/components/tab1/FileResourceItem.tsx`
+- [X] T089 [FU] Update ResourceItem to handle both types in `frontend/src/components/tab1/ResourceItem.tsx`
+- [X] T090 [FU] Update ResourceList to include file upload in `frontend/src/components/tab1/ResourceList.tsx`
+
+### Implementation - Frontend State
+
+- [X] T091 [FU] Add file resource actions to ProjectAction type in `frontend/src/types/project.ts`
+- [X] T092 [FU] Implement file resource cases in reducer in `frontend/src/context/ProjectContext.tsx`
+- [X] T093 [FU] Add uploadResourceFile/removeResourceFile methods in `frontend/src/context/ProjectContext.tsx`
+
+### Integration and Polish
+
+- [X] T094 [FU] Add upload progress indicator in `frontend/src/components/common/FileUploadZone.tsx`
+- [X] T095 [FU] Add error handling for upload failures in `frontend/src/components/tab1/ResourceList.tsx`
+- [X] T096 [FU] Add formatFileSize utility in `frontend/src/utils/formatFileSize.ts`
+- [X] T097 [FU] Update conftest with file upload fixtures in `backend/tests/conftest.py`
+- [X] T098 [FU] Run all backend tests and fix any failures
+- [X] T099 [FU] Run frontend lint and fix any issues
+- [X] T100 [FU] Manual testing of full upload/download/delete flow
+
+**Checkpoint**: Upload file via UI → File saved to disk → Resource appears in list → Download works → Delete removes file → Project delete cleans up files
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -181,6 +254,7 @@
   - US3 depends on US1/US2 (needs create and open to test save)
   - US4 depends on US2 (needs list to show delete button)
 - **Polish (Phase 7)**: Depends on all user stories being complete
+- **File Upload (Phase 8)**: Depends on Phase 7 completion (builds on existing Resource infrastructure)
 
 ### User Story Dependencies
 
@@ -269,6 +343,9 @@ This delivers:
 - All API responses use data/error envelope format
 - Auto-save blocks tab navigation on failure (by design)
 - No authentication required (single-user assumption)
-- Total tasks: 61
-- Test tasks: 10
-- Implementation tasks: 51
+- File uploads stored in `backend/uploads/{project_id}/` (local filesystem)
+- Max file size: 10 MB
+- Allowed file types: PDF, PPT, PPTX, DOC, DOCX, JPG, JPEG, PNG
+- Total tasks: 100 (61 original + 39 file upload)
+- Test tasks: 15 (10 original + 5 file upload)
+- Implementation tasks: 85 (51 original + 34 file upload)

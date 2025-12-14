@@ -1,6 +1,6 @@
 """Project service for business logic."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from bson import ObjectId
 
@@ -10,9 +10,9 @@ from src.models.project import (
     CreateProjectRequest,
     Project,
     ProjectSummary,
+    UpdateProjectRequest,
     WebinarType,
 )
-
 
 COLLECTION_NAME = "projects"
 
@@ -63,7 +63,7 @@ async def create_project(request: CreateProjectRequest) -> Project:
     db = await get_database()
     collection = db[COLLECTION_NAME]
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     doc = {
         "name": request.name,
         "webinarType": request.webinarType.value,
@@ -94,7 +94,7 @@ async def get_project(project_id: str) -> Project:
     try:
         object_id = ObjectId(project_id)
     except Exception:
-        raise ProjectNotFoundError(project_id)
+        raise ProjectNotFoundError(project_id) from None
 
     doc = await collection.find_one({"_id": object_id})
     if doc is None:
@@ -103,24 +103,22 @@ async def get_project(project_id: str) -> Project:
     return _to_project(doc)
 
 
-async def update_project(project_id: str, request: "UpdateProjectRequest") -> Project:
+async def update_project(project_id: str, request: UpdateProjectRequest) -> Project:
     """Update a project by ID."""
-    from src.models.project import UpdateProjectRequest  # noqa: F811
-
     db = await get_database()
     collection = db[COLLECTION_NAME]
 
     try:
         object_id = ObjectId(project_id)
     except Exception:
-        raise ProjectNotFoundError(project_id)
+        raise ProjectNotFoundError(project_id) from None
 
     # Check if project exists
     existing = await collection.find_one({"_id": object_id})
     if existing is None:
         raise ProjectNotFoundError(project_id)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Build update document
     update_doc = {
@@ -146,19 +144,27 @@ async def update_project(project_id: str, request: "UpdateProjectRequest") -> Pr
 
 
 async def delete_project(project_id: str) -> bool:
-    """Delete a project by ID."""
+    """Delete a project by ID.
+
+    Also cleans up any uploaded files associated with the project.
+    """
+    from src.services.file_service import file_service
+
     db = await get_database()
     collection = db[COLLECTION_NAME]
 
     try:
         object_id = ObjectId(project_id)
     except Exception:
-        raise ProjectNotFoundError(project_id)
+        raise ProjectNotFoundError(project_id) from None
 
     # Check if project exists first
     existing = await collection.find_one({"_id": object_id})
     if existing is None:
         raise ProjectNotFoundError(project_id)
+
+    # Delete all files associated with the project
+    file_service.cleanup_project_files(project_id)
 
     await collection.delete_one({"_id": object_id})
     return True

@@ -1,6 +1,7 @@
 """MongoDB connection setup using Motor async driver."""
 
 import os
+
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 # Configuration from environment variables with defaults

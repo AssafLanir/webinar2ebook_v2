@@ -1,16 +1,22 @@
 """FastAPI application setup."""
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
-from src.api.exceptions import ProjectNotFoundError, ValidationError
+from src.api.exceptions import (
+    FileNotFoundError,
+    FileTooLargeError,
+    InvalidFileTypeError,
+    ProjectNotFoundError,
+    ValidationError,
+)
 from src.api.response import error_response
-from src.api.routes import health, projects
+from src.api.routes import files, health, projects
 from src.db.mongo import close_database
 
 
@@ -80,6 +86,40 @@ async def mongo_connection_handler(request: Request, exc: ConnectionFailure) -> 
     )
 
 
+@app.exception_handler(FileTooLargeError)
+async def file_too_large_handler(request: Request, exc: FileTooLargeError) -> JSONResponse:
+    """Handle file too large errors."""
+    return JSONResponse(
+        status_code=400,
+        content=error_response(
+            "FILE_TOO_LARGE",
+            f"File size exceeds maximum of {exc.max_size // (1024 * 1024)}MB",
+        ),
+    )
+
+
+@app.exception_handler(InvalidFileTypeError)
+async def invalid_file_type_handler(request: Request, exc: InvalidFileTypeError) -> JSONResponse:
+    """Handle invalid file type errors."""
+    return JSONResponse(
+        status_code=400,
+        content=error_response(
+            "INVALID_FILE_TYPE",
+            f"File type '{exc.file_type}' is not supported. Allowed: PDF, PPT, PPTX, DOC, DOCX, JPG, JPEG, PNG",
+        ),
+    )
+
+
+@app.exception_handler(FileNotFoundError)
+async def file_not_found_handler(request: Request, exc: FileNotFoundError) -> JSONResponse:
+    """Handle file not found errors."""
+    return JSONResponse(
+        status_code=404,
+        content=error_response("FILE_NOT_FOUND", str(exc)),
+    )
+
+
 # Register routes
 app.include_router(health.router)
 app.include_router(projects.router)
+app.include_router(files.router)

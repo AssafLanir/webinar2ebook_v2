@@ -159,3 +159,104 @@ export async function deleteProject(id: string): Promise<{ deleted: boolean }> {
 export async function healthCheck(): Promise<{ status: string }> {
   return apiRequest<{ status: string }>('/health')
 }
+
+// File API functions
+
+/**
+ * Upload response from the server.
+ */
+export interface UploadedResource {
+  id: string
+  label: string
+  order: number
+  resourceType: 'file'
+  urlOrNote: string
+  fileId: string
+  fileName: string
+  fileSize: number
+  mimeType: string
+  storagePath: string
+}
+
+/**
+ * Upload a file to a project as a resource.
+ * Uses multipart/form-data for file upload.
+ */
+export async function uploadFile(
+  projectId: string,
+  file: File,
+  label?: string
+): Promise<UploadedResource> {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (label) {
+    formData.append('label', label)
+  }
+
+  let response: Response
+
+  try {
+    response = await fetch(`${API_BASE}/projects/${projectId}/files`, {
+      method: 'POST',
+      body: formData,
+      // Note: Don't set Content-Type header - browser will set it with boundary
+    })
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+
+    if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
+      throw new ApiException(
+        'NETWORK_ERROR',
+        'Cannot connect to server. Please ensure the backend is running on http://localhost:8000'
+      )
+    }
+
+    throw new ApiException(
+      'NETWORK_ERROR',
+      'Network error occurred during file upload. Please check your connection and try again.'
+    )
+  }
+
+  if (response.status >= 500) {
+    throw new ApiException(
+      'SERVER_ERROR',
+      'Server error occurred during file upload. Please try again later.'
+    )
+  }
+
+  let json: ApiResponse<UploadedResource>
+  try {
+    json = await response.json()
+  } catch {
+    throw new ApiException(
+      'INVALID_RESPONSE',
+      `Server returned invalid response (status ${response.status})`
+    )
+  }
+
+  if (json.error) {
+    throw new ApiException(json.error.code, json.error.message)
+  }
+
+  return json.data as UploadedResource
+}
+
+/**
+ * Get the download URL for a file resource.
+ * This returns a direct URL that can be used for downloading or linking.
+ */
+export function getFileDownloadUrl(projectId: string, fileId: string): string {
+  return `${API_BASE}/projects/${projectId}/files/${fileId}`
+}
+
+/**
+ * Delete a file from a project.
+ */
+export async function deleteFile(
+  projectId: string,
+  fileId: string
+): Promise<{ deleted: boolean }> {
+  return apiRequest<{ deleted: boolean }>(`/projects/${projectId}/files/${fileId}`, {
+    method: 'DELETE',
+  })
+}

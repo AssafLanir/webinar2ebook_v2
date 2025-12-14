@@ -1,13 +1,28 @@
 import type { Resource } from '../../types/project'
 import { Button } from '../common/Button'
+import { FileResourceItem } from './FileResourceItem'
 
 export interface ResourceItemProps {
   resource: Resource
+  projectId: string
   onUpdate: (updates: Partial<Resource>) => void
   onRemove: () => void
 }
 
-export function ResourceItem({ resource, onUpdate, onRemove }: ResourceItemProps) {
+export function ResourceItem({ resource, projectId, onUpdate, onRemove }: ResourceItemProps) {
+  // Render file resource using FileResourceItem
+  if (resource.resourceType === 'file') {
+    return (
+      <FileResourceItem
+        resource={resource}
+        projectId={projectId}
+        onRemove={onRemove}
+        onUpdateLabel={label => onUpdate({ label })}
+      />
+    )
+  }
+
+  // Render URL/note resource (default)
   return (
     <div className="flex items-start gap-3 p-3 bg-slate-700/50 border border-slate-600 rounded-lg">
       <div className="flex-1 space-y-2">

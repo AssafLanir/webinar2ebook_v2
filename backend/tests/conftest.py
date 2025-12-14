@@ -66,6 +66,64 @@ def sample_update_data() -> dict[str, Any]:
             {"id": "item-2", "title": "Main Content", "level": 1, "order": 1},
         ],
         "resources": [
-            {"id": "res-1", "label": "Slide Deck", "urlOrNote": "https://example.com", "order": 0}
+            {
+                "id": "res-1",
+                "label": "Slide Deck",
+                "urlOrNote": "https://example.com",
+                "order": 0,
+                "resourceType": "url_or_note",
+            }
         ],
     }
+
+
+# File upload fixtures
+
+
+@pytest.fixture
+def sample_pdf_file() -> tuple[str, bytes, str]:
+    """Sample PDF file data for testing (filename, content, mime_type)."""
+    return ("test_document.pdf", b"%PDF-1.4 sample pdf content", "application/pdf")
+
+
+@pytest.fixture
+def sample_image_file() -> tuple[str, bytes, str]:
+    """Sample image file data for testing (filename, content, mime_type)."""
+    # PNG header bytes
+    png_header = b"\x89PNG\r\n\x1a\n"
+    return ("test_image.png", png_header + b"fake png content", "image/png")
+
+
+@pytest.fixture
+def sample_pptx_file() -> tuple[str, bytes, str]:
+    """Sample PowerPoint file data for testing (filename, content, mime_type)."""
+    return (
+        "test_presentation.pptx",
+        b"PK\x03\x04 fake pptx content",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
+
+
+@pytest.fixture
+def sample_docx_file() -> tuple[str, bytes, str]:
+    """Sample Word document file data for testing (filename, content, mime_type)."""
+    return (
+        "test_document.docx",
+        b"PK\x03\x04 fake docx content",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+
+@pytest.fixture
+def oversized_file() -> tuple[str, bytes, str]:
+    """Oversized file data for testing size validation (filename, content, mime_type)."""
+    from src.models.project import MAX_FILE_SIZE
+
+    # Create content larger than MAX_FILE_SIZE
+    return ("large_file.pdf", b"x" * (MAX_FILE_SIZE + 1), "application/pdf")
+
+
+@pytest.fixture
+def invalid_type_file() -> tuple[str, bytes, str]:
+    """Invalid file type for testing type validation (filename, content, mime_type)."""
+    return ("script.exe", b"MZ fake executable", "application/x-msdownload")

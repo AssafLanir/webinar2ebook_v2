@@ -6,7 +6,7 @@ import { OutlineEditor } from './OutlineEditor'
 import { ResourceList } from './ResourceList'
 
 export function Tab1Content() {
-  const { state, dispatch } = useProject()
+  const { state, dispatch, uploadResourceFile, removeResourceFile } = useProject()
   const { project } = state
 
   if (!project) return null
@@ -43,6 +43,18 @@ export function Tab1Content() {
     dispatch({ type: 'REMOVE_RESOURCE', payload: id })
   }
 
+  const handleFileUpload = async (file: File) => {
+    await uploadResourceFile(file)
+  }
+
+  const handleFileRemove = async (fileId: string) => {
+    // Find the resource with this fileId to get its id
+    const resource = project.resources.find(r => r.fileId === fileId)
+    if (resource) {
+      await removeResourceFile(resource.id, fileId)
+    }
+  }
+
   const handleFillSampleData = () => {
     dispatch({ type: 'FILL_SAMPLE_DATA' })
   }
@@ -76,9 +88,12 @@ export function Tab1Content() {
       <Card title="Resources">
         <ResourceList
           resources={project.resources}
+          projectId={project.id}
           onAdd={handleAddResource}
           onUpdate={handleUpdateResource}
           onRemove={handleRemoveResource}
+          onFileUpload={handleFileUpload}
+          onFileRemove={handleFileRemove}
         />
       </Card>
     </div>

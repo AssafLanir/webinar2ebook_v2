@@ -14,6 +14,29 @@ class WebinarType(str, Enum):
     TRAINING_TUTORIAL = "training_tutorial"
 
 
+class ResourceType(str, Enum):
+    """Type of resource content."""
+
+    URL_OR_NOTE = "url_or_note"
+    FILE = "file"
+
+
+# File upload constants
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB in bytes
+
+ALLOWED_MIME_TYPES: dict[str, list[str]] = {
+    "application/pdf": [".pdf"],
+    "application/vnd.ms-powerpoint": [".ppt"],
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
+    "application/msword": [".doc"],
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+    "image/jpeg": [".jpg", ".jpeg"],
+    "image/png": [".png"],
+}
+
+ALLOWED_EXTENSIONS = {ext for exts in ALLOWED_MIME_TYPES.values() for ext in exts}
+
+
 class OutlineItem(BaseModel):
     """A chapter or section in the ebook outline."""
 
@@ -25,12 +48,22 @@ class OutlineItem(BaseModel):
 
 
 class Resource(BaseModel):
-    """A reference link or note attached to a project."""
+    """A reference link, note, or uploaded file attached to a project."""
 
     id: str
     label: Annotated[str, Field(min_length=1)]
-    urlOrNote: str = ""
     order: Annotated[int, Field(ge=0)]
+    resourceType: ResourceType = ResourceType.URL_OR_NOTE
+
+    # URL/Note fields (used when resourceType == URL_OR_NOTE)
+    urlOrNote: str = ""
+
+    # File fields (used when resourceType == FILE)
+    fileId: str | None = None
+    fileName: str | None = None
+    fileSize: int | None = None  # bytes
+    mimeType: str | None = None
+    storagePath: str | None = None  # relative path in uploads directory
 
 
 class Visual(BaseModel):

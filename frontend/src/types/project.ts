@@ -36,12 +36,23 @@ export interface OutlineItem {
   order: number
 }
 
-// Resource - aligned with backend
+// Resource Type - aligned with backend
+export type ResourceType = 'url_or_note' | 'file'
+
+// Resource - aligned with backend (supports both URL/note and file resources)
 export interface Resource {
   id: string
   label: string
-  urlOrNote: string
   order: number
+  resourceType: ResourceType
+  // URL/Note fields
+  urlOrNote: string
+  // File fields (optional, only present for file resources)
+  fileId?: string
+  fileName?: string
+  fileSize?: number
+  mimeType?: string
+  storagePath?: string
 }
 
 // Visual - aligned with backend
@@ -153,6 +164,7 @@ export type ProjectAction =
   | { type: 'REMOVE_OUTLINE_ITEM'; payload: string }
   | { type: 'REORDER_OUTLINE_ITEMS'; payload: string[] }
   | { type: 'ADD_RESOURCE'; payload: { label: string; urlOrNote?: string } }
+  | { type: 'ADD_FILE_RESOURCE'; payload: Resource }
   | { type: 'UPDATE_RESOURCE'; payload: { id: string; updates: Partial<Resource> } }
   | { type: 'REMOVE_RESOURCE'; payload: string }
   | { type: 'FILL_SAMPLE_DATA' }
