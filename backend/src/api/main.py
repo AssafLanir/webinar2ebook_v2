@@ -3,6 +3,11 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -16,7 +21,8 @@ from src.api.exceptions import (
     ValidationError,
 )
 from src.api.response import error_response
-from src.api.routes import files, health, projects
+from src.api.routes import ai, files, health, projects
+from src.llm import LLMError
 from src.db.mongo import close_database
 
 
@@ -41,7 +47,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
+        "http://localhost:5174",
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -119,7 +127,17 @@ async def file_not_found_handler(request: Request, exc: FileNotFoundError) -> JS
     )
 
 
+@app.exception_handler(LLMError)
+async def llm_error_handler(request: Request, exc: LLMError) -> JSONResponse:
+    """Handle LLM/AI service errors."""
+    return JSONResponse(
+        status_code=503,
+        content=error_response("AI_SERVICE_ERROR", "AI service is temporarily unavailable. Please try again."),
+    )
+
+
 # Register routes
 app.include_router(health.router)
 app.include_router(projects.router)
 app.include_router(files.router)
+app.include_router(ai.router, prefix="/api")

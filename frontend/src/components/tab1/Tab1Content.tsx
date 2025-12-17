@@ -4,6 +4,8 @@ import { Button } from '../common/Button'
 import { TranscriptEditor } from './TranscriptEditor'
 import { OutlineEditor } from './OutlineEditor'
 import { ResourceList } from './ResourceList'
+import { AIAssistSection } from './AIAssistSection'
+import { AIPreviewModal } from './AIPreviewModal'
 
 export function Tab1Content() {
   const { state, dispatch, uploadResourceFile, removeResourceFile } = useProject()
@@ -61,12 +63,16 @@ export function Tab1Content() {
 
   return (
     <div className="space-y-6">
-      {/* Fill Sample Data Button */}
-      <div className="flex justify-end">
+      {/* Action buttons row */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <AIAssistSection />
         <Button variant="secondary" onClick={handleFillSampleData}>
           Fill with Sample Data
         </Button>
       </div>
+
+      {/* AI Preview Modal */}
+      <AIPreviewModal />
 
       {/* Transcript */}
       <Card title="Transcript">

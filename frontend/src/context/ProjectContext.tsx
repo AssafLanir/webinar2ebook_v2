@@ -7,6 +7,7 @@ import type {
   TabIndex,
   WebinarType,
   Visual,
+  AIPreviewData,
 } from '../types/project'
 import { INITIAL_STATE, DEFAULT_STYLE_CONFIG } from '../types/project'
 import { generateId } from '../utils/idGenerator'
@@ -372,6 +373,146 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
         ...state,
         isExportModalOpen: !state.isExportModalOpen,
       }
+
+    // AI Actions (T021)
+    case 'START_AI_ACTION':
+      return {
+        ...state,
+        aiAction: {
+          inProgress: action.payload,
+          error: null,
+        },
+      }
+
+    case 'AI_ACTION_SUCCESS':
+      return {
+        ...state,
+        aiAction: {
+          inProgress: null,
+          error: null,
+        },
+        aiPreview: {
+          isOpen: true,
+          preview: action.payload,
+        },
+      }
+
+    case 'AI_ACTION_ERROR':
+      return {
+        ...state,
+        aiAction: {
+          inProgress: null,
+          error: action.payload,
+        },
+      }
+
+    // AI Preview Actions (T022)
+    case 'APPLY_AI_PREVIEW': {
+      if (!state.project || !state.aiPreview.preview) return state
+
+      const preview = state.aiPreview.preview
+
+      if (preview.type === 'clean-transcript') {
+        // Apply cleaned transcript
+        return {
+          ...state,
+          project: {
+            ...state.project,
+            transcriptText: preview.cleanedTranscript,
+          },
+          aiPreview: {
+            isOpen: false,
+            preview: null,
+          },
+        }
+      }
+
+      if (preview.type === 'suggest-outline') {
+        // Add selected outline items
+        const selectedItems = preview.items.filter((_, index) => preview.selected.has(index))
+        const newOutlineItems = selectedItems.map((item, index) => ({
+          id: generateId(),
+          title: item.title,
+          level: item.level,
+          notes: item.notes,
+          order: state.project!.outlineItems.length + index,
+        }))
+        return {
+          ...state,
+          project: {
+            ...state.project,
+            outlineItems: [...state.project.outlineItems, ...newOutlineItems],
+          },
+          aiPreview: {
+            isOpen: false,
+            preview: null,
+          },
+        }
+      }
+
+      if (preview.type === 'suggest-resources') {
+        // Add selected resources
+        const selectedResources = preview.resources.filter((_, index) => preview.selected.has(index))
+        const newResources = selectedResources.map((resource, index) => ({
+          id: generateId(),
+          label: resource.label,
+          urlOrNote: resource.url_or_note,
+          order: state.project!.resources.length + index,
+          resourceType: 'url_or_note' as const,
+        }))
+        return {
+          ...state,
+          project: {
+            ...state.project,
+            resources: [...state.project.resources, ...newResources],
+          },
+          aiPreview: {
+            isOpen: false,
+            preview: null,
+          },
+        }
+      }
+
+      return state
+    }
+
+    case 'DISCARD_AI_PREVIEW':
+      return {
+        ...state,
+        aiPreview: {
+          isOpen: false,
+          preview: null,
+        },
+      }
+
+    case 'TOGGLE_AI_PREVIEW_SELECTION': {
+      if (!state.aiPreview.preview) return state
+      const preview = state.aiPreview.preview
+
+      if (preview.type === 'clean-transcript') {
+        // Clean transcript doesn't have selection
+        return state
+      }
+
+      // Toggle selection for outline or resources
+      const newSelected = new Set(preview.selected)
+      if (newSelected.has(action.payload)) {
+        newSelected.delete(action.payload)
+      } else {
+        newSelected.add(action.payload)
+      }
+
+      return {
+        ...state,
+        aiPreview: {
+          ...state.aiPreview,
+          preview: {
+            ...preview,
+            selected: newSelected,
+          } as AIPreviewData,
+        },
+      }
+    }
 
     default:
       return state

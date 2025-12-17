@@ -1,0 +1,231 @@
+openapi: 3.1.0
+info:
+  title: Tab 1 AI Assist API
+  version: 1.0.0
+  description: AI-assisted features for transcript cleanup, outline suggestion, and resource suggestion.
+
+servers:
+  - url: /api
+    description: Backend API
+
+paths:
+  /ai/clean-transcript:
+    post:
+      operationId: cleanTranscript
+      summary: Clean up a raw transcript
+      description: |
+        Sends the transcript to an LLM for cleanup (remove filler words, fix punctuation,
+        organize paragraphs). Returns the cleaned transcript text.
+      tags:
+        - AI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleanTranscriptRequest'
+      responses:
+        '200':
+          description: Successfully cleaned transcript
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanTranscriptResponse'
+        '400':
+          description: Invalid request (empty or too long transcript)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIErrorResponse'
+        '503':
+          description: AI service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIErrorResponse'
+
+  /ai/suggest-outline:
+    post:
+      operationId: suggestOutline
+      summary: Suggest an outline from transcript
+      description: |
+        Analyzes the transcript and suggests a structured outline with chapters,
+        sections, and subsections. Returns outline items in order.
+      tags:
+        - AI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuggestOutlineRequest'
+      responses:
+        '200':
+          description: Successfully generated outline suggestions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuggestOutlineResponse'
+        '400':
+          description: Invalid request (empty or too long transcript)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIErrorResponse'
+        '503':
+          description: AI service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIErrorResponse'
+
+  /ai/suggest-resources:
+    post:
+      operationId: suggestResources
+      summary: Suggest resources from transcript
+      description: |
+        Analyzes the transcript and suggests 3-5 relevant resources
+        (URLs, articles, tools, references). Returns resource suggestions.
+      tags:
+        - AI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuggestResourcesRequest'
+      responses:
+        '200':
+          description: Successfully generated resource suggestions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuggestResourcesResponse'
+        '400':
+          description: Invalid request (empty or too long transcript)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIErrorResponse'
+        '503':
+          description: AI service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIErrorResponse'
+
+components:
+  schemas:
+    CleanTranscriptRequest:
+      type: object
+      required:
+        - transcript
+      properties:
+        transcript:
+          type: string
+          minLength: 1
+          maxLength: 50000
+          description: The raw transcript text to clean up
+
+    CleanTranscriptResponse:
+      type: object
+      required:
+        - cleaned_transcript
+      properties:
+        cleaned_transcript:
+          type: string
+          description: The cleaned/improved transcript text
+
+    SuggestOutlineRequest:
+      type: object
+      required:
+        - transcript
+      properties:
+        transcript:
+          type: string
+          minLength: 1
+          maxLength: 50000
+          description: The transcript to analyze for outline extraction
+
+    SuggestedOutlineItem:
+      type: object
+      required:
+        - title
+        - level
+      properties:
+        title:
+          type: string
+          minLength: 1
+          description: The title/heading for this outline item
+        level:
+          type: integer
+          minimum: 1
+          maximum: 3
+          description: Hierarchy level (1=chapter, 2=section, 3=subsection)
+        notes:
+          type: string
+          nullable: true
+          description: Optional notes or summary for this item
+
+    SuggestOutlineResponse:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SuggestedOutlineItem'
+          description: Suggested outline items in logical order
+
+    SuggestResourcesRequest:
+      type: object
+      required:
+        - transcript
+      properties:
+        transcript:
+          type: string
+          minLength: 1
+          maxLength: 50000
+          description: The transcript to analyze for resource extraction
+
+    SuggestedResource:
+      type: object
+      required:
+        - label
+        - url_or_note
+      properties:
+        label:
+          type: string
+          minLength: 1
+          description: Short descriptive label for the resource
+        url_or_note:
+          type: string
+          minLength: 1
+          description: URL or descriptive note about the resource
+
+    SuggestResourcesResponse:
+      type: object
+      required:
+        - resources
+      properties:
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SuggestedResource'
+          minItems: 3
+          maxItems: 5
+          description: Suggested resources (3-5 items)
+
+    AIErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: User-friendly error message
+        retry_allowed:
+          type: boolean
+          default: true
+          description: Whether the user can retry this action

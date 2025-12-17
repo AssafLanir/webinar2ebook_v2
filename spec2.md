@@ -71,7 +71,7 @@ The focus is on **assistance and suggestions**, not automation:
 - Behaviour:
   - Shows a clear “processing” state.
   - Displays a preview of the cleaned transcript.
-  - Offers actions: **Apply**, **Copy**, **Discard**.
+  - Offers actions: **Apply**, **Copy**, **Discard**, **Edit**.
   - Never overwrites the current transcript unless I click **Apply**.
 
 ---
@@ -83,11 +83,14 @@ The focus is on **assistance and suggestions**, not automation:
 - Trigger: “Suggest Outline (AI)” button in Tab 1.
 - Behaviour:
   - Uses the current transcript as input.
+  - Use underlying AI to analyze and extract structure based on the transcript and standard shared outlines.
   - Returns a proposed outline as a list of items (title + level + optional notes).
   - Shows suggestions in a preview area with checkboxes.
   - I can:
     - **Insert all** items, or
     - **Insert selected** items.
+    - **Cancel** to discard suggestions.
+    - **Edit** to modify suggestions before inserting.
   - Suggestions are **appended** to the existing outline; they do not automatically delete or overwrite existing items.
 
 ---
@@ -99,6 +102,7 @@ The focus is on **assistance and suggestions**, not automation:
 - Trigger: “Suggest Resources (AI)” button in Tab 1.
 - Behaviour:
   - Uses the current transcript as input.
+  - Extracts key topics, references, URLs mentioned in the transcript, and relevant external resources - articles, tools, websites.
   - Returns 3–5 suggestions, each with:
     - A short label, and
     - Either a URL **or** a short note.
@@ -126,6 +130,7 @@ The focus is on **assistance and suggestions**, not automation:
 - Only the **final applied** content is stored with the project.
 - AI preview data can be transient (no requirement to store it in the DB).
 - On reopen, I see my latest transcript, outline, and resources, as usual.
+
 
 ---
 
@@ -206,6 +211,8 @@ The focus is on **assistance and suggestions**, not automation:
   - **Cancel / Close**: No changes.
 - **FR-034**: Applying suggestions MUST NOT remove or edit existing resources automatically.
 - **FR-035**: After applying suggestions, the resources list MUST be persisted via existing mechanisms.
+- **FR-036**: AI-suggested resources MUST always be created as `resourceType = "url_or_note"` entries (label + urlOrNote).  
+  AI MUST NOT create `resourceType = "file"` resources, since those correspond only to actual uploaded files.
 
 ---
 
@@ -393,3 +400,18 @@ These do not block implementation but should be clarified during planning if pos
 - **OQ-003-2**: Should transcript cleanup also offer a “Append cleaned transcript below original” option, or is “Replace vs. Copy” sufficient for this iteration?
 - **OQ-003-3**: Do we need any explicit indication in the UI that certain outline items/resources came from AI vs. manual, or is this irrelevant to the user?
 - **OQ-003-4**: Is a **hard per-request timeout** (e.g., 20 seconds) required at the UX level, or is backend-level timeout sufficient as long as the UI shows loading/error states?
+
+## 11. Future Work
+
+- **US6 (P2) – Video to Transcript** — *explicitly out of scope for 003; will be specified in a separate feature (e.g. `004 – Video to Transcript`).*
+
+  > As a content creator, I want to be able to upload a video file and have the system automatically generate a transcript for me, so I can skip manual transcription.
+
+  - **Trigger**: “Upload Video” button in Tab 1.
+  - **Behaviour**:
+    - Accepts common video formats (MP4, AVI, MOV).
+    - Uses a backend service to extract audio.
+    - Transcribes the audio to text using an AI transcription service.
+    - Populates the transcript textarea with the generated transcript.
+    - Shows a loading indicator while processing.
+    - Displays an error message if transcription fails.

@@ -2,6 +2,7 @@
  * API client for backend communication.
  */
 
+import type { CleanTranscriptResponse, SuggestOutlineResponse, SuggestResourcesResponse } from '../types/ai'
 import type { Project, ProjectSummary, WebinarType } from '../types/project'
 
 const API_BASE = 'http://localhost:8000'
@@ -258,5 +259,48 @@ export async function deleteFile(
 ): Promise<{ deleted: boolean }> {
   return apiRequest<{ deleted: boolean }>(`/projects/${projectId}/files/${fileId}`, {
     method: 'DELETE',
+  })
+}
+
+// ============================================================================
+// AI API functions
+// ============================================================================
+
+/**
+ * Clean up a raw transcript using AI.
+ * Removes filler words, fixes punctuation, and organizes paragraphs.
+ */
+export async function cleanTranscript(
+  transcript: string
+): Promise<CleanTranscriptResponse> {
+  return apiRequest<CleanTranscriptResponse>('/api/ai/clean-transcript', {
+    method: 'POST',
+    body: JSON.stringify({ transcript }),
+  })
+}
+
+/**
+ * Suggest an outline structure from a transcript using AI.
+ * Extracts 5-15 topics with levels (chapter/section/subsection) and notes.
+ */
+export async function suggestOutline(
+  transcript: string
+): Promise<SuggestOutlineResponse> {
+  return apiRequest<SuggestOutlineResponse>('/api/ai/suggest-outline', {
+    method: 'POST',
+    body: JSON.stringify({ transcript }),
+  })
+}
+
+/**
+ * Suggest relevant resources from a transcript using AI.
+ * Returns 3-5 resources with labels and URLs or notes.
+ */
+export async function suggestResources(
+  transcript: string
+): Promise<SuggestResourcesResponse> {
+  return apiRequest<SuggestResourcesResponse>('/api/ai/suggest-resources', {
+    method: 'POST',
+    body: JSON.stringify({ transcript }),
   })
 }
