@@ -1,0 +1,34 @@
+{
+  "additionalProperties": false,
+  "description": "Request body for section regeneration.",
+  "properties": {
+    "section_outline_item_id": {
+      "description": "Outline item ID to regenerate",
+      "title": "Section Outline Item Id",
+      "type": "string"
+    },
+    "draft_plan": {
+      "description": "Original DraftPlan",
+      "title": "Draft Plan",
+      "type": "object"
+    },
+    "existing_draft": {
+      "description": "Current full markdown draft",
+      "title": "Existing Draft",
+      "type": "string"
+    },
+    "style_config": {
+      "description": "StyleConfig or StyleConfigEnvelope",
+      "title": "Style Config",
+      "type": "object"
+    }
+  },
+  "required": [
+    "section_outline_item_id",
+    "draft_plan",
+    "existing_draft",
+    "style_config"
+  ],
+  "title": "DraftRegenerateRequest",
+  "type": "object"
+}

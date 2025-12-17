@@ -1,0 +1,468 @@
+{
+  "$defs": {
+    "ChapterPlan": {
+      "additionalProperties": false,
+      "description": "Plan for generating a single chapter.",
+      "properties": {
+        "chapter_number": {
+          "description": "1-based chapter number",
+          "minimum": 1,
+          "title": "Chapter Number",
+          "type": "integer"
+        },
+        "title": {
+          "description": "Chapter title",
+          "title": "Title",
+          "type": "string"
+        },
+        "outline_item_id": {
+          "description": "Reference to source outline item",
+          "title": "Outline Item Id",
+          "type": "string"
+        },
+        "goals": {
+          "description": "2-4 learning objectives for this chapter",
+          "items": {
+            "type": "string"
+          },
+          "title": "Goals",
+          "type": "array"
+        },
+        "key_points": {
+          "description": "3-6 main points to cover",
+          "items": {
+            "type": "string"
+          },
+          "title": "Key Points",
+          "type": "array"
+        },
+        "transcript_segments": {
+          "description": "Mapped transcript portions for this chapter",
+          "items": {
+            "$ref": "#/$defs/TranscriptSegment"
+          },
+          "title": "Transcript Segments",
+          "type": "array"
+        },
+        "estimated_words": {
+          "default": 1500,
+          "description": "Estimated word count for this chapter",
+          "minimum": 100,
+          "title": "Estimated Words",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "chapter_number",
+        "title",
+        "outline_item_id"
+      ],
+      "title": "ChapterPlan",
+      "type": "object"
+    },
+    "GenerationMetadata": {
+      "additionalProperties": false,
+      "description": "Metadata about the generation plan.",
+      "properties": {
+        "estimated_total_words": {
+          "description": "Total estimated word count for the ebook",
+          "minimum": 0,
+          "title": "Estimated Total Words",
+          "type": "integer"
+        },
+        "estimated_generation_time_seconds": {
+          "description": "Estimated time to generate all chapters",
+          "minimum": 0,
+          "title": "Estimated Generation Time Seconds",
+          "type": "integer"
+        },
+        "transcript_utilization": {
+          "description": "Fraction of transcript content used (0.0-1.0)",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Transcript Utilization",
+          "type": "number"
+        }
+      },
+      "required": [
+        "estimated_total_words",
+        "estimated_generation_time_seconds",
+        "transcript_utilization"
+      ],
+      "title": "GenerationMetadata",
+      "type": "object"
+    },
+    "TranscriptRelevance": {
+      "description": "How relevant a transcript segment is to a chapter.",
+      "enum": [
+        "primary",
+        "supporting",
+        "reference"
+      ],
+      "title": "TranscriptRelevance",
+      "type": "string"
+    },
+    "TranscriptSegment": {
+      "additionalProperties": false,
+      "description": "A mapped segment of the source transcript.",
+      "properties": {
+        "start_char": {
+          "description": "Starting character index in transcript",
+          "minimum": 0,
+          "title": "Start Char",
+          "type": "integer"
+        },
+        "end_char": {
+          "description": "Ending character index in transcript",
+          "minimum": 0,
+          "title": "End Char",
+          "type": "integer"
+        },
+        "relevance": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TranscriptRelevance"
+            }
+          ],
+          "default": "primary",
+          "description": "How this segment relates to the chapter"
+        }
+      },
+      "required": [
+        "start_char",
+        "end_char"
+      ],
+      "title": "TranscriptSegment",
+      "type": "object"
+    },
+    "VisualAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Stable id used for referencing this asset across the app",
+          "title": "Id",
+          "type": "string"
+        },
+        "filename": {
+          "description": "Original filename (or derived name)",
+          "title": "Filename",
+          "type": "string"
+        },
+        "media_type": {
+          "description": "MIME type, e.g. image/png",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "origin": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/VisualAssetOrigin"
+            }
+          ],
+          "default": "client_provided"
+        },
+        "source_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "External link for the asset if applicable",
+          "title": "Source Url"
+        },
+        "storage_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Internal storage key/path if stored by the app",
+          "title": "Storage Key"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Width"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Height"
+        },
+        "alt_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Accessibility / SEO alt text",
+          "title": "Alt Text"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "filename",
+        "media_type"
+      ],
+      "title": "VisualAsset",
+      "type": "object"
+    },
+    "VisualAssetOrigin": {
+      "enum": [
+        "client_provided",
+        "user_uploaded",
+        "generated",
+        "external_link"
+      ],
+      "title": "VisualAssetOrigin",
+      "type": "string"
+    },
+    "VisualOpportunity": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Stable id for UI selection/acceptance",
+          "title": "Id",
+          "type": "string"
+        },
+        "chapter_index": {
+          "description": "1-based chapter index",
+          "minimum": 1,
+          "title": "Chapter Index",
+          "type": "integer"
+        },
+        "section_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional fine-grained section identifier (e.g. \"2.3\" or heading slug)",
+          "title": "Section Path"
+        },
+        "placement": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/VisualPlacement"
+            }
+          ],
+          "default": "after_heading"
+        },
+        "visual_type": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/VisualType"
+            }
+          ],
+          "description": "What kind of visual this should be"
+        },
+        "source_policy": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/VisualSourcePolicy"
+            }
+          ],
+          "default": "client_assets_only"
+        },
+        "title": {
+          "description": "Short title for the visual (used as figure title or label)",
+          "title": "Title",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "What the visual should show (LLM-generated description)",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "caption": {
+          "description": "Caption text shown under the visual",
+          "title": "Caption",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "description": "If true, the draft should include a placeholder even if no asset",
+          "title": "Required",
+          "type": "boolean"
+        },
+        "candidate_asset_ids": {
+          "description": "If any known assets fit, list their ids",
+          "items": {
+            "type": "string"
+          },
+          "title": "Candidate Asset Ids",
+          "type": "array"
+        },
+        "confidence": {
+          "default": 0.6,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "rationale": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Why this visual helps the reader",
+          "title": "Rationale"
+        }
+      },
+      "required": [
+        "id",
+        "chapter_index",
+        "visual_type",
+        "title",
+        "prompt",
+        "caption"
+      ],
+      "title": "VisualOpportunity",
+      "type": "object"
+    },
+    "VisualPlacement": {
+      "enum": [
+        "after_heading",
+        "inline",
+        "end_of_section",
+        "end_of_chapter",
+        "sidebar"
+      ],
+      "title": "VisualPlacement",
+      "type": "string"
+    },
+    "VisualPlan": {
+      "additionalProperties": false,
+      "description": "A draft-time plan that can be persisted and later resolved in Tab 2.",
+      "properties": {
+        "opportunities": {
+          "items": {
+            "$ref": "#/$defs/VisualOpportunity"
+          },
+          "title": "Opportunities",
+          "type": "array"
+        },
+        "assets": {
+          "items": {
+            "$ref": "#/$defs/VisualAsset"
+          },
+          "title": "Assets",
+          "type": "array"
+        }
+      },
+      "title": "VisualPlan",
+      "type": "object"
+    },
+    "VisualSourcePolicy": {
+      "enum": [
+        "client_assets_only",
+        "allow_new_suggestions"
+      ],
+      "title": "VisualSourcePolicy",
+      "type": "string"
+    },
+    "VisualType": {
+      "enum": [
+        "screenshot",
+        "diagram",
+        "chart",
+        "table",
+        "icon",
+        "photo",
+        "other"
+      ],
+      "title": "VisualType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The complete generation plan for an ebook draft.\n\nGenerated before actual chapter content is written.\nEnables chunked generation and regeneration of sections.",
+  "properties": {
+    "version": {
+      "default": 1,
+      "description": "Schema version for migrations",
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "book_title": {
+      "description": "Title of the generated ebook",
+      "title": "Book Title",
+      "type": "string"
+    },
+    "chapters": {
+      "description": "Planned chapters with mapped content",
+      "items": {
+        "$ref": "#/$defs/ChapterPlan"
+      },
+      "title": "Chapters",
+      "type": "array"
+    },
+    "visual_plan": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualPlan"
+        }
+      ],
+      "description": "Visual opportunities generated alongside the plan"
+    },
+    "generation_metadata": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/GenerationMetadata"
+        }
+      ],
+      "description": "Metadata about the generation plan"
+    }
+  },
+  "required": [
+    "book_title",
+    "generation_metadata"
+  ],
+  "title": "DraftPlan",
+  "type": "object"
+}

@@ -262,33 +262,38 @@ The DraftPlan reduces hallucinations and enables chunked generation:
 
 ### 8.2 DraftPlan Schema
 
+**Canonical schema** (from `backend/src/models/draft_plan.py`):
+**JSON Schema**: [`specs/004-tab3-ai-draft/schemas/DraftPlan.json`](./specs/004-tab3-ai-draft/schemas/DraftPlan.json)
+
 ```typescript
 interface DraftPlan {
-  version: 1;
-  book_title: string;
-  chapters: ChapterPlan[];
-  visual_opportunities: VisualOpportunity[];
-  generation_metadata: {
-    estimated_total_words: number;
-    estimated_generation_time_seconds: number;
-    transcript_utilization: number; // 0.0-1.0, how much transcript is used
-  };
+  version: number;                         // Schema version (default: 1)
+  book_title: string;                      // Title of the generated ebook
+  chapters: ChapterPlan[];                 // Planned chapters
+  visual_plan: VisualPlan;                 // Visual opportunities (default: empty)
+  generation_metadata: GenerationMetadata; // Metadata about the plan
 }
 
 interface ChapterPlan {
-  chapter_number: number;
-  title: string;
-  outline_item_id: string; // Reference to source outline item
-  goals: string[]; // 2-4 learning objectives
-  key_points: string[]; // 3-6 main points to cover
-  transcript_segments: TranscriptSegment[];
-  estimated_words: number;
+  chapter_number: number;                  // 1-based chapter number
+  title: string;                           // Chapter title
+  outline_item_id: string;                 // Reference to source outline item
+  goals: string[];                         // 2-4 learning objectives
+  key_points: string[];                    // 3-6 main points to cover
+  transcript_segments: TranscriptSegment[]; // Mapped transcript portions
+  estimated_words: number;                 // Estimated word count (default: 1500)
 }
 
 interface TranscriptSegment {
-  start_char: number;
-  end_char: number;
-  relevance: "primary" | "supporting" | "reference";
+  start_char: number;                      // Starting character index (>= 0)
+  end_char: number;                        // Ending character index (>= 0)
+  relevance: "primary" | "supporting" | "reference"; // Segment relevance
+}
+
+interface GenerationMetadata {
+  estimated_total_words: number;           // Total estimated word count
+  estimated_generation_time_seconds: number; // Estimated generation time
+  transcript_utilization: number;          // Fraction of transcript used (0.0-1.0)
 }
 ```
 
@@ -310,6 +315,7 @@ Generate **visual suggestions** alongside the draft, without inserting placehold
 ### 9.2 VisualOpportunity Schema
 
 **Canonical schema** (from `backend/src/models/visuals.py`):
+**JSON Schema**: [`specs/004-tab3-ai-draft/schemas/VisualOpportunity.json`](./specs/004-tab3-ai-draft/schemas/VisualOpportunity.json)
 
 ```typescript
 // Enums
@@ -343,6 +349,7 @@ interface VisualOpportunity {
 ### 9.3 VisualAsset Schema
 
 **Canonical schema** (from `backend/src/models/visuals.py`):
+**JSON Schema**: [`specs/004-tab3-ai-draft/schemas/VisualAsset.json`](./specs/004-tab3-ai-draft/schemas/VisualAsset.json)
 
 ```typescript
 type VisualAssetOrigin = "client_provided" | "user_uploaded" | "generated" | "external_link";
@@ -369,6 +376,7 @@ interface VisualAsset {
 ### 9.4 VisualPlan Schema
 
 **Canonical schema** (from `backend/src/models/visuals.py`):
+**JSON Schema**: [`specs/004-tab3-ai-draft/schemas/VisualPlan.json`](./specs/004-tab3-ai-draft/schemas/VisualPlan.json)
 
 ```typescript
 interface VisualPlan {
@@ -398,6 +406,7 @@ Style config tells the model what kind of ebook to write. It shapes tone, struct
 ### 10.2 StyleConfigEnvelope Schema
 
 **Canonical schema** (from `backend/src/models/style_config.py`):
+**JSON Schema**: [`specs/004-tab3-ai-draft/schemas/StyleConfigEnvelope.json`](./specs/004-tab3-ai-draft/schemas/StyleConfigEnvelope.json)
 
 The style config is wrapped in an envelope for versioning and preset tracking:
 
@@ -547,80 +556,166 @@ interface StyleConfig {
 
 ## 13. Backend / API Requirements
 
-### 13.1 Endpoints
+### 13.1 Endpoints (Async Job Pattern)
+
+Draft generation uses an async job pattern for long-running operations:
+1. Client submits request → receives `job_id`
+2. Client polls status endpoint for progress
+3. Client can cancel mid-generation
+4. Completed results include partial drafts if cancelled
+
+**JSON Schemas**: See [`specs/004-tab3-ai-draft/schemas/`](./specs/004-tab3-ai-draft/schemas/) for all request/response schemas.
 
 #### POST /api/ai/draft/generate
 
-Generate a complete ebook draft.
+Start draft generation (returns immediately with job_id).
 
-**Request:**
+**Request**: [`DraftGenerateRequest.json`](./specs/004-tab3-ai-draft/schemas/DraftGenerateRequest.json)
 ```json
 {
   "transcript": "string (≥500 chars)",
   "outline": [{ "id": "string", "title": "string", "level": 1, "notes": "string?" }],
   "resources": [{ "label": "string", "url_or_note": "string" }],
-  "style_config": { StyleConfig }
+  "style_config": { StyleConfigEnvelope }
 }
 ```
 
-**Response:**
+**Response**: [`DraftGenerateResponse.json`](./specs/004-tab3-ai-draft/schemas/DraftGenerateResponse.json)
 ```json
 {
-  "data": {
-    "draft_markdown": "# My Ebook\n\n## Chapter 1...",
-    "draft_plan": { "version": 1, "book_title": "...", "chapters": [...] },
-    "visual_plan": {
-      "opportunities": [
-        {
-          "id": "vo-uuid-1",
-          "chapter_index": 2,
-          "section_path": "2.1",
-          "placement": "after_heading",
-          "visual_type": "diagram",
-          "source_policy": "client_assets_only",
-          "title": "System Architecture",
-          "prompt": "A diagram showing the overall system architecture",
-          "caption": "Figure 2.1: System Architecture Overview",
-          "required": false,
-          "candidate_asset_ids": [],
-          "confidence": 0.8,
-          "rationale": "Helps readers visualize the system structure"
-        }
-      ],
-      "assets": []
-    },
-    "generation_stats": {
-      "chapters_generated": 8,
-      "total_words": 12450,
-      "generation_time_ms": 45000,
-      "tokens_used": { "prompt": 15000, "completion": 20000 }
+  "job_id": "job-uuid-123",
+  "status": "queued",
+  "progress": null,
+  "draft_markdown": null,
+  "draft_plan": null,
+  "visual_plan": null,
+  "generation_stats": null,
+  "error": null,
+  "error_code": null
+}
+```
+
+#### GET /api/ai/draft/status/:job_id
+
+Poll generation progress.
+
+**Response**: [`DraftStatusResponse.json`](./specs/004-tab3-ai-draft/schemas/DraftStatusResponse.json)
+
+**Status: generating**
+```json
+{
+  "job_id": "job-uuid-123",
+  "status": "generating",
+  "progress": {
+    "current_chapter": 3,
+    "total_chapters": 8,
+    "current_chapter_title": "Pricing Strategy",
+    "chapters_completed": 2,
+    "estimated_remaining_seconds": 90
+  },
+  "draft_markdown": null,
+  "draft_plan": null,
+  "visual_plan": null,
+  "generation_stats": null,
+  "partial_draft_markdown": null,
+  "chapters_available": null,
+  "error": null,
+  "error_code": null
+}
+```
+
+**Status: completed**
+```json
+{
+  "job_id": "job-uuid-123",
+  "status": "completed",
+  "progress": null,
+  "draft_markdown": "# My Ebook\n\n## Chapter 1...",
+  "draft_plan": {
+    "version": 1,
+    "book_title": "My Ebook",
+    "chapters": [...],
+    "visual_plan": { "opportunities": [...], "assets": [] },
+    "generation_metadata": {
+      "estimated_total_words": 12000,
+      "estimated_generation_time_seconds": 120,
+      "transcript_utilization": 0.85
     }
   },
-  "error": null
+  "visual_plan": {
+    "opportunities": [
+      {
+        "id": "vo-uuid-1",
+        "chapter_index": 2,
+        "section_path": "2.1",
+        "placement": "after_heading",
+        "visual_type": "diagram",
+        "source_policy": "client_assets_only",
+        "title": "System Architecture",
+        "prompt": "A diagram showing the overall system architecture",
+        "caption": "Figure 2.1: System Architecture Overview",
+        "required": false,
+        "candidate_asset_ids": [],
+        "confidence": 0.8,
+        "rationale": "Helps readers visualize the system structure"
+      }
+    ],
+    "assets": []
+  },
+  "generation_stats": {
+    "chapters_generated": 8,
+    "total_words": 12450,
+    "generation_time_ms": 45000,
+    "tokens_used": { "prompt_tokens": 15000, "completion_tokens": 20000, "total_tokens": 35000 }
+  },
+  "partial_draft_markdown": null,
+  "chapters_available": null,
+  "error": null,
+  "error_code": null
+}
+```
+
+#### POST /api/ai/draft/cancel/:job_id
+
+Cancel generation (stops after current chapter completes).
+
+**Response**: [`DraftCancelResponse.json`](./specs/004-tab3-ai-draft/schemas/DraftCancelResponse.json)
+```json
+{
+  "job_id": "job-uuid-123",
+  "status": "cancelled",
+  "cancelled": true,
+  "message": "Generation cancelled after chapter 4 of 8",
+  "partial_draft_markdown": "# My Ebook\n\n## Chapter 1...",
+  "chapters_available": 4
 }
 ```
 
 #### POST /api/ai/draft/regenerate
 
-Regenerate a single section.
+Regenerate a single section (synchronous, typically fast).
 
-**Request:**
+**Request**: [`DraftRegenerateRequest.json`](./specs/004-tab3-ai-draft/schemas/DraftRegenerateRequest.json)
 ```json
 {
   "section_outline_item_id": "string",
   "draft_plan": { DraftPlan },
   "existing_draft": "string (full markdown)",
-  "style_config": { StyleConfig }
+  "style_config": { StyleConfigEnvelope }
 }
 ```
 
-**Response:**
+**Response**: [`DraftRegenerateResponse.json`](./specs/004-tab3-ai-draft/schemas/DraftRegenerateResponse.json)
 ```json
 {
-  "data": {
-    "section_markdown": "## Chapter 3: Pricing Strategy\n\n...",
-    "section_start_line": 145,
-    "section_end_line": 210
+  "section_markdown": "## Chapter 3: Pricing Strategy\n\n...",
+  "section_start_line": 145,
+  "section_end_line": 210,
+  "generation_stats": {
+    "chapters_generated": 1,
+    "total_words": 1500,
+    "generation_time_ms": 8000,
+    "tokens_used": { "prompt_tokens": 3000, "completion_tokens": 2000, "total_tokens": 5000 }
   },
   "error": null
 }

@@ -1,0 +1,45 @@
+{
+  "$defs": {
+    "TranscriptRelevance": {
+      "description": "How relevant a transcript segment is to a chapter.",
+      "enum": [
+        "primary",
+        "supporting",
+        "reference"
+      ],
+      "title": "TranscriptRelevance",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A mapped segment of the source transcript.",
+  "properties": {
+    "start_char": {
+      "description": "Starting character index in transcript",
+      "minimum": 0,
+      "title": "Start Char",
+      "type": "integer"
+    },
+    "end_char": {
+      "description": "Ending character index in transcript",
+      "minimum": 0,
+      "title": "End Char",
+      "type": "integer"
+    },
+    "relevance": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/TranscriptRelevance"
+        }
+      ],
+      "default": "primary",
+      "description": "How this segment relates to the chapter"
+    }
+  },
+  "required": [
+    "start_char",
+    "end_char"
+  ],
+  "title": "TranscriptSegment",
+  "type": "object"
+}

@@ -58,6 +58,27 @@ from .visuals import (
     VisualPlan,
     VisualPlacement,
 )
+from .draft_plan import (
+    DraftPlan,
+    ChapterPlan,
+    TranscriptSegment,
+    TranscriptRelevance,
+    GenerationMetadata,
+    DRAFT_PLAN_VERSION,
+    draft_plan_json_schema,
+)
+from .api_responses import (
+    JobStatus,
+    GenerationProgress,
+    TokenUsage,
+    GenerationStats,
+    DraftGenerateRequest,
+    DraftGenerateResponse,
+    DraftStatusResponse,
+    DraftCancelResponse,
+    DraftRegenerateRequest,
+    DraftRegenerateResponse,
+)
 
 __all__ = [
     # Project models
@@ -112,4 +133,23 @@ __all__ = [
     "VisualOpportunity",
     "VisualPlan",
     "VisualPlacement",
+    # Draft plan
+    "DraftPlan",
+    "ChapterPlan",
+    "TranscriptSegment",
+    "TranscriptRelevance",
+    "GenerationMetadata",
+    "DRAFT_PLAN_VERSION",
+    "draft_plan_json_schema",
+    # API responses
+    "JobStatus",
+    "GenerationProgress",
+    "TokenUsage",
+    "GenerationStats",
+    "DraftGenerateRequest",
+    "DraftGenerateResponse",
+    "DraftStatusResponse",
+    "DraftCancelResponse",
+    "DraftRegenerateRequest",
+    "DraftRegenerateResponse",
 ]

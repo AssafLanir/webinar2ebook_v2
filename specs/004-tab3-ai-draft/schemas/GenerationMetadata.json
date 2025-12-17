@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "description": "Metadata about the generation plan.",
+  "properties": {
+    "estimated_total_words": {
+      "description": "Total estimated word count for the ebook",
+      "minimum": 0,
+      "title": "Estimated Total Words",
+      "type": "integer"
+    },
+    "estimated_generation_time_seconds": {
+      "description": "Estimated time to generate all chapters",
+      "minimum": 0,
+      "title": "Estimated Generation Time Seconds",
+      "type": "integer"
+    },
+    "transcript_utilization": {
+      "description": "Fraction of transcript content used (0.0-1.0)",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Transcript Utilization",
+      "type": "number"
+    }
+  },
+  "required": [
+    "estimated_total_words",
+    "estimated_generation_time_seconds",
+    "transcript_utilization"
+  ],
+  "title": "GenerationMetadata",
+  "type": "object"
+}

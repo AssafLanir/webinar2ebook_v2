@@ -1,0 +1,105 @@
+{
+  "$defs": {
+    "TranscriptRelevance": {
+      "description": "How relevant a transcript segment is to a chapter.",
+      "enum": [
+        "primary",
+        "supporting",
+        "reference"
+      ],
+      "title": "TranscriptRelevance",
+      "type": "string"
+    },
+    "TranscriptSegment": {
+      "additionalProperties": false,
+      "description": "A mapped segment of the source transcript.",
+      "properties": {
+        "start_char": {
+          "description": "Starting character index in transcript",
+          "minimum": 0,
+          "title": "Start Char",
+          "type": "integer"
+        },
+        "end_char": {
+          "description": "Ending character index in transcript",
+          "minimum": 0,
+          "title": "End Char",
+          "type": "integer"
+        },
+        "relevance": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TranscriptRelevance"
+            }
+          ],
+          "default": "primary",
+          "description": "How this segment relates to the chapter"
+        }
+      },
+      "required": [
+        "start_char",
+        "end_char"
+      ],
+      "title": "TranscriptSegment",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Plan for generating a single chapter.",
+  "properties": {
+    "chapter_number": {
+      "description": "1-based chapter number",
+      "minimum": 1,
+      "title": "Chapter Number",
+      "type": "integer"
+    },
+    "title": {
+      "description": "Chapter title",
+      "title": "Title",
+      "type": "string"
+    },
+    "outline_item_id": {
+      "description": "Reference to source outline item",
+      "title": "Outline Item Id",
+      "type": "string"
+    },
+    "goals": {
+      "description": "2-4 learning objectives for this chapter",
+      "items": {
+        "type": "string"
+      },
+      "title": "Goals",
+      "type": "array"
+    },
+    "key_points": {
+      "description": "3-6 main points to cover",
+      "items": {
+        "type": "string"
+      },
+      "title": "Key Points",
+      "type": "array"
+    },
+    "transcript_segments": {
+      "description": "Mapped transcript portions for this chapter",
+      "items": {
+        "$ref": "#/$defs/TranscriptSegment"
+      },
+      "title": "Transcript Segments",
+      "type": "array"
+    },
+    "estimated_words": {
+      "default": 1500,
+      "description": "Estimated word count for this chapter",
+      "minimum": 100,
+      "title": "Estimated Words",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "chapter_number",
+    "title",
+    "outline_item_id"
+  ],
+  "title": "ChapterPlan",
+  "type": "object"
+}
