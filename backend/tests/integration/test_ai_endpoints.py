@@ -313,3 +313,147 @@ class TestSuggestOutlineEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["items"] == []
+
+
+class TestSuggestResourcesEndpoint:
+    """Tests for POST /api/ai/suggest-resources endpoint."""
+
+    def test_suggest_resources_success(self):
+        """Test successful resource suggestion."""
+        mock_json_response = '{"resources": [{"label": "Python Documentation", "url_or_note": "https://docs.python.org"}, {"label": "FastAPI Guide", "url_or_note": "https://fastapi.tiangolo.com"}, {"label": "Related Article", "url_or_note": "Check out this blog post about best practices"}]}'
+
+        mock_response = LLMResponse(
+            text=mock_json_response,
+            tool_calls=None,
+            finish_reason="stop",
+            usage=Usage(prompt_tokens=150, completion_tokens=80, total_tokens=230),
+            model="gpt-4o",
+            provider="openai",
+            latency_ms=800,
+        )
+
+        with patch("src.services.ai_service.LLMClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.generate = AsyncMock(return_value=mock_response)
+            mock_client_class.return_value = mock_client
+
+            response = client.post(
+                "/api/ai/suggest-resources",
+                json={"transcript": "This is a transcript about Python and FastAPI development."},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "resources" in data
+        assert len(data["resources"]) == 3
+        assert data["resources"][0]["label"] == "Python Documentation"
+        assert data["resources"][0]["url_or_note"] == "https://docs.python.org"
+        assert data["resources"][1]["label"] == "FastAPI Guide"
+        assert data["resources"][2]["url_or_note"] == "Check out this blog post about best practices"
+
+    def test_suggest_resources_empty_transcript(self):
+        """Test that empty transcript returns validation error."""
+        response = client.post(
+            "/api/ai/suggest-resources",
+            json={"transcript": ""},
+        )
+
+        assert response.status_code == 422
+
+    def test_suggest_resources_missing_transcript(self):
+        """Test that missing transcript field returns validation error."""
+        response = client.post(
+            "/api/ai/suggest-resources",
+            json={},
+        )
+
+        assert response.status_code == 422
+
+    def test_suggest_resources_too_long(self):
+        """Test that transcript exceeding max length returns validation error."""
+        long_transcript = "a" * 50001
+
+        response = client.post(
+            "/api/ai/suggest-resources",
+            json={"transcript": long_transcript},
+        )
+
+        assert response.status_code == 422
+
+    def test_suggest_resources_llm_rate_limit_error(self):
+        """Test that LLM rate limit error returns 503."""
+        with patch("src.services.ai_service.LLMClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.generate = AsyncMock(
+                side_effect=RateLimitError("Rate limit exceeded", provider="openai")
+            )
+            mock_client_class.return_value = mock_client
+
+            response = client.post(
+                "/api/ai/suggest-resources",
+                json={"transcript": "Some transcript text"},
+            )
+
+        assert response.status_code == 503
+        data = response.json()
+        assert data["error"]["code"] == "AI_SERVICE_ERROR"
+
+    def test_suggest_resources_with_urls_and_notes(self):
+        """Test that resources with both URLs and notes are returned correctly."""
+        mock_json_response = '{"resources": [{"label": "Official Docs", "url_or_note": "https://example.com/docs"}, {"label": "Key Takeaway", "url_or_note": "Remember to always validate user input"}, {"label": "Tool Mentioned", "url_or_note": "https://github.com/some/tool"}]}'
+
+        mock_response = LLMResponse(
+            text=mock_json_response,
+            tool_calls=None,
+            finish_reason="stop",
+            usage=Usage(prompt_tokens=150, completion_tokens=70, total_tokens=220),
+            model="gpt-4o",
+            provider="openai",
+            latency_ms=600,
+        )
+
+        with patch("src.services.ai_service.LLMClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.generate = AsyncMock(return_value=mock_response)
+            mock_client_class.return_value = mock_client
+
+            response = client.post(
+                "/api/ai/suggest-resources",
+                json={"transcript": "A transcript mentioning various tools and best practices."},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["resources"]) == 3
+        # First resource is a URL
+        assert "https://" in data["resources"][0]["url_or_note"]
+        # Second resource is a note
+        assert "Remember" in data["resources"][1]["url_or_note"]
+
+    def test_suggest_resources_empty_response(self):
+        """Test handling of empty resources response."""
+        mock_json_response = '{"resources": []}'
+
+        mock_response = LLMResponse(
+            text=mock_json_response,
+            tool_calls=None,
+            finish_reason="stop",
+            usage=Usage(prompt_tokens=100, completion_tokens=10, total_tokens=110),
+            model="gpt-4o",
+            provider="openai",
+            latency_ms=400,
+        )
+
+        with patch("src.services.ai_service.LLMClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.generate = AsyncMock(return_value=mock_response)
+            mock_client_class.return_value = mock_client
+
+            response = client.post(
+                "/api/ai/suggest-resources",
+                json={"transcript": "Very generic text with no specific resources."},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["resources"] == []

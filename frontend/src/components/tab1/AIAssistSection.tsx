@@ -4,12 +4,12 @@
  * Provides buttons for:
  * - Clean Transcript (AI)
  * - Suggest Outline (AI)
- * - Suggest Resources (AI) (future)
+ * - Suggest Resources (AI)
  */
 
 import { useProject } from '../../context/ProjectContext'
 import { Button } from '../common/Button'
-import { cleanTranscript, suggestOutline, ApiException } from '../../services/api'
+import { cleanTranscript, suggestOutline, suggestResources, ApiException } from '../../services/api'
 
 export function AIAssistSection() {
   const { state, dispatch } = useProject()
@@ -67,6 +67,31 @@ export function AIAssistSection() {
     }
   }
 
+  const handleSuggestResources = async () => {
+    if (!project?.transcriptText || isLoading) return
+
+    dispatch({ type: 'START_AI_ACTION', payload: 'suggest-resources' })
+
+    try {
+      const response = await suggestResources(project.transcriptText)
+      dispatch({
+        type: 'AI_ACTION_SUCCESS',
+        payload: {
+          type: 'suggest-resources',
+          resources: response.resources,
+          selected: new Set(response.resources.map((_, i) => i)), // Select all by default
+        },
+      })
+    } catch (error) {
+      const message = error instanceof ApiException
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : 'Failed to suggest resources'
+      dispatch({ type: 'AI_ACTION_ERROR', payload: message })
+    }
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-3">
       <span className="text-sm text-slate-400 font-medium">AI Assist:</span>
@@ -102,6 +127,23 @@ export function AIAssistSection() {
           </>
         ) : (
           'Suggest Outline (AI)'
+        )}
+      </Button>
+
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={handleSuggestResources}
+        disabled={!hasTranscript || isLoading}
+        title={!hasTranscript ? 'Add transcript text first' : undefined}
+      >
+        {aiAction.inProgress === 'suggest-resources' ? (
+          <>
+            <LoadingSpinner />
+            <span className="ml-2">Finding...</span>
+          </>
+        ) : (
+          'Suggest Resources (AI)'
         )}
       </Button>
 

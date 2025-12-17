@@ -2,7 +2,7 @@
  * API client for backend communication.
  */
 
-import type { CleanTranscriptResponse, SuggestOutlineResponse } from '../types/ai'
+import type { CleanTranscriptResponse, SuggestOutlineResponse, SuggestResourcesResponse } from '../types/ai'
 import type { Project, ProjectSummary, WebinarType } from '../types/project'
 
 const API_BASE = 'http://localhost:8000'
@@ -287,6 +287,19 @@ export async function suggestOutline(
   transcript: string
 ): Promise<SuggestOutlineResponse> {
   return apiRequest<SuggestOutlineResponse>('/api/ai/suggest-outline', {
+    method: 'POST',
+    body: JSON.stringify({ transcript }),
+  })
+}
+
+/**
+ * Suggest relevant resources from a transcript using AI.
+ * Returns 3-5 resources with labels and URLs or notes.
+ */
+export async function suggestResources(
+  transcript: string
+): Promise<SuggestResourcesResponse> {
+  return apiRequest<SuggestResourcesResponse>('/api/ai/suggest-resources', {
     method: 'POST',
     body: JSON.stringify({ transcript }),
   })

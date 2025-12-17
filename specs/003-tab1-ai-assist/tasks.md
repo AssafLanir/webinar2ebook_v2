@@ -141,24 +141,24 @@
 
 ### Backend Implementation
 
-- [ ] T037 [US3] Add `suggest_resources(transcript: str) -> list[SuggestedResource]` function to backend/src/services/ai_service.py
-- [ ] T038 [US3] Add JSON schema for resources response (3-5 items with label, url_or_note) per research.md
-- [ ] T039 [US3] Add POST /api/ai/suggest-resources endpoint to backend/src/api/routes/ai.py
+- [x] T037 [US3] Add `suggest_resources(transcript: str) -> list[SuggestedResource]` function to backend/src/services/ai_service.py
+- [x] T038 [US3] Add JSON schema for resources response (3-5 items with label, url_or_note) per research.md
+- [x] T039 [US3] Add POST /api/ai/suggest-resources endpoint to backend/src/api/routes/ai.py
 
 ### Frontend API & Types
 
-- [ ] T040 [US3] Add SuggestedResource, SuggestResourcesResponse types and suggestResources() API function in frontend/src/services/api.ts
-- [ ] T041 [US3] Add suggest-resources variant to AIPreviewData type in frontend/src/types/ai.ts
+- [x] T040 [US3] Add SuggestedResource, SuggestResourcesResponse types and suggestResources() API function in frontend/src/services/api.ts
+- [x] T041 [US3] Add suggest-resources variant to AIPreviewData type in frontend/src/types/ai.ts
 
 ### Frontend Components
 
-- [ ] T042 [US3] Add "Suggest Resources (AI)" button to AIAssistSection in frontend/src/components/tab1/AIAssistSection.tsx
-- [ ] T043 [US3] Add resources preview mode to AIPreviewModal with checkboxes in frontend/src/components/tab1/AIPreviewModal.tsx
-- [ ] T044 [US3] Implement "Add selected" / "Add all" actions that append resources via ADD_RESOURCE dispatch (resourceType = "url_or_note")
+- [x] T042 [US3] Add "Suggest Resources (AI)" button to AIAssistSection in frontend/src/components/tab1/AIAssistSection.tsx
+- [x] T043 [US3] Add resources preview mode to AIPreviewModal with checkboxes in frontend/src/components/tab1/AIPreviewModal.tsx
+- [x] T044 [US3] Implement "Add selected" / "Add all" actions that append resources via ADD_RESOURCE dispatch (resourceType = "url_or_note")
 
 ### Integration Test
 
-- [ ] T045 [US3] Add integration test for suggest-resources endpoint in backend/tests/integration/test_ai_endpoints.py
+- [x] T045 [US3] Add integration test for suggest-resources endpoint in backend/tests/integration/test_ai_endpoints.py
 
 **Checkpoint**: Suggest Resources flow works end-to-end. Test: transcript → suggest → select → add → verify appended
 

@@ -33,6 +33,14 @@ SUGGEST_OUTLINE_PROMPT = """You are a content strategist. Analyze the following 
 
 Return as JSON matching the provided schema."""
 
+SUGGEST_RESOURCES_PROMPT = """You are a research assistant. Based on the following transcript, suggest 3-5 relevant resources.
+- Include URLs mentioned in the transcript
+- Suggest related articles, tools, or references
+- Each resource needs a short descriptive label
+- Prioritize actionable, high-value resources
+
+Return as JSON matching the provided schema."""
+
 # JSON Schema for outline response (per research.md)
 OUTLINE_SCHEMA = {
     "name": "outline_response",
@@ -59,6 +67,31 @@ OUTLINE_SCHEMA = {
     },
 }
 
+# JSON Schema for resources response (per research.md)
+RESOURCES_SCHEMA = {
+    "name": "resources_response",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "resources": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string"},
+                        "url_or_note": {"type": "string"},
+                    },
+                    "required": ["label", "url_or_note"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["resources"],
+        "additionalProperties": False,
+    },
+}
+
 
 class SuggestedOutlineItem(BaseModel):
     """A suggested outline item from AI."""
@@ -66,6 +99,13 @@ class SuggestedOutlineItem(BaseModel):
     title: str
     level: int  # 1=chapter, 2=section, 3=subsection
     notes: str | None = None
+
+
+class SuggestedResource(BaseModel):
+    """A suggested resource from AI."""
+
+    label: str
+    url_or_note: str
 
 
 async def clean_transcript(transcript: str) -> str:
@@ -142,4 +182,50 @@ async def suggest_outline(transcript: str) -> list[SuggestedOutlineItem]:
             notes=item.get("notes"),
         )
         for item in items
+    ]
+
+
+async def suggest_resources(transcript: str) -> list[SuggestedResource]:
+    """Generate resource suggestions from a transcript using AI.
+
+    Args:
+        transcript: The transcript text to analyze.
+
+    Returns:
+        A list of suggested resources with label and url_or_note.
+
+    Raises:
+        LLMError: If the AI request fails after retries and fallback.
+    """
+    client = LLMClient()
+
+    request = LLMRequest(
+        messages=[
+            ChatMessage(role="system", content=SUGGEST_RESOURCES_PROMPT),
+            ChatMessage(role="user", content=transcript),
+        ],
+        model="",  # Use provider default
+        temperature=0.7,  # Allow some creativity for resource suggestions
+        max_tokens=1000,  # Resources output is short
+        response_format=ResponseFormat(
+            type="json_schema",
+            json_schema=RESOURCES_SCHEMA,
+        ),
+    )
+
+    response = await client.generate(request)
+
+    # Parse the JSON response
+    if not response.text:
+        return []
+
+    data = json.loads(response.text)
+    resources = data.get("resources", [])
+
+    return [
+        SuggestedResource(
+            label=resource["label"],
+            url_or_note=resource["url_or_note"],
+        )
+        for resource in resources
     ]
