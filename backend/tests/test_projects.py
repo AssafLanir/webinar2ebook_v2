@@ -201,7 +201,7 @@ class TestUpdateProject:
         created_project = create_response.json()["data"]
         project_id = created_project["id"]
 
-        # Update the project
+        # Update the project with canonical StyleConfigEnvelope format
         update_data = {
             "name": "Updated Project Name",
             "webinarType": "training_tutorial",
@@ -216,7 +216,14 @@ class TestUpdateProject:
                 {"id": "vis-1", "title": "Visual 1", "description": "A visual", "selected": True}
             ],
             "draftText": "Updated draft text",
-            "styleConfig": {"audience": "beginners", "tone": "casual"},
+            "styleConfig": {
+                "version": 1,
+                "preset_id": "test_preset",
+                "style": {
+                    "target_audience": "beginners",
+                    "tone": "professional",
+                }
+            },
             "finalTitle": "Final Title",
             "finalSubtitle": "Final Subtitle",
             "creditsText": "Credits here",
@@ -238,7 +245,14 @@ class TestUpdateProject:
         assert len(project["resources"]) == 1
         assert len(project["visuals"]) == 1
         assert project["draftText"] == "Updated draft text"
-        assert project["styleConfig"]["audience"] == "beginners"
+        # StyleConfig is now a StyleConfigEnvelope
+        assert project["styleConfig"]["version"] == 1
+        assert project["styleConfig"]["preset_id"] == "test_preset"
+        assert project["styleConfig"]["style"]["target_audience"] == "beginners"
+        # VisualPlan should be initialized (even if empty)
+        assert project["visualPlan"] is not None
+        assert project["visualPlan"]["opportunities"] == []
+        assert project["visualPlan"]["assets"] == []
         assert project["finalTitle"] == "Final Title"
         assert project["finalSubtitle"] == "Final Subtitle"
         assert project["creditsText"] == "Credits here"

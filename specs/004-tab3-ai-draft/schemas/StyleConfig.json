@@ -1,0 +1,531 @@
+{
+  "$defs": {
+    "AllowedExtrapolation": {
+      "enum": [
+        "none",
+        "light",
+        "moderate"
+      ],
+      "title": "AllowedExtrapolation",
+      "type": "string"
+    },
+    "BookFormat": {
+      "enum": [
+        "playbook",
+        "handbook",
+        "tutorial",
+        "guide",
+        "ebook_marketing",
+        "executive_brief",
+        "course_notes"
+      ],
+      "title": "BookFormat",
+      "type": "string"
+    },
+    "BrandVoice": {
+      "enum": [
+        "neutral",
+        "bold",
+        "playful",
+        "premium",
+        "minimalist"
+      ],
+      "title": "BrandVoice",
+      "type": "string"
+    },
+    "CalloutBlocks": {
+      "enum": [
+        "none",
+        "tip_warning_note"
+      ],
+      "title": "CalloutBlocks",
+      "type": "string"
+    },
+    "CaptionStyle": {
+      "enum": [
+        "short",
+        "explanatory",
+        "instructional"
+      ],
+      "title": "CaptionStyle",
+      "type": "string"
+    },
+    "ChapterLengthTarget": {
+      "enum": [
+        "short",
+        "medium",
+        "long"
+      ],
+      "title": "ChapterLengthTarget",
+      "type": "string"
+    },
+    "CitationStyle": {
+      "enum": [
+        "none",
+        "inline_links",
+        "footnotes_light"
+      ],
+      "title": "CitationStyle",
+      "type": "string"
+    },
+    "DiagramStyle": {
+      "enum": [
+        "simple",
+        "detailed",
+        "brand_like"
+      ],
+      "title": "DiagramStyle",
+      "type": "string"
+    },
+    "FaithfulnessLevel": {
+      "enum": [
+        "strict",
+        "balanced",
+        "creative"
+      ],
+      "title": "FaithfulnessLevel",
+      "type": "string"
+    },
+    "Formality": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Formality",
+      "type": "string"
+    },
+    "HandleQAndA": {
+      "enum": [
+        "append_as_faq",
+        "weave_into_chapters",
+        "omit"
+      ],
+      "title": "HandleQAndA",
+      "type": "string"
+    },
+    "HeadingStyle": {
+      "const": "atx",
+      "enum": [
+        "atx"
+      ],
+      "title": "HeadingStyle",
+      "type": "string"
+    },
+    "IncludeSpeakerQuotes": {
+      "enum": [
+        "none",
+        "sparingly",
+        "often"
+      ],
+      "title": "IncludeSpeakerQuotes",
+      "type": "string"
+    },
+    "Perspective": {
+      "enum": [
+        "we",
+        "you",
+        "third_person"
+      ],
+      "title": "Perspective",
+      "type": "string"
+    },
+    "PrimaryGoal": {
+      "enum": [
+        "teach",
+        "persuade",
+        "inform",
+        "enable_action",
+        "thought_leadership"
+      ],
+      "title": "PrimaryGoal",
+      "type": "string"
+    },
+    "ReaderRole": {
+      "enum": [
+        "founder",
+        "marketer",
+        "sales",
+        "product",
+        "engineer",
+        "hr",
+        "finance",
+        "educator",
+        "general"
+      ],
+      "title": "ReaderRole",
+      "type": "string"
+    },
+    "ReaderTakeawayStyle": {
+      "enum": [
+        "steps",
+        "principles",
+        "templates",
+        "case_studies",
+        "q_and_a"
+      ],
+      "title": "ReaderTakeawayStyle",
+      "type": "string"
+    },
+    "ReadingLevel": {
+      "enum": [
+        "simple",
+        "standard",
+        "technical"
+      ],
+      "title": "ReadingLevel",
+      "type": "string"
+    },
+    "ResolveRepetitions": {
+      "enum": [
+        "keep",
+        "reduce",
+        "aggressive_reduce"
+      ],
+      "title": "ResolveRepetitions",
+      "type": "string"
+    },
+    "SourcePolicy": {
+      "enum": [
+        "transcript_only",
+        "transcript_plus_provided_resources"
+      ],
+      "title": "SourcePolicy",
+      "type": "string"
+    },
+    "TablePreference": {
+      "enum": [
+        "markdown_tables",
+        "bullet_lists"
+      ],
+      "title": "TablePreference",
+      "type": "string"
+    },
+    "TargetAudience": {
+      "enum": [
+        "beginners",
+        "intermediate",
+        "advanced",
+        "mixed"
+      ],
+      "title": "TargetAudience",
+      "type": "string"
+    },
+    "Tone": {
+      "enum": [
+        "friendly",
+        "professional",
+        "authoritative",
+        "conversational",
+        "academic"
+      ],
+      "title": "Tone",
+      "type": "string"
+    },
+    "VisualDensity": {
+      "enum": [
+        "none",
+        "light",
+        "medium",
+        "heavy"
+      ],
+      "title": "VisualDensity",
+      "type": "string"
+    },
+    "VisualSourcePolicy": {
+      "enum": [
+        "client_assets_only",
+        "allow_new_suggestions"
+      ],
+      "title": "VisualSourcePolicy",
+      "type": "string"
+    },
+    "VisualType": {
+      "enum": [
+        "screenshot",
+        "diagram",
+        "chart",
+        "table",
+        "icon",
+        "photo",
+        "other"
+      ],
+      "title": "VisualType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "User-selected options that shape the generated ebook draft.",
+  "properties": {
+    "target_audience": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/TargetAudience"
+        }
+      ],
+      "default": "mixed"
+    },
+    "reader_role": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ReaderRole"
+        }
+      ],
+      "default": "general"
+    },
+    "primary_goal": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PrimaryGoal"
+        }
+      ],
+      "default": "inform"
+    },
+    "reader_takeaway_style": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ReaderTakeawayStyle"
+        }
+      ],
+      "default": "principles"
+    },
+    "tone": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Tone"
+        }
+      ],
+      "default": "professional"
+    },
+    "formality": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Formality"
+        }
+      ],
+      "default": "medium"
+    },
+    "brand_voice": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BrandVoice"
+        }
+      ],
+      "default": "neutral"
+    },
+    "perspective": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Perspective"
+        }
+      ],
+      "default": "you"
+    },
+    "reading_level": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ReadingLevel"
+        }
+      ],
+      "default": "standard"
+    },
+    "book_format": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BookFormat"
+        }
+      ],
+      "default": "guide"
+    },
+    "chapter_count_target": {
+      "default": 8,
+      "maximum": 20,
+      "minimum": 3,
+      "title": "Chapter Count Target",
+      "type": "integer"
+    },
+    "chapter_length_target": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ChapterLengthTarget"
+        }
+      ],
+      "default": "medium"
+    },
+    "include_summary_per_chapter": {
+      "default": true,
+      "title": "Include Summary Per Chapter",
+      "type": "boolean"
+    },
+    "include_key_takeaways": {
+      "default": true,
+      "title": "Include Key Takeaways",
+      "type": "boolean"
+    },
+    "include_action_steps": {
+      "default": true,
+      "title": "Include Action Steps",
+      "type": "boolean"
+    },
+    "include_checklists": {
+      "default": false,
+      "title": "Include Checklists",
+      "type": "boolean"
+    },
+    "include_templates": {
+      "default": false,
+      "title": "Include Templates",
+      "type": "boolean"
+    },
+    "include_examples": {
+      "default": true,
+      "title": "Include Examples",
+      "type": "boolean"
+    },
+    "faithfulness_level": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/FaithfulnessLevel"
+        }
+      ],
+      "default": "balanced"
+    },
+    "allowed_extrapolation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/AllowedExtrapolation"
+        }
+      ],
+      "default": "light"
+    },
+    "source_policy": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SourcePolicy"
+        }
+      ],
+      "default": "transcript_plus_provided_resources"
+    },
+    "citation_style": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/CitationStyle"
+        }
+      ],
+      "default": "inline_links"
+    },
+    "avoid_hallucinations": {
+      "default": true,
+      "title": "Avoid Hallucinations",
+      "type": "boolean"
+    },
+    "visual_density": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualDensity"
+        }
+      ],
+      "default": "light"
+    },
+    "preferred_visual_types": {
+      "items": {
+        "$ref": "#/$defs/VisualType"
+      },
+      "title": "Preferred Visual Types",
+      "type": "array"
+    },
+    "visual_source_policy": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualSourcePolicy"
+        }
+      ],
+      "default": "client_assets_only"
+    },
+    "caption_style": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/CaptionStyle"
+        }
+      ],
+      "default": "explanatory"
+    },
+    "diagram_style": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DiagramStyle"
+        }
+      ],
+      "default": "simple"
+    },
+    "remove_filler": {
+      "default": true,
+      "title": "Remove Filler",
+      "type": "boolean"
+    },
+    "normalize_punctuation": {
+      "default": true,
+      "title": "Normalize Punctuation",
+      "type": "boolean"
+    },
+    "resolve_repetitions": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ResolveRepetitions"
+        }
+      ],
+      "default": "reduce"
+    },
+    "handle_q_and_a": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/HandleQAndA"
+        }
+      ],
+      "default": "append_as_faq"
+    },
+    "include_speaker_quotes": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/IncludeSpeakerQuotes"
+        }
+      ],
+      "default": "sparingly"
+    },
+    "output_format": {
+      "const": "markdown",
+      "default": "markdown",
+      "enum": [
+        "markdown"
+      ],
+      "title": "Output Format",
+      "type": "string"
+    },
+    "heading_style": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/HeadingStyle"
+        }
+      ],
+      "default": "atx"
+    },
+    "callout_blocks": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/CalloutBlocks"
+        }
+      ],
+      "default": "tip_warning_note"
+    },
+    "table_preference": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/TablePreference"
+        }
+      ],
+      "default": "markdown_tables"
+    }
+  },
+  "title": "StyleConfig",
+  "type": "object"
+}

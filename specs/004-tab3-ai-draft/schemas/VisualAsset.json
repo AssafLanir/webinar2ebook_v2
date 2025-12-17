@@ -1,0 +1,119 @@
+{
+  "$defs": {
+    "VisualAssetOrigin": {
+      "enum": [
+        "client_provided",
+        "user_uploaded",
+        "generated",
+        "external_link"
+      ],
+      "title": "VisualAssetOrigin",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "Stable id used for referencing this asset across the app",
+      "title": "Id",
+      "type": "string"
+    },
+    "filename": {
+      "description": "Original filename (or derived name)",
+      "title": "Filename",
+      "type": "string"
+    },
+    "media_type": {
+      "description": "MIME type, e.g. image/png",
+      "title": "Media Type",
+      "type": "string"
+    },
+    "origin": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualAssetOrigin"
+        }
+      ],
+      "default": "client_provided"
+    },
+    "source_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "External link for the asset if applicable",
+      "title": "Source Url"
+    },
+    "storage_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Internal storage key/path if stored by the app",
+      "title": "Storage Key"
+    },
+    "width": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Width"
+    },
+    "height": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Height"
+    },
+    "alt_text": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Accessibility / SEO alt text",
+      "title": "Alt Text"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "filename",
+    "media_type"
+  ],
+  "title": "VisualAsset",
+  "type": "object"
+}
