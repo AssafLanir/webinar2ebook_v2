@@ -1,5 +1,69 @@
 {
   "$defs": {
+    "DraftRegenerateData": {
+      "additionalProperties": false,
+      "description": "Data payload for POST /api/ai/draft/regenerate response.",
+      "properties": {
+        "section_markdown": {
+          "description": "Regenerated section markdown",
+          "title": "Section Markdown",
+          "type": "string"
+        },
+        "section_start_line": {
+          "description": "Start line in original draft",
+          "minimum": 1,
+          "title": "Section Start Line",
+          "type": "integer"
+        },
+        "section_end_line": {
+          "description": "End line in original draft",
+          "minimum": 1,
+          "title": "Section End Line",
+          "type": "integer"
+        },
+        "generation_stats": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GenerationStats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Generation statistics"
+        }
+      },
+      "required": [
+        "section_markdown",
+        "section_start_line",
+        "section_end_line"
+      ],
+      "title": "DraftRegenerateData",
+      "type": "object"
+    },
+    "ErrorDetail": {
+      "additionalProperties": false,
+      "description": "Error detail structure for API responses.",
+      "properties": {
+        "code": {
+          "description": "Machine-readable error code",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "description": "Human-readable error message",
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ErrorDetail",
+      "type": "object"
+    },
     "GenerationStats": {
       "additionalProperties": false,
       "description": "Statistics about the completed generation.",
@@ -73,56 +137,33 @@
     }
   },
   "additionalProperties": false,
-  "description": "Response for POST /api/ai/draft/regenerate.",
+  "description": "Envelope for POST /api/ai/draft/regenerate response.",
   "properties": {
-    "section_markdown": {
-      "description": "Regenerated section markdown",
-      "title": "Section Markdown",
-      "type": "string"
-    },
-    "section_start_line": {
-      "description": "Start line in original draft",
-      "minimum": 1,
-      "title": "Section Start Line",
-      "type": "integer"
-    },
-    "section_end_line": {
-      "description": "End line in original draft",
-      "minimum": 1,
-      "title": "Section End Line",
-      "type": "integer"
-    },
-    "generation_stats": {
+    "data": {
       "anyOf": [
         {
-          "$ref": "#/$defs/GenerationStats"
+          "$ref": "#/$defs/DraftRegenerateData"
         },
         {
           "type": "null"
         }
       ],
       "default": null,
-      "description": "Generation statistics"
+      "description": "Response data on success"
     },
     "error": {
       "anyOf": [
         {
-          "type": "string"
+          "$ref": "#/$defs/ErrorDetail"
         },
         {
           "type": "null"
         }
       ],
       "default": null,
-      "description": "Error message if failed",
-      "title": "Error"
+      "description": "Error details on failure"
     }
   },
-  "required": [
-    "section_markdown",
-    "section_start_line",
-    "section_end_line"
-  ],
   "title": "DraftRegenerateResponse",
   "type": "object"
 }

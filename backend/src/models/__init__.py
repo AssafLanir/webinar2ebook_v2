@@ -72,11 +72,19 @@ from .api_responses import (
     GenerationProgress,
     TokenUsage,
     GenerationStats,
+    ErrorDetail,
+    # Request models
     DraftGenerateRequest,
+    DraftRegenerateRequest,
+    # Data models (inner payload)
+    DraftGenerateData,
+    DraftStatusData,
+    DraftCancelData,
+    DraftRegenerateData,
+    # Response envelopes
     DraftGenerateResponse,
     DraftStatusResponse,
     DraftCancelResponse,
-    DraftRegenerateRequest,
     DraftRegenerateResponse,
 )
 
@@ -146,10 +154,18 @@ __all__ = [
     "GenerationProgress",
     "TokenUsage",
     "GenerationStats",
+    "ErrorDetail",
+    # Request models
     "DraftGenerateRequest",
+    "DraftRegenerateRequest",
+    # Data models (inner payload)
+    "DraftGenerateData",
+    "DraftStatusData",
+    "DraftCancelData",
+    "DraftRegenerateData",
+    # Response envelopes
     "DraftGenerateResponse",
     "DraftStatusResponse",
     "DraftCancelResponse",
-    "DraftRegenerateRequest",
     "DraftRegenerateResponse",
 ]

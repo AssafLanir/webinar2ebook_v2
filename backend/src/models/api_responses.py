@@ -5,18 +5,22 @@ These models define the async job pattern for long-running generation:
 2. GET /api/ai/draft/status/:job_id -> progress updates
 3. POST /api/ai/draft/cancel/:job_id -> cancellation
 
+All responses use the standard { data, error } envelope pattern.
+
 Pydantic v2. Extra fields are forbidden to prevent drift.
 """
 
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional, List
+from typing import Optional, List, Generic, TypeVar
 
 from pydantic import BaseModel, Field, ConfigDict
 
 from .draft_plan import DraftPlan
 from .visuals import VisualPlan
+
+T = TypeVar("T")
 
 
 class JobStatus(str, Enum):
@@ -63,6 +67,10 @@ class GenerationStats(BaseModel):
     tokens_used: TokenUsage = Field(description="Token usage breakdown")
 
 
+# ============================================================================
+# Request Models
+# ============================================================================
+
 class DraftGenerateRequest(BaseModel):
     """Request body for draft generation."""
     model_config = ConfigDict(extra="forbid")
@@ -73,8 +81,22 @@ class DraftGenerateRequest(BaseModel):
     style_config: dict = Field(description="StyleConfig or StyleConfigEnvelope")
 
 
-class DraftGenerateResponse(BaseModel):
-    """Response for POST /api/ai/draft/generate.
+class DraftRegenerateRequest(BaseModel):
+    """Request body for section regeneration."""
+    model_config = ConfigDict(extra="forbid")
+
+    section_outline_item_id: str = Field(description="Outline item ID to regenerate")
+    draft_plan: dict = Field(description="Original DraftPlan")
+    existing_draft: str = Field(description="Current full markdown draft")
+    style_config: dict = Field(description="StyleConfig or StyleConfigEnvelope")
+
+
+# ============================================================================
+# Response Data Models (inner payload, NOT the envelope)
+# ============================================================================
+
+class DraftGenerateData(BaseModel):
+    """Data payload for POST /api/ai/draft/generate response.
 
     Returns immediately with job_id for polling.
     If generation is fast enough, may return completed result directly.
@@ -106,19 +128,9 @@ class DraftGenerateResponse(BaseModel):
         description="Generation statistics (only when completed)"
     )
 
-    # Error info (only when status == failed)
-    error: Optional[str] = Field(
-        default=None,
-        description="Error message (only when failed)"
-    )
-    error_code: Optional[str] = Field(
-        default=None,
-        description="Error code for programmatic handling"
-    )
 
-
-class DraftStatusResponse(BaseModel):
-    """Response for GET /api/ai/draft/status/:job_id.
+class DraftStatusData(BaseModel):
+    """Data payload for GET /api/ai/draft/status/:job_id response.
 
     Used for polling job progress.
     """
@@ -159,19 +171,9 @@ class DraftStatusResponse(BaseModel):
         description="Number of chapters available in partial draft"
     )
 
-    # Error info
-    error: Optional[str] = Field(
-        default=None,
-        description="Error message (only when failed)"
-    )
-    error_code: Optional[str] = Field(
-        default=None,
-        description="Error code for programmatic handling"
-    )
 
-
-class DraftCancelResponse(BaseModel):
-    """Response for POST /api/ai/draft/cancel/:job_id."""
+class DraftCancelData(BaseModel):
+    """Data payload for POST /api/ai/draft/cancel/:job_id response."""
     model_config = ConfigDict(extra="forbid")
 
     job_id: str = Field(description="Job identifier")
@@ -190,18 +192,8 @@ class DraftCancelResponse(BaseModel):
     )
 
 
-class DraftRegenerateRequest(BaseModel):
-    """Request body for section regeneration."""
-    model_config = ConfigDict(extra="forbid")
-
-    section_outline_item_id: str = Field(description="Outline item ID to regenerate")
-    draft_plan: dict = Field(description="Original DraftPlan")
-    existing_draft: str = Field(description="Current full markdown draft")
-    style_config: dict = Field(description="StyleConfig or StyleConfigEnvelope")
-
-
-class DraftRegenerateResponse(BaseModel):
-    """Response for POST /api/ai/draft/regenerate."""
+class DraftRegenerateData(BaseModel):
+    """Data payload for POST /api/ai/draft/regenerate response."""
     model_config = ConfigDict(extra="forbid")
 
     section_markdown: str = Field(description="Regenerated section markdown")
@@ -211,4 +203,56 @@ class DraftRegenerateResponse(BaseModel):
         default=None,
         description="Generation statistics"
     )
-    error: Optional[str] = Field(default=None, description="Error message if failed")
+
+
+# ============================================================================
+# Envelope Models (standard { data, error } pattern)
+# ============================================================================
+
+class ErrorDetail(BaseModel):
+    """Error detail structure for API responses."""
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(description="Machine-readable error code")
+    message: str = Field(description="Human-readable error message")
+
+
+class DraftGenerateResponse(BaseModel):
+    """Envelope for POST /api/ai/draft/generate response."""
+    model_config = ConfigDict(extra="forbid")
+
+    data: Optional[DraftGenerateData] = Field(default=None, description="Response data on success")
+    error: Optional[ErrorDetail] = Field(default=None, description="Error details on failure")
+
+
+class DraftStatusResponse(BaseModel):
+    """Envelope for GET /api/ai/draft/status/:job_id response."""
+    model_config = ConfigDict(extra="forbid")
+
+    data: Optional[DraftStatusData] = Field(default=None, description="Response data on success")
+    error: Optional[ErrorDetail] = Field(default=None, description="Error details on failure")
+
+
+class DraftCancelResponse(BaseModel):
+    """Envelope for POST /api/ai/draft/cancel/:job_id response."""
+    model_config = ConfigDict(extra="forbid")
+
+    data: Optional[DraftCancelData] = Field(default=None, description="Response data on success")
+    error: Optional[ErrorDetail] = Field(default=None, description="Error details on failure")
+
+
+class DraftRegenerateResponse(BaseModel):
+    """Envelope for POST /api/ai/draft/regenerate response."""
+    model_config = ConfigDict(extra="forbid")
+
+    data: Optional[DraftRegenerateData] = Field(default=None, description="Response data on success")
+    error: Optional[ErrorDetail] = Field(default=None, description="Error details on failure")
+
+
+# ============================================================================
+# Legacy aliases for backward compatibility
+# (Tests may use these directly - keeping them as aliases)
+# ============================================================================
+
+# Note: These are kept for backward compatibility but new code should use
+# the *Data models for inner payload and *Response for envelopes

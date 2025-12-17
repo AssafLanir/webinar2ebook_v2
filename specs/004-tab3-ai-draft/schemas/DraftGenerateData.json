@@ -60,92 +60,6 @@
       "title": "ChapterPlan",
       "type": "object"
     },
-    "DraftGenerateData": {
-      "additionalProperties": false,
-      "description": "Data payload for POST /api/ai/draft/generate response.\n\nReturns immediately with job_id for polling.\nIf generation is fast enough, may return completed result directly.",
-      "properties": {
-        "job_id": {
-          "description": "Unique job identifier for polling",
-          "title": "Job Id",
-          "type": "string"
-        },
-        "status": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/JobStatus"
-            }
-          ],
-          "description": "Current job status"
-        },
-        "progress": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/GenerationProgress"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Progress info (if generating)"
-        },
-        "draft_markdown": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Generated markdown (only when completed)",
-          "title": "Draft Markdown"
-        },
-        "draft_plan": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DraftPlan"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Generation plan (only when completed)"
-        },
-        "visual_plan": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/VisualPlan"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Visual opportunities (only when completed)"
-        },
-        "generation_stats": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/GenerationStats"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Generation statistics (only when completed)"
-        }
-      },
-      "required": [
-        "job_id",
-        "status"
-      ],
-      "title": "DraftGenerateData",
-      "type": "object"
-    },
     "DraftPlan": {
       "additionalProperties": false,
       "description": "The complete generation plan for an ebook draft.\n\nGenerated before actual chapter content is written.\nEnables chunked generation and regeneration of sections.",
@@ -192,28 +106,6 @@
         "generation_metadata"
       ],
       "title": "DraftPlan",
-      "type": "object"
-    },
-    "ErrorDetail": {
-      "additionalProperties": false,
-      "description": "Error detail structure for API responses.",
-      "properties": {
-        "code": {
-          "description": "Machine-readable error code",
-          "title": "Code",
-          "type": "string"
-        },
-        "message": {
-          "description": "Human-readable error message",
-          "title": "Message",
-          "type": "string"
-        }
-      },
-      "required": [
-        "code",
-        "message"
-      ],
-      "title": "ErrorDetail",
       "type": "object"
     },
     "GenerationMetadata": {
@@ -718,33 +610,87 @@
     }
   },
   "additionalProperties": false,
-  "description": "Envelope for POST /api/ai/draft/generate response.",
+  "description": "Data payload for POST /api/ai/draft/generate response.\n\nReturns immediately with job_id for polling.\nIf generation is fast enough, may return completed result directly.",
   "properties": {
-    "data": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/DraftGenerateData"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Response data on success"
+    "job_id": {
+      "description": "Unique job identifier for polling",
+      "title": "Job Id",
+      "type": "string"
     },
-    "error": {
+    "status": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/JobStatus"
+        }
+      ],
+      "description": "Current job status"
+    },
+    "progress": {
       "anyOf": [
         {
-          "$ref": "#/$defs/ErrorDetail"
+          "$ref": "#/$defs/GenerationProgress"
         },
         {
           "type": "null"
         }
       ],
       "default": null,
-      "description": "Error details on failure"
+      "description": "Progress info (if generating)"
+    },
+    "draft_markdown": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Generated markdown (only when completed)",
+      "title": "Draft Markdown"
+    },
+    "draft_plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DraftPlan"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Generation plan (only when completed)"
+    },
+    "visual_plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/VisualPlan"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Visual opportunities (only when completed)"
+    },
+    "generation_stats": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GenerationStats"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Generation statistics (only when completed)"
     }
   },
-  "title": "DraftGenerateResponse",
+  "required": [
+    "job_id",
+    "status"
+  ],
+  "title": "DraftGenerateData",
   "type": "object"
 }

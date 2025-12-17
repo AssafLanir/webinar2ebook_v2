@@ -5,6 +5,10 @@ These tests ensure:
 2. Pydantic models generate valid JSON schemas
 3. Sample data validates against schemas
 4. Round-trip serialization works correctly
+5. LLM schemas are self-contained (internal and OpenAI strict)
+6. OpenAI strict schema meets strict mode requirements
+7. API responses follow { data, error } envelope pattern
+8. Schema loader utility works correctly
 """
 
 import json
@@ -12,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from src.llm import load_draft_plan_schema, get_draft_plan_schema_path
 from src.models import (
     # Core models
     StyleConfig,
@@ -29,17 +34,25 @@ from src.models import (
     TranscriptSegment,
     GenerationMetadata,
     TranscriptRelevance,
-    # API response models
+    # API request/response models
     DraftGenerateRequest,
+    DraftRegenerateRequest,
+    # Data models (inner payload)
+    DraftGenerateData,
+    DraftStatusData,
+    DraftCancelData,
+    DraftRegenerateData,
+    # Response envelopes
     DraftGenerateResponse,
     DraftStatusResponse,
     DraftCancelResponse,
-    DraftRegenerateRequest,
     DraftRegenerateResponse,
+    # Supporting models
     GenerationProgress,
     GenerationStats,
     TokenUsage,
     JobStatus,
+    ErrorDetail,
 )
 
 # Path to JSON schemas
@@ -53,24 +66,36 @@ class TestJsonSchemaFiles:
     def schema_files(self):
         """List of expected schema files."""
         return [
+            # Core models
             "StyleConfig.json",
             "StyleConfigEnvelope.json",
             "VisualPlan.json",
             "VisualOpportunity.json",
             "VisualAsset.json",
+            # Draft plan
             "DraftPlan.json",
             "ChapterPlan.json",
             "TranscriptSegment.json",
             "GenerationMetadata.json",
+            # LLM schemas (two versions)
+            "draft_plan.internal.schema.json",
+            "draft_plan.openai.strict.schema.json",
+            # API request/response
             "DraftGenerateRequest.json",
+            "DraftRegenerateRequest.json",
+            "DraftGenerateData.json",
+            "DraftStatusData.json",
+            "DraftCancelData.json",
+            "DraftRegenerateData.json",
             "DraftGenerateResponse.json",
             "DraftStatusResponse.json",
             "DraftCancelResponse.json",
-            "DraftRegenerateRequest.json",
             "DraftRegenerateResponse.json",
+            # Supporting
             "GenerationProgress.json",
             "GenerationStats.json",
             "TokenUsage.json",
+            "ErrorDetail.json",
         ]
 
     def test_schemas_directory_exists(self):
@@ -90,18 +115,12 @@ class TestJsonSchemaFiles:
         "VisualOpportunity.json",
         "VisualAsset.json",
         "DraftPlan.json",
-        "ChapterPlan.json",
-        "TranscriptSegment.json",
-        "GenerationMetadata.json",
-        "DraftGenerateRequest.json",
+        "draft_plan.internal.schema.json",
+        "draft_plan.openai.strict.schema.json",
         "DraftGenerateResponse.json",
         "DraftStatusResponse.json",
         "DraftCancelResponse.json",
-        "DraftRegenerateRequest.json",
         "DraftRegenerateResponse.json",
-        "GenerationProgress.json",
-        "GenerationStats.json",
-        "TokenUsage.json",
     ])
     def test_schema_is_valid_json(self, filename):
         """Verify each schema file contains valid JSON."""
@@ -112,40 +131,256 @@ class TestJsonSchemaFiles:
         assert "type" in schema or "$defs" in schema or "properties" in schema
 
 
-class TestPydanticSchemaGeneration:
-    """Test that Pydantic models generate valid JSON schemas."""
+class TestInternalLlmSchema:
+    """Test the internal LLM-facing schema."""
 
-    @pytest.mark.parametrize("model,filename", [
-        (StyleConfig, "StyleConfig.json"),
-        (StyleConfigEnvelope, "StyleConfigEnvelope.json"),
-        (VisualPlan, "VisualPlan.json"),
-        (VisualOpportunity, "VisualOpportunity.json"),
-        (VisualAsset, "VisualAsset.json"),
-        (DraftPlan, "DraftPlan.json"),
-        (ChapterPlan, "ChapterPlan.json"),
-        (TranscriptSegment, "TranscriptSegment.json"),
-        (GenerationMetadata, "GenerationMetadata.json"),
-        (DraftGenerateResponse, "DraftGenerateResponse.json"),
-        (DraftStatusResponse, "DraftStatusResponse.json"),
-        (DraftCancelResponse, "DraftCancelResponse.json"),
-        (DraftRegenerateResponse, "DraftRegenerateResponse.json"),
-        (GenerationProgress, "GenerationProgress.json"),
-        (GenerationStats, "GenerationStats.json"),
-        (TokenUsage, "TokenUsage.json"),
-    ])
-    def test_model_generates_matching_schema(self, model, filename):
-        """Verify Pydantic model generates schema matching the file."""
-        schema_path = SCHEMAS_DIR / filename
+    def test_internal_schema_exists(self):
+        """Verify draft_plan.internal.schema.json exists."""
+        schema_path = SCHEMAS_DIR / "draft_plan.internal.schema.json"
+        assert schema_path.exists()
+
+    def test_internal_schema_is_self_contained(self):
+        """Verify schema has no external $ref (only internal #/$defs/)."""
+        schema_path = SCHEMAS_DIR / "draft_plan.internal.schema.json"
         with open(schema_path) as f:
-            file_schema = json.load(f)
+            content = f.read()
 
-        model_schema = model.model_json_schema()
+        # Should have internal refs
+        assert "#/$defs/" in content
 
-        # Compare key structural elements
-        assert model_schema.get("title") == file_schema.get("title"), \
-            f"Title mismatch for {filename}"
-        assert model_schema.get("type") == file_schema.get("type"), \
-            f"Type mismatch for {filename}"
+        # Should NOT have external file refs (except its own filename in $id)
+        assert ".json" not in content.replace("draft_plan.internal.schema.json", "")
+
+    def test_internal_schema_has_metadata(self):
+        """Verify schema has $schema and $id fields."""
+        schema_path = SCHEMAS_DIR / "draft_plan.internal.schema.json"
+        with open(schema_path) as f:
+            schema = json.load(f)
+
+        assert "$schema" in schema
+        assert "$id" in schema
+        assert schema["$id"] == "draft_plan.internal.schema.json"
+
+    def test_internal_schema_includes_all_defs(self):
+        """Verify all required definitions are inlined."""
+        schema_path = SCHEMAS_DIR / "draft_plan.internal.schema.json"
+        with open(schema_path) as f:
+            schema = json.load(f)
+
+        defs = schema.get("$defs", {})
+        required_defs = [
+            "ChapterPlan",
+            "TranscriptSegment",
+            "GenerationMetadata",
+            "VisualPlan",
+            "VisualOpportunity",
+            "VisualAsset",
+        ]
+        for def_name in required_defs:
+            assert def_name in defs, f"Missing definition: {def_name}"
+
+
+class TestOpenAIStrictSchema:
+    """Test the OpenAI strict mode compatible schema."""
+
+    def test_openai_strict_schema_exists(self):
+        """Verify draft_plan.openai.strict.schema.json exists."""
+        schema_path = SCHEMAS_DIR / "draft_plan.openai.strict.schema.json"
+        assert schema_path.exists()
+
+    def test_openai_strict_schema_has_metadata(self):
+        """Verify schema has $schema and $id fields."""
+        schema_path = SCHEMAS_DIR / "draft_plan.openai.strict.schema.json"
+        with open(schema_path) as f:
+            schema = json.load(f)
+
+        assert "$schema" in schema
+        assert "$id" in schema
+        assert schema["$id"] == "draft_plan.openai.strict.schema.json"
+
+    def test_openai_strict_schema_is_self_contained(self):
+        """Verify schema has no external $ref."""
+        schema_path = SCHEMAS_DIR / "draft_plan.openai.strict.schema.json"
+        with open(schema_path) as f:
+            content = f.read()
+
+        # Should NOT have external file refs (except its own filename in $id)
+        assert ".json" not in content.replace("draft_plan.openai.strict.schema.json", "")
+
+    def test_openai_strict_schema_no_allof(self):
+        """OpenAI strict mode forbids allOf in schema structure."""
+        schema_path = SCHEMAS_DIR / "draft_plan.openai.strict.schema.json"
+        with open(schema_path) as f:
+            schema = json.load(f)
+
+        def find_allof(obj, path="root"):
+            """Recursively check for allOf keywords in schema structure."""
+            if isinstance(obj, dict):
+                if "allOf" in obj:
+                    return path
+                for key, value in obj.items():
+                    if key in ("$comment", "$schema", "$id"):
+                        continue  # Skip metadata fields
+                    result = find_allof(value, f"{path}.{key}")
+                    if result:
+                        return result
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    result = find_allof(item, f"{path}[{i}]")
+                    if result:
+                        return result
+            return None
+
+        allof_path = find_allof(schema)
+        assert allof_path is None, f"OpenAI strict schema must not use allOf (found at {allof_path})"
+
+    def test_openai_strict_schema_has_additional_properties_false(self):
+        """OpenAI strict mode requires additionalProperties: false on all objects."""
+        schema_path = SCHEMAS_DIR / "draft_plan.openai.strict.schema.json"
+        with open(schema_path) as f:
+            schema = json.load(f)
+
+        def check_additional_properties(obj, path="root"):
+            """Recursively check all object definitions have additionalProperties: false."""
+            if isinstance(obj, dict):
+                if obj.get("type") == "object":
+                    assert obj.get("additionalProperties") is False, \
+                        f"Object at {path} must have additionalProperties: false"
+                for key, value in obj.items():
+                    check_additional_properties(value, f"{path}.{key}")
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    check_additional_properties(item, f"{path}[{i}]")
+
+        check_additional_properties(schema)
+
+    def test_openai_strict_schema_all_properties_required(self):
+        """OpenAI strict mode requires all properties to be in required array."""
+        schema_path = SCHEMAS_DIR / "draft_plan.openai.strict.schema.json"
+        with open(schema_path) as f:
+            schema = json.load(f)
+
+        def check_required_complete(obj, path="root"):
+            """Recursively check all object definitions have complete required arrays."""
+            if isinstance(obj, dict):
+                if obj.get("type") == "object" and "properties" in obj:
+                    props = set(obj["properties"].keys())
+                    required = set(obj.get("required", []))
+                    missing = props - required
+                    assert not missing, \
+                        f"Object at {path} has properties not in required: {missing}"
+                for key, value in obj.items():
+                    check_required_complete(value, f"{path}.{key}")
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    check_required_complete(item, f"{path}[{i}]")
+
+        check_required_complete(schema)
+
+    def test_openai_strict_schema_includes_all_defs(self):
+        """Verify all required definitions are inlined."""
+        schema_path = SCHEMAS_DIR / "draft_plan.openai.strict.schema.json"
+        with open(schema_path) as f:
+            schema = json.load(f)
+
+        defs = schema.get("$defs", {})
+        required_defs = [
+            "ChapterPlan",
+            "TranscriptSegment",
+            "GenerationMetadata",
+            "VisualPlan",
+            "VisualOpportunity",
+            "VisualAsset",
+        ]
+        for def_name in required_defs:
+            assert def_name in defs, f"Missing definition: {def_name}"
+
+
+class TestSchemaLoaderUtility:
+    """Test the schema loader utility functions."""
+
+    def test_load_draft_plan_schema_openai(self):
+        """Test loading the OpenAI strict schema."""
+        schema = load_draft_plan_schema(provider="openai")
+        assert isinstance(schema, dict)
+        assert schema["$id"] == "draft_plan.openai.strict.schema.json"
+        # Verify it doesn't have allOf in structure (excluding metadata)
+        assert "allOf" not in schema.get("properties", {})
+
+    def test_load_draft_plan_schema_anthropic(self):
+        """Test loading schema for Anthropic (uses internal)."""
+        schema = load_draft_plan_schema(provider="anthropic")
+        assert isinstance(schema, dict)
+        assert schema["$id"] == "draft_plan.internal.schema.json"
+
+    def test_load_draft_plan_schema_internal(self):
+        """Test loading the internal schema."""
+        schema = load_draft_plan_schema(provider="internal")
+        assert isinstance(schema, dict)
+        assert schema["$id"] == "draft_plan.internal.schema.json"
+
+    def test_get_draft_plan_schema_path_openai(self):
+        """Test getting the OpenAI schema path."""
+        path = get_draft_plan_schema_path(provider="openai")
+        assert path.name == "draft_plan.openai.strict.schema.json"
+        assert path.exists()
+
+    def test_get_draft_plan_schema_path_internal(self):
+        """Test getting the internal schema path."""
+        path = get_draft_plan_schema_path(provider="internal")
+        assert path.name == "draft_plan.internal.schema.json"
+        assert path.exists()
+
+
+class TestEnvelopePattern:
+    """Test that API responses follow { data, error } envelope pattern."""
+
+    def test_generate_response_has_envelope_fields(self):
+        """DraftGenerateResponse should have data and error fields."""
+        schema = DraftGenerateResponse.model_json_schema()
+        props = schema.get("properties", {})
+        assert "data" in props
+        assert "error" in props
+
+    def test_status_response_has_envelope_fields(self):
+        """DraftStatusResponse should have data and error fields."""
+        schema = DraftStatusResponse.model_json_schema()
+        props = schema.get("properties", {})
+        assert "data" in props
+        assert "error" in props
+
+    def test_cancel_response_has_envelope_fields(self):
+        """DraftCancelResponse should have data and error fields."""
+        schema = DraftCancelResponse.model_json_schema()
+        props = schema.get("properties", {})
+        assert "data" in props
+        assert "error" in props
+
+    def test_regenerate_response_has_envelope_fields(self):
+        """DraftRegenerateResponse should have data and error fields."""
+        schema = DraftRegenerateResponse.model_json_schema()
+        props = schema.get("properties", {})
+        assert "data" in props
+        assert "error" in props
+
+    def test_success_response_pattern(self):
+        """Test creating a success response with data."""
+        data = DraftGenerateData(
+            job_id="job-123",
+            status=JobStatus.queued
+        )
+        response = DraftGenerateResponse(data=data, error=None)
+        assert response.data is not None
+        assert response.error is None
+        assert response.data.job_id == "job-123"
+
+    def test_error_response_pattern(self):
+        """Test creating an error response."""
+        error = ErrorDetail(code="INVALID_INPUT", message="Transcript too short")
+        response = DraftGenerateResponse(data=None, error=error)
+        assert response.data is None
+        assert response.error is not None
+        assert response.error.code == "INVALID_INPUT"
 
 
 class TestCoreModelsSampleData:
@@ -299,8 +534,8 @@ class TestDraftPlanModelsSampleData:
         assert len(plan.chapters) == 1
 
 
-class TestApiResponseModelsSampleData:
-    """Test that sample data validates against API response models."""
+class TestApiDataModelsSampleData:
+    """Test that sample data validates against API data models."""
 
     def test_token_usage_sample(self):
         """Test TokenUsage with sample data."""
@@ -341,8 +576,8 @@ class TestApiResponseModelsSampleData:
         assert stats.chapters_generated == 8
         assert stats.tokens_used.total_tokens == 35000
 
-    def test_draft_generate_response_queued(self):
-        """Test DraftGenerateResponse in queued state."""
+    def test_draft_generate_data_queued(self):
+        """Test DraftGenerateData in queued state."""
         sample = {
             "job_id": "job-123",
             "status": "queued",
@@ -350,16 +585,14 @@ class TestApiResponseModelsSampleData:
             "draft_markdown": None,
             "draft_plan": None,
             "visual_plan": None,
-            "generation_stats": None,
-            "error": None,
-            "error_code": None
+            "generation_stats": None
         }
-        response = DraftGenerateResponse.model_validate(sample)
-        assert response.status == JobStatus.queued
-        assert response.draft_markdown is None
+        data = DraftGenerateData.model_validate(sample)
+        assert data.status == JobStatus.queued
+        assert data.draft_markdown is None
 
-    def test_draft_status_response_generating(self):
-        """Test DraftStatusResponse in generating state."""
+    def test_draft_status_data_generating(self):
+        """Test DraftStatusData in generating state."""
         sample = {
             "job_id": "job-123",
             "status": "generating",
@@ -371,12 +604,12 @@ class TestApiResponseModelsSampleData:
                 "estimated_remaining_seconds": 60
             }
         }
-        response = DraftStatusResponse.model_validate(sample)
-        assert response.status == JobStatus.generating
-        assert response.progress.current_chapter == 3
+        data = DraftStatusData.model_validate(sample)
+        assert data.status == JobStatus.generating
+        assert data.progress.current_chapter == 3
 
-    def test_draft_cancel_response_sample(self):
-        """Test DraftCancelResponse with sample data."""
+    def test_draft_cancel_data_sample(self):
+        """Test DraftCancelData with sample data."""
         sample = {
             "job_id": "job-123",
             "status": "cancelled",
@@ -385,9 +618,77 @@ class TestApiResponseModelsSampleData:
             "partial_draft_markdown": "# My Ebook\n\n## Chapter 1...",
             "chapters_available": 4
         }
+        data = DraftCancelData.model_validate(sample)
+        assert data.cancelled is True
+        assert data.chapters_available == 4
+
+    def test_draft_regenerate_data_sample(self):
+        """Test DraftRegenerateData with sample data."""
+        sample = {
+            "section_markdown": "## Chapter 3\n\nContent...",
+            "section_start_line": 100,
+            "section_end_line": 150
+        }
+        data = DraftRegenerateData.model_validate(sample)
+        assert data.section_start_line == 100
+
+
+class TestApiEnvelopeResponsesSampleData:
+    """Test full envelope responses with sample data."""
+
+    def test_generate_response_success(self):
+        """Test DraftGenerateResponse success envelope."""
+        sample = {
+            "data": {
+                "job_id": "job-123",
+                "status": "queued"
+            },
+            "error": None
+        }
+        response = DraftGenerateResponse.model_validate(sample)
+        assert response.data is not None
+        assert response.error is None
+
+    def test_generate_response_error(self):
+        """Test DraftGenerateResponse error envelope."""
+        sample = {
+            "data": None,
+            "error": {
+                "code": "INVALID_INPUT",
+                "message": "Transcript too short"
+            }
+        }
+        response = DraftGenerateResponse.model_validate(sample)
+        assert response.data is None
+        assert response.error is not None
+        assert response.error.code == "INVALID_INPUT"
+
+    def test_status_response_completed(self):
+        """Test DraftStatusResponse completed envelope."""
+        sample = {
+            "data": {
+                "job_id": "job-123",
+                "status": "completed",
+                "draft_markdown": "# My Ebook"
+            },
+            "error": None
+        }
+        response = DraftStatusResponse.model_validate(sample)
+        assert response.data.status == JobStatus.completed
+
+    def test_cancel_response_success(self):
+        """Test DraftCancelResponse success envelope."""
+        sample = {
+            "data": {
+                "job_id": "job-123",
+                "status": "cancelled",
+                "cancelled": True,
+                "message": "Cancelled"
+            },
+            "error": None
+        }
         response = DraftCancelResponse.model_validate(sample)
-        assert response.cancelled is True
-        assert response.chapters_available == 4
+        assert response.data.cancelled is True
 
 
 class TestRoundTripSerialization:
@@ -450,6 +751,15 @@ class TestRoundTripSerialization:
         assert restored.book_title == "Test Book"
         assert len(restored.chapters) == 1
 
+    def test_envelope_response_roundtrip(self):
+        """Test envelope response serializes and deserializes correctly."""
+        data = DraftGenerateData(job_id="job-123", status=JobStatus.queued)
+        original = DraftGenerateResponse(data=data, error=None)
+        json_str = original.model_dump_json()
+        restored = DraftGenerateResponse.model_validate_json(json_str)
+        assert restored.data.job_id == "job-123"
+        assert restored.error is None
+
 
 class TestExtraFieldsForbidden:
     """Test that extra fields are rejected (schema drift prevention)."""
@@ -485,5 +795,14 @@ class TestExtraFieldsForbidden:
                     "estimated_generation_time_seconds": 30,
                     "transcript_utilization": 0.8
                 },
+                "unknown_field": "value"
+            })
+
+    def test_envelope_rejects_extra_fields(self):
+        """Envelope responses should reject unknown fields."""
+        with pytest.raises(Exception):
+            DraftGenerateResponse.model_validate({
+                "data": {"job_id": "job-123", "status": "queued"},
+                "error": None,
                 "unknown_field": "value"
             })

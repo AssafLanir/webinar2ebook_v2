@@ -1,4 +1,7 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "draft_plan.internal.schema.json",
+  "$comment": "Internal schema for DraftPlan. Self-contained with all definitions inlined. Use for tests, documentation, and non-OpenAI providers.",
   "$defs": {
     "ChapterPlan": {
       "additionalProperties": false,
@@ -60,162 +63,6 @@
       "title": "ChapterPlan",
       "type": "object"
     },
-    "DraftGenerateData": {
-      "additionalProperties": false,
-      "description": "Data payload for POST /api/ai/draft/generate response.\n\nReturns immediately with job_id for polling.\nIf generation is fast enough, may return completed result directly.",
-      "properties": {
-        "job_id": {
-          "description": "Unique job identifier for polling",
-          "title": "Job Id",
-          "type": "string"
-        },
-        "status": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/JobStatus"
-            }
-          ],
-          "description": "Current job status"
-        },
-        "progress": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/GenerationProgress"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Progress info (if generating)"
-        },
-        "draft_markdown": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Generated markdown (only when completed)",
-          "title": "Draft Markdown"
-        },
-        "draft_plan": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DraftPlan"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Generation plan (only when completed)"
-        },
-        "visual_plan": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/VisualPlan"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Visual opportunities (only when completed)"
-        },
-        "generation_stats": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/GenerationStats"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Generation statistics (only when completed)"
-        }
-      },
-      "required": [
-        "job_id",
-        "status"
-      ],
-      "title": "DraftGenerateData",
-      "type": "object"
-    },
-    "DraftPlan": {
-      "additionalProperties": false,
-      "description": "The complete generation plan for an ebook draft.\n\nGenerated before actual chapter content is written.\nEnables chunked generation and regeneration of sections.",
-      "properties": {
-        "version": {
-          "default": 1,
-          "description": "Schema version for migrations",
-          "minimum": 1,
-          "title": "Version",
-          "type": "integer"
-        },
-        "book_title": {
-          "description": "Title of the generated ebook",
-          "title": "Book Title",
-          "type": "string"
-        },
-        "chapters": {
-          "description": "Planned chapters with mapped content",
-          "items": {
-            "$ref": "#/$defs/ChapterPlan"
-          },
-          "title": "Chapters",
-          "type": "array"
-        },
-        "visual_plan": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/VisualPlan"
-            }
-          ],
-          "description": "Visual opportunities generated alongside the plan"
-        },
-        "generation_metadata": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/GenerationMetadata"
-            }
-          ],
-          "description": "Metadata about the generation plan"
-        }
-      },
-      "required": [
-        "book_title",
-        "generation_metadata"
-      ],
-      "title": "DraftPlan",
-      "type": "object"
-    },
-    "ErrorDetail": {
-      "additionalProperties": false,
-      "description": "Error detail structure for API responses.",
-      "properties": {
-        "code": {
-          "description": "Machine-readable error code",
-          "title": "Code",
-          "type": "string"
-        },
-        "message": {
-          "description": "Human-readable error message",
-          "title": "Message",
-          "type": "string"
-        }
-      },
-      "required": [
-        "code",
-        "message"
-      ],
-      "title": "ErrorDetail",
-      "type": "object"
-    },
     "GenerationMetadata": {
       "additionalProperties": false,
       "description": "Metadata about the generation plan.",
@@ -246,148 +93,6 @@
         "transcript_utilization"
       ],
       "title": "GenerationMetadata",
-      "type": "object"
-    },
-    "GenerationProgress": {
-      "additionalProperties": false,
-      "description": "Progress information during generation.",
-      "properties": {
-        "current_chapter": {
-          "description": "Current chapter being generated (0 if not started)",
-          "minimum": 0,
-          "title": "Current Chapter",
-          "type": "integer"
-        },
-        "total_chapters": {
-          "description": "Total chapters to generate",
-          "minimum": 0,
-          "title": "Total Chapters",
-          "type": "integer"
-        },
-        "current_chapter_title": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Title of current chapter",
-          "title": "Current Chapter Title"
-        },
-        "chapters_completed": {
-          "default": 0,
-          "description": "Number of chapters completed",
-          "minimum": 0,
-          "title": "Chapters Completed",
-          "type": "integer"
-        },
-        "estimated_remaining_seconds": {
-          "anyOf": [
-            {
-              "minimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Estimated seconds remaining",
-          "title": "Estimated Remaining Seconds"
-        }
-      },
-      "required": [
-        "current_chapter",
-        "total_chapters"
-      ],
-      "title": "GenerationProgress",
-      "type": "object"
-    },
-    "GenerationStats": {
-      "additionalProperties": false,
-      "description": "Statistics about the completed generation.",
-      "properties": {
-        "chapters_generated": {
-          "description": "Number of chapters generated",
-          "minimum": 0,
-          "title": "Chapters Generated",
-          "type": "integer"
-        },
-        "total_words": {
-          "description": "Total word count of draft",
-          "minimum": 0,
-          "title": "Total Words",
-          "type": "integer"
-        },
-        "generation_time_ms": {
-          "description": "Total generation time in milliseconds",
-          "minimum": 0,
-          "title": "Generation Time Ms",
-          "type": "integer"
-        },
-        "tokens_used": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/TokenUsage"
-            }
-          ],
-          "description": "Token usage breakdown"
-        }
-      },
-      "required": [
-        "chapters_generated",
-        "total_words",
-        "generation_time_ms",
-        "tokens_used"
-      ],
-      "title": "GenerationStats",
-      "type": "object"
-    },
-    "JobStatus": {
-      "description": "Status of a draft generation job.",
-      "enum": [
-        "queued",
-        "planning",
-        "generating",
-        "completed",
-        "cancelled",
-        "failed"
-      ],
-      "title": "JobStatus",
-      "type": "string"
-    },
-    "TokenUsage": {
-      "additionalProperties": false,
-      "description": "Token usage statistics for a generation.",
-      "properties": {
-        "prompt_tokens": {
-          "description": "Input tokens used",
-          "minimum": 0,
-          "title": "Prompt Tokens",
-          "type": "integer"
-        },
-        "completion_tokens": {
-          "description": "Output tokens generated",
-          "minimum": 0,
-          "title": "Completion Tokens",
-          "type": "integer"
-        },
-        "total_tokens": {
-          "description": "Total tokens used",
-          "minimum": 0,
-          "title": "Total Tokens",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "prompt_tokens",
-        "completion_tokens",
-        "total_tokens"
-      ],
-      "title": "TokenUsage",
       "type": "object"
     },
     "TranscriptRelevance": {
@@ -718,33 +423,49 @@
     }
   },
   "additionalProperties": false,
-  "description": "Envelope for POST /api/ai/draft/generate response.",
+  "description": "The complete generation plan for an ebook draft.\n\nGenerated before actual chapter content is written.\nEnables chunked generation and regeneration of sections.",
   "properties": {
-    "data": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/DraftGenerateData"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Response data on success"
+    "version": {
+      "default": 1,
+      "description": "Schema version for migrations",
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
     },
-    "error": {
-      "anyOf": [
+    "book_title": {
+      "description": "Title of the generated ebook",
+      "title": "Book Title",
+      "type": "string"
+    },
+    "chapters": {
+      "description": "Planned chapters with mapped content",
+      "items": {
+        "$ref": "#/$defs/ChapterPlan"
+      },
+      "title": "Chapters",
+      "type": "array"
+    },
+    "visual_plan": {
+      "allOf": [
         {
-          "$ref": "#/$defs/ErrorDetail"
-        },
-        {
-          "type": "null"
+          "$ref": "#/$defs/VisualPlan"
         }
       ],
-      "default": null,
-      "description": "Error details on failure"
+      "description": "Visual opportunities generated alongside the plan"
+    },
+    "generation_metadata": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/GenerationMetadata"
+        }
+      ],
+      "description": "Metadata about the generation plan"
     }
   },
-  "title": "DraftGenerateResponse",
+  "required": [
+    "book_title",
+    "generation_metadata"
+  ],
+  "title": "DraftPlan",
   "type": "object"
 }

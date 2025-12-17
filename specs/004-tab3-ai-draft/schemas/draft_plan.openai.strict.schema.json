@@ -1,0 +1,387 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "draft_plan.openai.strict.schema.json",
+  "$comment": "OpenAI strict mode compatible schema for DraftPlan. No allOf/oneOf, all properties required, optional fields are nullable.",
+  "$defs": {
+    "ChapterPlan": {
+      "additionalProperties": false,
+      "description": "Plan for generating a single chapter.",
+      "properties": {
+        "chapter_number": {
+          "description": "1-based chapter number",
+          "type": "integer"
+        },
+        "title": {
+          "description": "Chapter title",
+          "type": "string"
+        },
+        "outline_item_id": {
+          "description": "Reference to source outline item",
+          "type": "string"
+        },
+        "goals": {
+          "description": "2-4 learning objectives for this chapter (empty array if none)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "key_points": {
+          "description": "3-6 main points to cover (empty array if none)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "transcript_segments": {
+          "description": "Mapped transcript portions for this chapter (empty array if none)",
+          "items": {
+            "$ref": "#/$defs/TranscriptSegment"
+          },
+          "type": "array"
+        },
+        "estimated_words": {
+          "description": "Estimated word count for this chapter (typically 1500)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "chapter_number",
+        "title",
+        "outline_item_id",
+        "goals",
+        "key_points",
+        "transcript_segments",
+        "estimated_words"
+      ],
+      "type": "object"
+    },
+    "GenerationMetadata": {
+      "additionalProperties": false,
+      "description": "Metadata about the generation plan.",
+      "properties": {
+        "estimated_total_words": {
+          "description": "Total estimated word count for the ebook",
+          "type": "integer"
+        },
+        "estimated_generation_time_seconds": {
+          "description": "Estimated time to generate all chapters",
+          "type": "integer"
+        },
+        "transcript_utilization": {
+          "description": "Fraction of transcript content used (0.0-1.0)",
+          "type": "number"
+        }
+      },
+      "required": [
+        "estimated_total_words",
+        "estimated_generation_time_seconds",
+        "transcript_utilization"
+      ],
+      "type": "object"
+    },
+    "TranscriptSegment": {
+      "additionalProperties": false,
+      "description": "A mapped segment of the source transcript.",
+      "properties": {
+        "start_char": {
+          "description": "Starting character index in transcript",
+          "type": "integer"
+        },
+        "end_char": {
+          "description": "Ending character index in transcript",
+          "type": "integer"
+        },
+        "relevance": {
+          "description": "How this segment relates to the chapter: primary, supporting, or reference",
+          "enum": [
+            "primary",
+            "supporting",
+            "reference"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "start_char",
+        "end_char",
+        "relevance"
+      ],
+      "type": "object"
+    },
+    "VisualAsset": {
+      "additionalProperties": false,
+      "description": "An image or media asset for the ebook.",
+      "properties": {
+        "id": {
+          "description": "Stable id used for referencing this asset across the app",
+          "type": "string"
+        },
+        "filename": {
+          "description": "Original filename (or derived name)",
+          "type": "string"
+        },
+        "media_type": {
+          "description": "MIME type, e.g. image/png",
+          "type": "string"
+        },
+        "origin": {
+          "description": "Where this asset came from",
+          "enum": [
+            "client_provided",
+            "user_uploaded",
+            "generated",
+            "external_link"
+          ],
+          "type": "string"
+        },
+        "source_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "External link for the asset if applicable, null otherwise"
+        },
+        "storage_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Internal storage key/path if stored by the app, null otherwise"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Image width in pixels, null if unknown"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Image height in pixels, null if unknown"
+        },
+        "alt_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Accessibility / SEO alt text, null if not provided"
+        },
+        "tags": {
+          "description": "Tags for categorizing the asset (empty array if none)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "filename",
+        "media_type",
+        "origin",
+        "source_url",
+        "storage_key",
+        "width",
+        "height",
+        "alt_text",
+        "tags"
+      ],
+      "type": "object"
+    },
+    "VisualOpportunity": {
+      "additionalProperties": false,
+      "description": "A suggested visual placement in the ebook.",
+      "properties": {
+        "id": {
+          "description": "Stable id for UI selection/acceptance",
+          "type": "string"
+        },
+        "chapter_index": {
+          "description": "1-based chapter index",
+          "type": "integer"
+        },
+        "section_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Fine-grained section identifier (e.g. '2.3' or heading slug), null if not applicable"
+        },
+        "placement": {
+          "description": "Where in the section to place the visual",
+          "enum": [
+            "after_heading",
+            "inline",
+            "end_of_section",
+            "end_of_chapter",
+            "sidebar"
+          ],
+          "type": "string"
+        },
+        "visual_type": {
+          "description": "What kind of visual this should be",
+          "enum": [
+            "screenshot",
+            "diagram",
+            "chart",
+            "table",
+            "icon",
+            "photo",
+            "other"
+          ],
+          "type": "string"
+        },
+        "source_policy": {
+          "description": "Where the visual can come from",
+          "enum": [
+            "client_assets_only",
+            "allow_new_suggestions"
+          ],
+          "type": "string"
+        },
+        "title": {
+          "description": "Short title for the visual (used as figure title or label)",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "What the visual should show (LLM-generated description)",
+          "type": "string"
+        },
+        "caption": {
+          "description": "Caption text shown under the visual",
+          "type": "string"
+        },
+        "required": {
+          "description": "If true, the draft should include a placeholder even if no asset",
+          "type": "boolean"
+        },
+        "candidate_asset_ids": {
+          "description": "If any known assets fit, list their ids (empty array if none)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "confidence": {
+          "description": "Confidence score 0.0-1.0 for this suggestion",
+          "type": "number"
+        },
+        "rationale": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why this visual helps the reader, null if not provided"
+        }
+      },
+      "required": [
+        "id",
+        "chapter_index",
+        "section_path",
+        "placement",
+        "visual_type",
+        "source_policy",
+        "title",
+        "prompt",
+        "caption",
+        "required",
+        "candidate_asset_ids",
+        "confidence",
+        "rationale"
+      ],
+      "type": "object"
+    },
+    "VisualPlan": {
+      "additionalProperties": false,
+      "description": "A draft-time plan that can be persisted and later resolved in Tab 2.",
+      "properties": {
+        "opportunities": {
+          "description": "Visual opportunities identified (empty array if none)",
+          "items": {
+            "$ref": "#/$defs/VisualOpportunity"
+          },
+          "type": "array"
+        },
+        "assets": {
+          "description": "Known assets available (empty array if none)",
+          "items": {
+            "$ref": "#/$defs/VisualAsset"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "opportunities",
+        "assets"
+      ],
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The complete generation plan for an ebook draft.\n\nGenerated before actual chapter content is written.\nEnables chunked generation and regeneration of sections.",
+  "properties": {
+    "version": {
+      "description": "Schema version for migrations (typically 1)",
+      "type": "integer"
+    },
+    "book_title": {
+      "description": "Title of the generated ebook",
+      "type": "string"
+    },
+    "chapters": {
+      "description": "Planned chapters with mapped content (empty array if none)",
+      "items": {
+        "$ref": "#/$defs/ChapterPlan"
+      },
+      "type": "array"
+    },
+    "visual_plan": {
+      "$ref": "#/$defs/VisualPlan",
+      "description": "Visual opportunities generated alongside the plan"
+    },
+    "generation_metadata": {
+      "$ref": "#/$defs/GenerationMetadata",
+      "description": "Metadata about the generation plan"
+    }
+  },
+  "required": [
+    "version",
+    "book_title",
+    "chapters",
+    "visual_plan",
+    "generation_metadata"
+  ],
+  "type": "object"
+}

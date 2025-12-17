@@ -1,5 +1,90 @@
 {
   "$defs": {
+    "DraftCancelData": {
+      "additionalProperties": false,
+      "description": "Data payload for POST /api/ai/draft/cancel/:job_id response.",
+      "properties": {
+        "job_id": {
+          "description": "Job identifier",
+          "title": "Job Id",
+          "type": "string"
+        },
+        "status": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/JobStatus"
+            }
+          ],
+          "description": "Job status after cancellation"
+        },
+        "cancelled": {
+          "description": "Whether cancellation was successful",
+          "title": "Cancelled",
+          "type": "boolean"
+        },
+        "message": {
+          "description": "Human-readable status message",
+          "title": "Message",
+          "type": "string"
+        },
+        "partial_draft_markdown": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Partial draft if chapters were completed",
+          "title": "Partial Draft Markdown"
+        },
+        "chapters_available": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of chapters available",
+          "title": "Chapters Available"
+        }
+      },
+      "required": [
+        "job_id",
+        "status",
+        "cancelled",
+        "message"
+      ],
+      "title": "DraftCancelData",
+      "type": "object"
+    },
+    "ErrorDetail": {
+      "additionalProperties": false,
+      "description": "Error detail structure for API responses.",
+      "properties": {
+        "code": {
+          "description": "Machine-readable error code",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "description": "Human-readable error message",
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ErrorDetail",
+      "type": "object"
+    },
     "JobStatus": {
       "description": "Status of a draft generation job.",
       "enum": [
@@ -15,64 +100,33 @@
     }
   },
   "additionalProperties": false,
-  "description": "Response for POST /api/ai/draft/cancel/:job_id.",
+  "description": "Envelope for POST /api/ai/draft/cancel/:job_id response.",
   "properties": {
-    "job_id": {
-      "description": "Job identifier",
-      "title": "Job Id",
-      "type": "string"
-    },
-    "status": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/JobStatus"
-        }
-      ],
-      "description": "Job status after cancellation"
-    },
-    "cancelled": {
-      "description": "Whether cancellation was successful",
-      "title": "Cancelled",
-      "type": "boolean"
-    },
-    "message": {
-      "description": "Human-readable status message",
-      "title": "Message",
-      "type": "string"
-    },
-    "partial_draft_markdown": {
+    "data": {
       "anyOf": [
         {
-          "type": "string"
+          "$ref": "#/$defs/DraftCancelData"
         },
         {
           "type": "null"
         }
       ],
       "default": null,
-      "description": "Partial draft if chapters were completed",
-      "title": "Partial Draft Markdown"
+      "description": "Response data on success"
     },
-    "chapters_available": {
+    "error": {
       "anyOf": [
         {
-          "type": "integer"
+          "$ref": "#/$defs/ErrorDetail"
         },
         {
           "type": "null"
         }
       ],
       "default": null,
-      "description": "Number of chapters available",
-      "title": "Chapters Available"
+      "description": "Error details on failure"
     }
   },
-  "required": [
-    "job_id",
-    "status",
-    "cancelled",
-    "message"
-  ],
   "title": "DraftCancelResponse",
   "type": "object"
 }

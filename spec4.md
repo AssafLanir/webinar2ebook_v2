@@ -564,7 +564,13 @@ Draft generation uses an async job pattern for long-running operations:
 3. Client can cancel mid-generation
 4. Completed results include partial drafts if cancelled
 
+**All responses use the standard `{ data, error }` envelope pattern.**
+
 **JSON Schemas**: See [`specs/004-tab3-ai-draft/schemas/`](./specs/004-tab3-ai-draft/schemas/) for all request/response schemas.
+
+**LLM Schemas**: Two self-contained schemas are maintained:
+- [`draft_plan.internal.schema.json`](./specs/004-tab3-ai-draft/schemas/draft_plan.internal.schema.json) - Internal schema (tests, docs, Anthropic)
+- [`draft_plan.openai.strict.schema.json`](./specs/004-tab3-ai-draft/schemas/draft_plan.openai.strict.schema.json) - OpenAI strict mode (production)
 
 #### POST /api/ai/draft/generate
 
@@ -583,15 +589,16 @@ Start draft generation (returns immediately with job_id).
 **Response**: [`DraftGenerateResponse.json`](./specs/004-tab3-ai-draft/schemas/DraftGenerateResponse.json)
 ```json
 {
-  "job_id": "job-uuid-123",
-  "status": "queued",
-  "progress": null,
-  "draft_markdown": null,
-  "draft_plan": null,
-  "visual_plan": null,
-  "generation_stats": null,
-  "error": null,
-  "error_code": null
+  "data": {
+    "job_id": "job-uuid-123",
+    "status": "queued",
+    "progress": null,
+    "draft_markdown": null,
+    "draft_plan": null,
+    "visual_plan": null,
+    "generation_stats": null
+  },
+  "error": null
 }
 ```
 
@@ -604,74 +611,87 @@ Poll generation progress.
 **Status: generating**
 ```json
 {
-  "job_id": "job-uuid-123",
-  "status": "generating",
-  "progress": {
-    "current_chapter": 3,
-    "total_chapters": 8,
-    "current_chapter_title": "Pricing Strategy",
-    "chapters_completed": 2,
-    "estimated_remaining_seconds": 90
+  "data": {
+    "job_id": "job-uuid-123",
+    "status": "generating",
+    "progress": {
+      "current_chapter": 3,
+      "total_chapters": 8,
+      "current_chapter_title": "Pricing Strategy",
+      "chapters_completed": 2,
+      "estimated_remaining_seconds": 90
+    },
+    "draft_markdown": null,
+    "draft_plan": null,
+    "visual_plan": null,
+    "generation_stats": null,
+    "partial_draft_markdown": null,
+    "chapters_available": null
   },
-  "draft_markdown": null,
-  "draft_plan": null,
-  "visual_plan": null,
-  "generation_stats": null,
-  "partial_draft_markdown": null,
-  "chapters_available": null,
-  "error": null,
-  "error_code": null
+  "error": null
 }
 ```
 
 **Status: completed**
 ```json
 {
-  "job_id": "job-uuid-123",
-  "status": "completed",
-  "progress": null,
-  "draft_markdown": "# My Ebook\n\n## Chapter 1...",
-  "draft_plan": {
-    "version": 1,
-    "book_title": "My Ebook",
-    "chapters": [...],
-    "visual_plan": { "opportunities": [...], "assets": [] },
-    "generation_metadata": {
-      "estimated_total_words": 12000,
-      "estimated_generation_time_seconds": 120,
-      "transcript_utilization": 0.85
-    }
-  },
-  "visual_plan": {
-    "opportunities": [
-      {
-        "id": "vo-uuid-1",
-        "chapter_index": 2,
-        "section_path": "2.1",
-        "placement": "after_heading",
-        "visual_type": "diagram",
-        "source_policy": "client_assets_only",
-        "title": "System Architecture",
-        "prompt": "A diagram showing the overall system architecture",
-        "caption": "Figure 2.1: System Architecture Overview",
-        "required": false,
-        "candidate_asset_ids": [],
-        "confidence": 0.8,
-        "rationale": "Helps readers visualize the system structure"
+  "data": {
+    "job_id": "job-uuid-123",
+    "status": "completed",
+    "progress": null,
+    "draft_markdown": "# My Ebook\n\n## Chapter 1...",
+    "draft_plan": {
+      "version": 1,
+      "book_title": "My Ebook",
+      "chapters": [...],
+      "visual_plan": { "opportunities": [...], "assets": [] },
+      "generation_metadata": {
+        "estimated_total_words": 12000,
+        "estimated_generation_time_seconds": 120,
+        "transcript_utilization": 0.85
       }
-    ],
-    "assets": []
+    },
+    "visual_plan": {
+      "opportunities": [
+        {
+          "id": "vo-uuid-1",
+          "chapter_index": 2,
+          "section_path": "2.1",
+          "placement": "after_heading",
+          "visual_type": "diagram",
+          "source_policy": "client_assets_only",
+          "title": "System Architecture",
+          "prompt": "A diagram showing the overall system architecture",
+          "caption": "Figure 2.1: System Architecture Overview",
+          "required": false,
+          "candidate_asset_ids": [],
+          "confidence": 0.8,
+          "rationale": "Helps readers visualize the system structure"
+        }
+      ],
+      "assets": []
+    },
+    "generation_stats": {
+      "chapters_generated": 8,
+      "total_words": 12450,
+      "generation_time_ms": 45000,
+      "tokens_used": { "prompt_tokens": 15000, "completion_tokens": 20000, "total_tokens": 35000 }
+    },
+    "partial_draft_markdown": null,
+    "chapters_available": null
   },
-  "generation_stats": {
-    "chapters_generated": 8,
-    "total_words": 12450,
-    "generation_time_ms": 45000,
-    "tokens_used": { "prompt_tokens": 15000, "completion_tokens": 20000, "total_tokens": 35000 }
-  },
-  "partial_draft_markdown": null,
-  "chapters_available": null,
-  "error": null,
-  "error_code": null
+  "error": null
+}
+```
+
+**Status: failed**
+```json
+{
+  "data": null,
+  "error": {
+    "code": "GENERATION_FAILED",
+    "message": "AI service temporarily unavailable. Please try again."
+  }
 }
 ```
 
@@ -682,12 +702,15 @@ Cancel generation (stops after current chapter completes).
 **Response**: [`DraftCancelResponse.json`](./specs/004-tab3-ai-draft/schemas/DraftCancelResponse.json)
 ```json
 {
-  "job_id": "job-uuid-123",
-  "status": "cancelled",
-  "cancelled": true,
-  "message": "Generation cancelled after chapter 4 of 8",
-  "partial_draft_markdown": "# My Ebook\n\n## Chapter 1...",
-  "chapters_available": 4
+  "data": {
+    "job_id": "job-uuid-123",
+    "status": "cancelled",
+    "cancelled": true,
+    "message": "Generation cancelled after chapter 4 of 8",
+    "partial_draft_markdown": "# My Ebook\n\n## Chapter 1...",
+    "chapters_available": 4
+  },
+  "error": null
 }
 ```
 
@@ -708,14 +731,16 @@ Regenerate a single section (synchronous, typically fast).
 **Response**: [`DraftRegenerateResponse.json`](./specs/004-tab3-ai-draft/schemas/DraftRegenerateResponse.json)
 ```json
 {
-  "section_markdown": "## Chapter 3: Pricing Strategy\n\n...",
-  "section_start_line": 145,
-  "section_end_line": 210,
-  "generation_stats": {
-    "chapters_generated": 1,
-    "total_words": 1500,
-    "generation_time_ms": 8000,
-    "tokens_used": { "prompt_tokens": 3000, "completion_tokens": 2000, "total_tokens": 5000 }
+  "data": {
+    "section_markdown": "## Chapter 3: Pricing Strategy\n\n...",
+    "section_start_line": 145,
+    "section_end_line": 210,
+    "generation_stats": {
+      "chapters_generated": 1,
+      "total_words": 1500,
+      "generation_time_ms": 8000,
+      "tokens_used": { "prompt_tokens": 3000, "completion_tokens": 2000, "total_tokens": 5000 }
+    }
   },
   "error": null
 }

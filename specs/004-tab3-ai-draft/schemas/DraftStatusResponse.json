@@ -108,6 +108,140 @@
       "title": "DraftPlan",
       "type": "object"
     },
+    "DraftStatusData": {
+      "additionalProperties": false,
+      "description": "Data payload for GET /api/ai/draft/status/:job_id response.\n\nUsed for polling job progress.",
+      "properties": {
+        "job_id": {
+          "description": "Job identifier",
+          "title": "Job Id",
+          "type": "string"
+        },
+        "status": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/JobStatus"
+            }
+          ],
+          "description": "Current job status"
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GenerationProgress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Progress info (if generating)"
+        },
+        "draft_markdown": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Generated markdown (only when completed)",
+          "title": "Draft Markdown"
+        },
+        "draft_plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DraftPlan"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Generation plan (only when completed)"
+        },
+        "visual_plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VisualPlan"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Visual opportunities (only when completed)"
+        },
+        "generation_stats": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GenerationStats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Generation statistics (only when completed)"
+        },
+        "partial_draft_markdown": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Partial draft if cancelled mid-generation",
+          "title": "Partial Draft Markdown"
+        },
+        "chapters_available": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of chapters available in partial draft",
+          "title": "Chapters Available"
+        }
+      },
+      "required": [
+        "job_id",
+        "status"
+      ],
+      "title": "DraftStatusData",
+      "type": "object"
+    },
+    "ErrorDetail": {
+      "additionalProperties": false,
+      "description": "Error detail structure for API responses.",
+      "properties": {
+        "code": {
+          "description": "Machine-readable error code",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "description": "Human-readable error message",
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ErrorDetail",
+      "type": "object"
+    },
     "GenerationMetadata": {
       "additionalProperties": false,
       "description": "Metadata about the generation plan.",
@@ -610,139 +744,33 @@
     }
   },
   "additionalProperties": false,
-  "description": "Response for GET /api/ai/draft/status/:job_id.\n\nUsed for polling job progress.",
+  "description": "Envelope for GET /api/ai/draft/status/:job_id response.",
   "properties": {
-    "job_id": {
-      "description": "Job identifier",
-      "title": "Job Id",
-      "type": "string"
-    },
-    "status": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/JobStatus"
-        }
-      ],
-      "description": "Current job status"
-    },
-    "progress": {
+    "data": {
       "anyOf": [
         {
-          "$ref": "#/$defs/GenerationProgress"
+          "$ref": "#/$defs/DraftStatusData"
         },
         {
           "type": "null"
         }
       ],
       "default": null,
-      "description": "Progress info (if generating)"
-    },
-    "draft_markdown": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Generated markdown (only when completed)",
-      "title": "Draft Markdown"
-    },
-    "draft_plan": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/DraftPlan"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Generation plan (only when completed)"
-    },
-    "visual_plan": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/VisualPlan"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Visual opportunities (only when completed)"
-    },
-    "generation_stats": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/GenerationStats"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Generation statistics (only when completed)"
-    },
-    "partial_draft_markdown": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Partial draft if cancelled mid-generation",
-      "title": "Partial Draft Markdown"
-    },
-    "chapters_available": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Number of chapters available in partial draft",
-      "title": "Chapters Available"
+      "description": "Response data on success"
     },
     "error": {
       "anyOf": [
         {
-          "type": "string"
+          "$ref": "#/$defs/ErrorDetail"
         },
         {
           "type": "null"
         }
       ],
       "default": null,
-      "description": "Error message (only when failed)",
-      "title": "Error"
-    },
-    "error_code": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Error code for programmatic handling",
-      "title": "Error Code"
+      "description": "Error details on failure"
     }
   },
-  "required": [
-    "job_id",
-    "status"
-  ],
   "title": "DraftStatusResponse",
   "type": "object"
 }
