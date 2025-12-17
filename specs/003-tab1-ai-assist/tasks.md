@@ -170,20 +170,20 @@
 
 ### Error Handling (US4)
 
-- [ ] T046 [US4] Add user-friendly error messages to AI endpoints (wrap LLMError with AIErrorResponse) in backend/src/api/routes/ai.py
-- [ ] T047 [US4] Add error display and retry button to AIAssistSection in frontend/src/components/tab1/AIAssistSection.tsx
-- [ ] T048 [US4] Verify AI buttons disabled when transcript empty or action in progress
-- [ ] T049 [US4] Add integration test for AI error handling scenarios in backend/tests/integration/test_ai_endpoints.py
+- [x] T046 [US4] Add user-friendly error messages to AI endpoints (wrap LLMError with AIErrorResponse) in backend/src/api/routes/ai.py
+- [x] T047 [US4] Add error display and retry button to AIAssistSection in frontend/src/components/tab1/AIAssistSection.tsx
+- [x] T048 [US4] Verify AI buttons disabled when transcript empty or action in progress
+- [x] T049 [US4] Add integration test for AI error handling scenarios in backend/tests/integration/test_ai_endpoints.py
 
 ### Persistence Verification (US5)
 
-- [ ] T050 [US5] Manual test: Apply AI suggestions → Refresh page → Verify data persists via existing auto-save
+- [x] T050 [US5] Manual test: Apply AI suggestions → Refresh page → Verify data persists via existing auto-save
 
 ### Final Validation
 
-- [ ] T051 Run full backend test suite: `pytest backend/tests/ -v`
-- [ ] T052 Manual E2E test per quickstart.md testing checklist
-- [ ] T053 Verify existing Tab 1 functionality unchanged (backward compatibility)
+- [x] T051 Run full backend test suite: `pytest backend/tests/ -v`
+- [x] T052 Manual E2E test per quickstart.md testing checklist
+- [x] T053 Verify existing Tab 1 functionality unchanged (backward compatibility)
 
 ---
 
