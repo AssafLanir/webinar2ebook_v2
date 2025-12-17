@@ -1,3 +1,6 @@
+import type { StyleConfig, StyleConfigEnvelope } from './style'
+import type { VisualPlan } from './visuals'
+
 // Webinar Type - aligned with backend
 export type WebinarType = 'standard_presentation' | 'training_tutorial'
 
@@ -6,25 +9,18 @@ export const WEBINAR_TYPE_LABELS: Record<WebinarType, string> = {
   training_tutorial: 'Training / Tutorial',
 }
 
-// Style Config Types
-export type AudienceType = 'general' | 'technical' | 'executive' | 'academic'
+// Style Config - re-export from dedicated file
+export type { StyleConfig, StyleConfigEnvelope } from './style'
 
-export type ToneType = 'formal' | 'conversational' | 'instructional' | 'persuasive'
+// Visual Plan - re-export from dedicated file
+export type { VisualPlan, VisualOpportunity, VisualAsset } from './visuals'
 
-export type DepthLevel = 'overview' | 'moderate' | 'comprehensive'
-
-export interface StyleConfig {
+// Legacy style config for backward compatibility with existing data
+export interface LegacyStyleConfig {
   audience?: string
   tone?: string
   depth?: string
   targetPages?: number
-}
-
-export const DEFAULT_STYLE_CONFIG: StyleConfig = {
-  audience: 'general',
-  tone: 'conversational',
-  depth: 'moderate',
-  targetPages: 20,
 }
 
 // Outline Item - aligned with backend
@@ -92,7 +88,8 @@ export interface Project {
 
   // Stage 3: Draft
   draftText: string
-  styleConfig: StyleConfig | null
+  styleConfig: StyleConfigEnvelope | LegacyStyleConfig | null
+  visualPlan: VisualPlan | null
 
   // Stage 4: Final & Export
   finalTitle: string
@@ -172,6 +169,44 @@ export const INITIAL_STATE: ProjectState = {
   },
 }
 
+// Default StyleConfigEnvelope for new projects
+export const DEFAULT_STYLE_CONFIG: StyleConfigEnvelope = {
+  version: 1,
+  preset_id: 'default_webinar_ebook_v1',
+  style: {
+    target_audience: 'mixed',
+    reader_role: 'general',
+    primary_goal: 'enable_action',
+    reader_takeaway_style: 'principles',
+    tone: 'professional',
+    formality: 'medium',
+    brand_voice: 'neutral',
+    perspective: 'you',
+    reading_level: 'standard',
+    book_format: 'guide',
+    chapter_count_target: 8,
+    chapter_length_target: 'medium',
+    include_summary_per_chapter: true,
+    include_key_takeaways: true,
+    include_action_steps: true,
+    include_examples: true,
+    faithfulness_level: 'balanced',
+    allowed_extrapolation: 'light',
+    source_policy: 'transcript_plus_provided_resources',
+    citation_style: 'inline_links',
+    avoid_hallucinations: true,
+    visual_density: 'light',
+    preferred_visual_types: ['diagram', 'table', 'screenshot'],
+    visual_source_policy: 'client_assets_only',
+    caption_style: 'explanatory',
+    diagram_style: 'simple',
+    resolve_repetitions: 'reduce',
+    handle_q_and_a: 'append_as_faq',
+    include_speaker_quotes: 'sparingly',
+    output_format: 'markdown',
+  },
+}
+
 // Action Types - expanded for API integration
 export type ProjectAction =
   // View navigation
@@ -209,8 +244,11 @@ export type ProjectAction =
   | { type: 'ADD_CUSTOM_VISUAL'; payload: { title: string; description: string } }
 
   // Tab 3: Draft
+  | { type: 'SET_STYLE_PRESET'; payload: string }
+  | { type: 'SET_STYLE_CONFIG_ENVELOPE'; payload: StyleConfigEnvelope }
   | { type: 'UPDATE_STYLE_CONFIG'; payload: Partial<StyleConfig> }
   | { type: 'UPDATE_DRAFT'; payload: string }
+  | { type: 'SET_VISUAL_PLAN'; payload: VisualPlan | null }
   | { type: 'GENERATE_SAMPLE_DRAFT' }
 
   // Tab 4: Final & Export

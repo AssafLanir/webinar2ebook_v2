@@ -2,9 +2,12 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
+
+from .style_config import StyleConfigEnvelope
+from .visuals import VisualPlan
 
 
 class WebinarType(str, Enum):
@@ -75,8 +78,8 @@ class Visual(BaseModel):
     selected: bool = False
 
 
-class StyleConfig(BaseModel):
-    """Style configuration for draft generation (Stage 3)."""
+class LegacyStyleConfig(BaseModel):
+    """Legacy style configuration (deprecated, for backward compat)."""
 
     audience: str | None = None
     tone: str | None = None
@@ -102,7 +105,8 @@ class UpdateProjectRequest(BaseModel):
     resources: list[Resource] = []
     visuals: list[Visual] = []
     draftText: str = ""
-    styleConfig: StyleConfig | None = None
+    styleConfig: StyleConfigEnvelope | LegacyStyleConfig | dict[str, Any] | None = None
+    visualPlan: VisualPlan | None = None
     finalTitle: str = ""
     finalSubtitle: str = ""
     creditsText: str = ""
@@ -131,7 +135,8 @@ class Project(BaseModel):
     resources: list[Resource] = []
     visuals: list[Visual] = []
     draftText: str = ""
-    styleConfig: StyleConfig | None = None
+    styleConfig: StyleConfigEnvelope | LegacyStyleConfig | dict[str, Any] | None = None
+    visualPlan: VisualPlan | None = None
     finalTitle: str = ""
     finalSubtitle: str = ""
     creditsText: str = ""
