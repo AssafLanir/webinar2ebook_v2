@@ -44,7 +44,7 @@ class TestCleanTranscriptEndpoint:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["cleaned_transcript"] == "This is the cleaned transcript. It has proper punctuation and formatting."
+        assert data["data"]["cleaned_transcript"] == "This is the cleaned transcript. It has proper punctuation and formatting."
 
     def test_clean_transcript_empty_transcript(self):
         """Test that empty transcript returns validation error."""
@@ -169,7 +169,7 @@ Technical terms like "API" and "JSON" are preserved."""
 
         assert response.status_code == 200
         data = response.json()
-        assert data["cleaned_transcript"] == expected_text
+        assert data["data"]["cleaned_transcript"] == expected_text
 
 
 class TestSuggestOutlineEndpoint:
@@ -201,13 +201,13 @@ class TestSuggestOutlineEndpoint:
 
         assert response.status_code == 200
         data = response.json()
-        assert "items" in data
-        assert len(data["items"]) == 3
-        assert data["items"][0]["title"] == "Introduction"
-        assert data["items"][0]["level"] == 1
-        assert data["items"][0]["notes"] == "Overview of the topic"
-        assert data["items"][1]["title"] == "Main Concepts"
-        assert data["items"][2]["level"] == 2
+        assert "items" in data["data"]
+        assert len(data["data"]["items"]) == 3
+        assert data["data"]["items"][0]["title"] == "Introduction"
+        assert data["data"]["items"][0]["level"] == 1
+        assert data["data"]["items"][0]["notes"] == "Overview of the topic"
+        assert data["data"]["items"][1]["title"] == "Main Concepts"
+        assert data["data"]["items"][2]["level"] == 2
 
     def test_suggest_outline_empty_transcript(self):
         """Test that empty transcript returns validation error."""
@@ -282,8 +282,8 @@ class TestSuggestOutlineEndpoint:
 
         assert response.status_code == 200
         data = response.json()
-        assert len(data["items"]) == 4
-        levels = [item["level"] for item in data["items"]]
+        assert len(data["data"]["items"]) == 4
+        levels = [item["level"] for item in data["data"]["items"]]
         assert levels == [1, 2, 3, 1]
 
     def test_suggest_outline_empty_response(self):
@@ -312,7 +312,7 @@ class TestSuggestOutlineEndpoint:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["items"] == []
+        assert data["data"]["items"] == []
 
 
 class TestSuggestResourcesEndpoint:
@@ -344,12 +344,12 @@ class TestSuggestResourcesEndpoint:
 
         assert response.status_code == 200
         data = response.json()
-        assert "resources" in data
-        assert len(data["resources"]) == 3
-        assert data["resources"][0]["label"] == "Python Documentation"
-        assert data["resources"][0]["url_or_note"] == "https://docs.python.org"
-        assert data["resources"][1]["label"] == "FastAPI Guide"
-        assert data["resources"][2]["url_or_note"] == "Check out this blog post about best practices"
+        assert "resources" in data["data"]
+        assert len(data["data"]["resources"]) == 3
+        assert data["data"]["resources"][0]["label"] == "Python Documentation"
+        assert data["data"]["resources"][0]["url_or_note"] == "https://docs.python.org"
+        assert data["data"]["resources"][1]["label"] == "FastAPI Guide"
+        assert data["data"]["resources"][2]["url_or_note"] == "Check out this blog post about best practices"
 
     def test_suggest_resources_empty_transcript(self):
         """Test that empty transcript returns validation error."""
@@ -424,11 +424,11 @@ class TestSuggestResourcesEndpoint:
 
         assert response.status_code == 200
         data = response.json()
-        assert len(data["resources"]) == 3
+        assert len(data["data"]["resources"]) == 3
         # First resource is a URL
-        assert "https://" in data["resources"][0]["url_or_note"]
+        assert "https://" in data["data"]["resources"][0]["url_or_note"]
         # Second resource is a note
-        assert "Remember" in data["resources"][1]["url_or_note"]
+        assert "Remember" in data["data"]["resources"][1]["url_or_note"]
 
     def test_suggest_resources_empty_response(self):
         """Test handling of empty resources response."""
@@ -456,4 +456,4 @@ class TestSuggestResourcesEndpoint:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["resources"] == []
+        assert data["data"]["resources"] == []

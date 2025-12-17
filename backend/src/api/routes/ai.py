@@ -11,6 +11,7 @@ from typing import Annotated
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from src.api.response import success_response
 from src.services import ai_service
 
 router = APIRouter(prefix="/ai", tags=["AI"])
@@ -70,8 +71,8 @@ class SuggestResourcesResponse(BaseModel):
     resources: list[SuggestedResourceResponse]
 
 
-@router.post("/clean-transcript", response_model=CleanTranscriptResponse)
-async def clean_transcript(request: CleanTranscriptRequest) -> CleanTranscriptResponse:
+@router.post("/clean-transcript")
+async def clean_transcript(request: CleanTranscriptRequest) -> dict:
     """Clean up a raw transcript using AI.
 
     Sends the transcript to an LLM for cleanup:
@@ -81,11 +82,11 @@ async def clean_transcript(request: CleanTranscriptRequest) -> CleanTranscriptRe
     - Preserves speaker's meaning and tone
     """
     cleaned = await ai_service.clean_transcript(request.transcript)
-    return CleanTranscriptResponse(cleaned_transcript=cleaned)
+    return success_response({"cleaned_transcript": cleaned})
 
 
-@router.post("/suggest-outline", response_model=SuggestOutlineResponse)
-async def suggest_outline(request: SuggestOutlineRequest) -> SuggestOutlineResponse:
+@router.post("/suggest-outline")
+async def suggest_outline(request: SuggestOutlineRequest) -> dict:
     """Suggest an outline structure from a transcript using AI.
 
     Analyzes the transcript and generates a structured outline:
@@ -95,20 +96,16 @@ async def suggest_outline(request: SuggestOutlineRequest) -> SuggestOutlineRespo
     - Orders logically for reader comprehension
     """
     items = await ai_service.suggest_outline(request.transcript)
-    return SuggestOutlineResponse(
-        items=[
-            SuggestedOutlineItemResponse(
-                title=item.title,
-                level=item.level,
-                notes=item.notes,
-            )
+    return success_response({
+        "items": [
+            {"title": item.title, "level": item.level, "notes": item.notes}
             for item in items
         ]
-    )
+    })
 
 
-@router.post("/suggest-resources", response_model=SuggestResourcesResponse)
-async def suggest_resources(request: SuggestResourcesRequest) -> SuggestResourcesResponse:
+@router.post("/suggest-resources")
+async def suggest_resources(request: SuggestResourcesRequest) -> dict:
     """Suggest relevant resources from a transcript using AI.
 
     Analyzes the transcript and suggests related resources:
@@ -118,12 +115,9 @@ async def suggest_resources(request: SuggestResourcesRequest) -> SuggestResource
     - Prioritizes actionable, high-value resources
     """
     resources = await ai_service.suggest_resources(request.transcript)
-    return SuggestResourcesResponse(
-        resources=[
-            SuggestedResourceResponse(
-                label=resource.label,
-                url_or_note=resource.url_or_note,
-            )
+    return success_response({
+        "resources": [
+            {"label": resource.label, "url_or_note": resource.url_or_note}
             for resource in resources
         ]
-    )
+    })
