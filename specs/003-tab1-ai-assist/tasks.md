@@ -25,9 +25,9 @@
 
 **Purpose**: Install dependencies and create project structure
 
-- [ ] T001 Install Python dependencies: `pip install openai anthropic` in backend/
-- [ ] T002 [P] Create LLM module directory structure: backend/src/llm/__init__.py, backend/src/llm/providers/__init__.py
-- [ ] T003 [P] Create frontend AI types file: frontend/src/types/ai.ts
+- [x] T001 Install Python dependencies: `pip install openai anthropic` in backend/
+- [x] T002 [P] Create LLM module directory structure: backend/src/llm/__init__.py, backend/src/llm/providers/__init__.py
+- [x] T003 [P] Create frontend AI types file: frontend/src/types/ai.ts
 
 ---
 
@@ -39,25 +39,25 @@
 
 ### LLM Models & Errors
 
-- [ ] T004 [P] Create LLM data models (LLMRequest, LLMResponse, ChatMessage, Usage, ResponseFormat) in backend/src/llm/models.py per data-model.md
-- [ ] T005 [P] Create LLM error hierarchy (LLMError, AuthenticationError, RateLimitError, TimeoutError, InvalidRequestError, ContentFilterError, ProviderError) in backend/src/llm/errors.py
+- [x] T004 [P] Create LLM data models (LLMRequest, LLMResponse, ChatMessage, Usage, ResponseFormat) in backend/src/llm/models.py per data-model.md
+- [x] T005 [P] Create LLM error hierarchy (LLMError, AuthenticationError, RateLimitError, TimeoutError, InvalidRequestError, ContentFilterError, ProviderError) in backend/src/llm/errors.py
 
 ### LLM Providers
 
-- [ ] T006 Create abstract base provider (LLMProvider ABC with generate method) in backend/src/llm/providers/base.py
-- [ ] T007 Implement OpenAI provider with structured output support in backend/src/llm/providers/openai.py
-- [ ] T008 Implement Anthropic provider with tool_use pattern for structured output in backend/src/llm/providers/anthropic.py
+- [x] T006 Create abstract base provider (LLMProvider ABC with generate method) in backend/src/llm/providers/base.py
+- [x] T007 Implement OpenAI provider with structured output support in backend/src/llm/providers/openai.py
+- [x] T008 Implement Anthropic provider with tool_use pattern for structured output in backend/src/llm/providers/anthropic.py
 
 ### LLM Client
 
-- [ ] T009 Implement high-level LLM client with retry logic (2 retries, exponential backoff) and automatic fallback (OpenAI → Anthropic) in backend/src/llm/client.py
+- [x] T009 Implement high-level LLM client with retry logic (2 retries, exponential backoff) and automatic fallback (OpenAI → Anthropic) in backend/src/llm/client.py
 
 ### Unit Tests
 
-- [ ] T010 [P] Create unit tests for LLM models and error classes in backend/tests/unit/llm/test_models.py
-- [ ] T011 [P] Create unit tests for OpenAI provider (mock API calls) in backend/tests/unit/llm/test_openai_provider.py
-- [ ] T012 [P] Create unit tests for Anthropic provider (mock API calls) in backend/tests/unit/llm/test_anthropic_provider.py
-- [ ] T013 Create unit tests for LLM client fallback behavior in backend/tests/unit/llm/test_client.py
+- [x] T010 [P] Create unit tests for LLM models and error classes in backend/tests/unit/llm/test_models.py
+- [x] T011 [P] Create unit tests for OpenAI provider (mock API calls) in backend/tests/unit/llm/test_openai_provider.py
+- [x] T012 [P] Create unit tests for Anthropic provider (mock API calls) in backend/tests/unit/llm/test_anthropic_provider.py
+- [x] T013 Create unit tests for LLM client fallback behavior in backend/tests/unit/llm/test_client.py
 
 **Checkpoint**: LLM abstraction layer complete - run `pytest backend/tests/unit/llm/ -v`
 
