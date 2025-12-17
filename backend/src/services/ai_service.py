@@ -6,6 +6,10 @@ Provides AI-powered features:
 - Resource suggestion (identify relevant resources)
 """
 
+import json
+
+from pydantic import BaseModel
+
 from src.llm import ChatMessage, LLMClient, LLMRequest, ResponseFormat
 
 # Maximum transcript length (enforced at API level too)
@@ -20,6 +24,48 @@ CLEAN_TRANSCRIPT_PROMPT = """You are a transcript editor. Clean up the following
 - Keeping technical terms and proper nouns intact
 
 Return only the cleaned transcript text, no explanations."""
+
+SUGGEST_OUTLINE_PROMPT = """You are a content strategist. Analyze the following transcript and suggest a structured outline for an ebook.
+- Extract 5-15 main topics/sections
+- Use levels 1-3 (1=chapter, 2=section, 3=subsection)
+- Add brief notes where helpful
+- Order logically for reader comprehension
+
+Return as JSON matching the provided schema."""
+
+# JSON Schema for outline response (per research.md)
+OUTLINE_SCHEMA = {
+    "name": "outline_response",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "level": {"type": "integer"},
+                        "notes": {"type": "string"},
+                    },
+                    "required": ["title", "level", "notes"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["items"],
+        "additionalProperties": False,
+    },
+}
+
+
+class SuggestedOutlineItem(BaseModel):
+    """A suggested outline item from AI."""
+
+    title: str
+    level: int  # 1=chapter, 2=section, 3=subsection
+    notes: str | None = None
 
 
 async def clean_transcript(transcript: str) -> str:
@@ -50,3 +96,50 @@ async def clean_transcript(transcript: str) -> str:
 
     # Return the cleaned text (or empty string if no text)
     return response.text or ""
+
+
+async def suggest_outline(transcript: str) -> list[SuggestedOutlineItem]:
+    """Generate outline suggestions from a transcript using AI.
+
+    Args:
+        transcript: The transcript text to analyze.
+
+    Returns:
+        A list of suggested outline items with title, level, and optional notes.
+
+    Raises:
+        LLMError: If the AI request fails after retries and fallback.
+    """
+    client = LLMClient()
+
+    request = LLMRequest(
+        messages=[
+            ChatMessage(role="system", content=SUGGEST_OUTLINE_PROMPT),
+            ChatMessage(role="user", content=transcript),
+        ],
+        model="",  # Use provider default
+        temperature=0.7,  # Allow some creativity for outline structure
+        max_tokens=4000,  # Outline output is structured and shorter
+        response_format=ResponseFormat(
+            type="json_schema",
+            json_schema=OUTLINE_SCHEMA,
+        ),
+    )
+
+    response = await client.generate(request)
+
+    # Parse the JSON response
+    if not response.text:
+        return []
+
+    data = json.loads(response.text)
+    items = data.get("items", [])
+
+    return [
+        SuggestedOutlineItem(
+            title=item["title"],
+            level=item["level"],
+            notes=item.get("notes"),
+        )
+        for item in items
+    ]

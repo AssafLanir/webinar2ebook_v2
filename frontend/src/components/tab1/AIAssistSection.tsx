@@ -3,13 +3,13 @@
  *
  * Provides buttons for:
  * - Clean Transcript (AI)
- * - Suggest Outline (AI) (future)
+ * - Suggest Outline (AI)
  * - Suggest Resources (AI) (future)
  */
 
 import { useProject } from '../../context/ProjectContext'
 import { Button } from '../common/Button'
-import { cleanTranscript, ApiException } from '../../services/api'
+import { cleanTranscript, suggestOutline, ApiException } from '../../services/api'
 
 export function AIAssistSection() {
   const { state, dispatch } = useProject()
@@ -42,6 +42,31 @@ export function AIAssistSection() {
     }
   }
 
+  const handleSuggestOutline = async () => {
+    if (!project?.transcriptText || isLoading) return
+
+    dispatch({ type: 'START_AI_ACTION', payload: 'suggest-outline' })
+
+    try {
+      const response = await suggestOutline(project.transcriptText)
+      dispatch({
+        type: 'AI_ACTION_SUCCESS',
+        payload: {
+          type: 'suggest-outline',
+          items: response.items,
+          selected: new Set(response.items.map((_, i) => i)), // Select all by default
+        },
+      })
+    } catch (error) {
+      const message = error instanceof ApiException
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : 'Failed to suggest outline'
+      dispatch({ type: 'AI_ACTION_ERROR', payload: message })
+    }
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-3">
       <span className="text-sm text-slate-400 font-medium">AI Assist:</span>
@@ -60,6 +85,23 @@ export function AIAssistSection() {
           </>
         ) : (
           'Clean Transcript (AI)'
+        )}
+      </Button>
+
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={handleSuggestOutline}
+        disabled={!hasTranscript || isLoading}
+        title={!hasTranscript ? 'Add transcript text first' : undefined}
+      >
+        {aiAction.inProgress === 'suggest-outline' ? (
+          <>
+            <LoadingSpinner />
+            <span className="ml-2">Analyzing...</span>
+          </>
+        ) : (
+          'Suggest Outline (AI)'
         )}
       </Button>
 

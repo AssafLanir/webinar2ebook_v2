@@ -2,7 +2,7 @@
  * API client for backend communication.
  */
 
-import type { CleanTranscriptResponse } from '../types/ai'
+import type { CleanTranscriptResponse, SuggestOutlineResponse } from '../types/ai'
 import type { Project, ProjectSummary, WebinarType } from '../types/project'
 
 const API_BASE = 'http://localhost:8000'
@@ -274,6 +274,19 @@ export async function cleanTranscript(
   transcript: string
 ): Promise<CleanTranscriptResponse> {
   return apiRequest<CleanTranscriptResponse>('/api/ai/clean-transcript', {
+    method: 'POST',
+    body: JSON.stringify({ transcript }),
+  })
+}
+
+/**
+ * Suggest an outline structure from a transcript using AI.
+ * Extracts 5-15 topics with levels (chapter/section/subsection) and notes.
+ */
+export async function suggestOutline(
+  transcript: string
+): Promise<SuggestOutlineResponse> {
+  return apiRequest<SuggestOutlineResponse>('/api/ai/suggest-outline', {
     method: 'POST',
     body: JSON.stringify({ transcript }),
   })

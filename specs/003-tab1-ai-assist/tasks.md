@@ -110,24 +110,24 @@
 
 ### Backend Implementation
 
-- [ ] T028 [US2] Add `suggest_outline(transcript: str) -> list[SuggestedOutlineItem]` function to backend/src/services/ai_service.py
-- [ ] T029 [US2] Add JSON schema for outline response (items with title, level 1-3, notes) per research.md
-- [ ] T030 [US2] Add POST /api/ai/suggest-outline endpoint to backend/src/api/routes/ai.py
+- [x] T028 [US2] Add `suggest_outline(transcript: str) -> list[SuggestedOutlineItem]` function to backend/src/services/ai_service.py
+- [x] T029 [US2] Add JSON schema for outline response (items with title, level 1-3, notes) per research.md
+- [x] T030 [US2] Add POST /api/ai/suggest-outline endpoint to backend/src/api/routes/ai.py
 
 ### Frontend API & Types
 
-- [ ] T031 [US2] Add SuggestedOutlineItem, SuggestOutlineResponse types and suggestOutline() API function in frontend/src/services/api.ts
-- [ ] T032 [US2] Add suggest-outline variant to AIPreviewData type in frontend/src/types/ai.ts
+- [x] T031 [US2] Add SuggestedOutlineItem, SuggestOutlineResponse types and suggestOutline() API function in frontend/src/services/api.ts
+- [x] T032 [US2] Add suggest-outline variant to AIPreviewData type in frontend/src/types/ai.ts
 
 ### Frontend Components
 
-- [ ] T033 [US2] Add "Suggest Outline (AI)" button to AIAssistSection in frontend/src/components/tab1/AIAssistSection.tsx
-- [ ] T034 [US2] Add outline preview mode to AIPreviewModal with checkboxes and Select all/Deselect all in frontend/src/components/tab1/AIPreviewModal.tsx
-- [ ] T035 [US2] Implement "Insert selected" / "Insert all" actions that append to existing outline via ADD_OUTLINE_ITEM dispatch
+- [x] T033 [US2] Add "Suggest Outline (AI)" button to AIAssistSection in frontend/src/components/tab1/AIAssistSection.tsx
+- [x] T034 [US2] Add outline preview mode to AIPreviewModal with checkboxes and Select all/Deselect all in frontend/src/components/tab1/AIPreviewModal.tsx
+- [x] T035 [US2] Implement "Insert selected" / "Insert all" actions that append to existing outline via ADD_OUTLINE_ITEM dispatch
 
 ### Integration Test
 
-- [ ] T036 [US2] Add integration test for suggest-outline endpoint in backend/tests/integration/test_ai_endpoints.py
+- [x] T036 [US2] Add integration test for suggest-outline endpoint in backend/tests/integration/test_ai_endpoints.py
 
 **Checkpoint**: Suggest Outline flow works end-to-end. Test: transcript → suggest → select items → insert → verify appended
 

@@ -170,3 +170,146 @@ Technical terms like "API" and "JSON" are preserved."""
         assert response.status_code == 200
         data = response.json()
         assert data["cleaned_transcript"] == expected_text
+
+
+class TestSuggestOutlineEndpoint:
+    """Tests for POST /api/ai/suggest-outline endpoint."""
+
+    def test_suggest_outline_success(self):
+        """Test successful outline suggestion."""
+        mock_json_response = '{"items": [{"title": "Introduction", "level": 1, "notes": "Overview of the topic"}, {"title": "Main Concepts", "level": 1, "notes": "Core ideas"}, {"title": "Key Details", "level": 2, "notes": "Supporting information"}]}'
+
+        mock_response = LLMResponse(
+            text=mock_json_response,
+            tool_calls=None,
+            finish_reason="stop",
+            usage=Usage(prompt_tokens=200, completion_tokens=100, total_tokens=300),
+            model="gpt-4o",
+            provider="openai",
+            latency_ms=1200,
+        )
+
+        with patch("src.services.ai_service.LLMClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.generate = AsyncMock(return_value=mock_response)
+            mock_client_class.return_value = mock_client
+
+            response = client.post(
+                "/api/ai/suggest-outline",
+                json={"transcript": "This is a transcript about software development."},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "items" in data
+        assert len(data["items"]) == 3
+        assert data["items"][0]["title"] == "Introduction"
+        assert data["items"][0]["level"] == 1
+        assert data["items"][0]["notes"] == "Overview of the topic"
+        assert data["items"][1]["title"] == "Main Concepts"
+        assert data["items"][2]["level"] == 2
+
+    def test_suggest_outline_empty_transcript(self):
+        """Test that empty transcript returns validation error."""
+        response = client.post(
+            "/api/ai/suggest-outline",
+            json={"transcript": ""},
+        )
+
+        assert response.status_code == 422
+
+    def test_suggest_outline_missing_transcript(self):
+        """Test that missing transcript field returns validation error."""
+        response = client.post(
+            "/api/ai/suggest-outline",
+            json={},
+        )
+
+        assert response.status_code == 422
+
+    def test_suggest_outline_too_long(self):
+        """Test that transcript exceeding max length returns validation error."""
+        long_transcript = "a" * 50001
+
+        response = client.post(
+            "/api/ai/suggest-outline",
+            json={"transcript": long_transcript},
+        )
+
+        assert response.status_code == 422
+
+    def test_suggest_outline_llm_rate_limit_error(self):
+        """Test that LLM rate limit error returns 503."""
+        with patch("src.services.ai_service.LLMClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.generate = AsyncMock(
+                side_effect=RateLimitError("Rate limit exceeded", provider="openai")
+            )
+            mock_client_class.return_value = mock_client
+
+            response = client.post(
+                "/api/ai/suggest-outline",
+                json={"transcript": "Some transcript text"},
+            )
+
+        assert response.status_code == 503
+        data = response.json()
+        assert data["error"]["code"] == "AI_SERVICE_ERROR"
+
+    def test_suggest_outline_returns_multiple_levels(self):
+        """Test that outline with mixed levels is returned correctly."""
+        mock_json_response = '{"items": [{"title": "Chapter 1", "level": 1, "notes": ""}, {"title": "Section 1.1", "level": 2, "notes": "Details"}, {"title": "Subsection 1.1.1", "level": 3, "notes": "More details"}, {"title": "Chapter 2", "level": 1, "notes": "Next chapter"}]}'
+
+        mock_response = LLMResponse(
+            text=mock_json_response,
+            tool_calls=None,
+            finish_reason="stop",
+            usage=Usage(prompt_tokens=200, completion_tokens=120, total_tokens=320),
+            model="gpt-4o",
+            provider="openai",
+            latency_ms=1500,
+        )
+
+        with patch("src.services.ai_service.LLMClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.generate = AsyncMock(return_value=mock_response)
+            mock_client_class.return_value = mock_client
+
+            response = client.post(
+                "/api/ai/suggest-outline",
+                json={"transcript": "A detailed transcript with multiple topics."},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["items"]) == 4
+        levels = [item["level"] for item in data["items"]]
+        assert levels == [1, 2, 3, 1]
+
+    def test_suggest_outline_empty_response(self):
+        """Test handling of empty outline response."""
+        mock_json_response = '{"items": []}'
+
+        mock_response = LLMResponse(
+            text=mock_json_response,
+            tool_calls=None,
+            finish_reason="stop",
+            usage=Usage(prompt_tokens=100, completion_tokens=10, total_tokens=110),
+            model="gpt-4o",
+            provider="openai",
+            latency_ms=500,
+        )
+
+        with patch("src.services.ai_service.LLMClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.generate = AsyncMock(return_value=mock_response)
+            mock_client_class.return_value = mock_client
+
+            response = client.post(
+                "/api/ai/suggest-outline",
+                json={"transcript": "Very short text."},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["items"] == []
