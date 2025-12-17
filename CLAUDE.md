@@ -1,29 +1,23 @@
-# webinar2ebook_v2 Development Guidelines
+# webinar2ebook_v2 — Claude/Speckit Guidance (Minimal)
 
-Auto-generated from all feature plans. Last updated: 2025-12-09
+This file is intentionally minimal to avoid drift. Do not duplicate package versions here.
 
-## Active Technologies
+## Source of truth
+- Tech stack: `specs/001-frontend-shell/spec0_tech.md`
+- LLM adapter contract: `docs/llm_adapter_contract.md`
+- Current feature plan/tasks: `specs/003-tab1-ai-assist/plan.md` and `specs/003-tab1-ai-assist/tasks.md`
+- OpenAI snapshot ref: `docs/refs/openai/chat_completions.md`
+- Anthropic snapshot ref: `docs/refs/anthropic/messages.md`
 
-- TypeScript 5.x, React 18.x + React, Vite, Tailwind CSS, React Context (state) (001-frontend-shell)
+## Provider policy (Spec 3)
+- Default LLM provider: **OpenAI**
+- Fallback provider: **Anthropic**
+- Fallback triggers: **429, 5xx, timeouts** (optionally invalid structured output when required)
 
-## Project Structure
-
-```text
-src/
-tests/
-```
+## Repo basics
+- Backend: FastAPI (Python 3.11+), Pydantic v2
+- Frontend: React + TypeScript + Vite + Tailwind
+- Database: MongoDB (motor)
 
 ## Commands
-
-npm test && npm run lint
-
-## Code Style
-
-TypeScript 5.x, React 18.x: Follow standard conventions
-
-## Recent Changes
-
-- 001-frontend-shell: Added TypeScript 5.x, React 18.x + React, Vite, Tailwind CSS, React Context (state)
-
-<!-- MANUAL ADDITIONS START -->
-<!-- MANUAL ADDITIONS END -->
+See `spec0_tech.md` (and repo README if present).
