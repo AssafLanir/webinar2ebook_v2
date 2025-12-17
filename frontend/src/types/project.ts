@@ -113,6 +113,29 @@ export const TAB_LABELS: Record<TabIndex, string> = {
 // Context State - updated to handle project list view
 export type AppView = 'list' | 'workspace'
 
+// AI Action Types (for state tracking)
+export type AIActionType = 'clean-transcript' | 'suggest-outline' | 'suggest-resources'
+
+export interface AIActionState {
+  /** Currently running AI action, or null if idle */
+  inProgress: AIActionType | null
+  /** Error message from last failed action, or null */
+  error: string | null
+}
+
+// AI Preview Data Types
+export type AIPreviewData =
+  | { type: 'clean-transcript'; cleanedTranscript: string }
+  | { type: 'suggest-outline'; items: Array<{ title: string; level: number; notes?: string }>; selected: Set<number> }
+  | { type: 'suggest-resources'; resources: Array<{ label: string; url_or_note: string }>; selected: Set<number> }
+
+export interface AIPreviewState {
+  /** Whether the preview modal is open */
+  isOpen: boolean
+  /** Preview data, or null if no preview */
+  preview: AIPreviewData | null
+}
+
 export interface ProjectState {
   view: AppView
   projectList: ProjectSummary[]
@@ -123,6 +146,9 @@ export interface ProjectState {
   isSaving: boolean
   saveError: string | null
   error: string | null
+  // AI state
+  aiAction: AIActionState
+  aiPreview: AIPreviewState
 }
 
 export const INITIAL_STATE: ProjectState = {
@@ -135,6 +161,15 @@ export const INITIAL_STATE: ProjectState = {
   isSaving: false,
   saveError: null,
   error: null,
+  // AI initial state
+  aiAction: {
+    inProgress: null,
+    error: null,
+  },
+  aiPreview: {
+    isOpen: false,
+    preview: null,
+  },
 }
 
 // Action Types - expanded for API integration
@@ -183,3 +218,13 @@ export type ProjectAction =
   | { type: 'UPDATE_FINAL_SUBTITLE'; payload: string }
   | { type: 'UPDATE_CREDITS'; payload: string }
   | { type: 'TOGGLE_EXPORT_MODAL' }
+
+  // AI Actions (T021)
+  | { type: 'START_AI_ACTION'; payload: AIActionType }
+  | { type: 'AI_ACTION_SUCCESS'; payload: AIPreviewData }
+  | { type: 'AI_ACTION_ERROR'; payload: string }
+
+  // AI Preview Actions (T022)
+  | { type: 'APPLY_AI_PREVIEW' }
+  | { type: 'DISCARD_AI_PREVIEW' }
+  | { type: 'TOGGLE_AI_PREVIEW_SELECTION'; payload: number }

@@ -2,6 +2,7 @@
  * API client for backend communication.
  */
 
+import type { CleanTranscriptResponse } from '../types/ai'
 import type { Project, ProjectSummary, WebinarType } from '../types/project'
 
 const API_BASE = 'http://localhost:8000'
@@ -258,5 +259,22 @@ export async function deleteFile(
 ): Promise<{ deleted: boolean }> {
   return apiRequest<{ deleted: boolean }>(`/projects/${projectId}/files/${fileId}`, {
     method: 'DELETE',
+  })
+}
+
+// ============================================================================
+// AI API functions
+// ============================================================================
+
+/**
+ * Clean up a raw transcript using AI.
+ * Removes filler words, fixes punctuation, and organizes paragraphs.
+ */
+export async function cleanTranscript(
+  transcript: string
+): Promise<CleanTranscriptResponse> {
+  return apiRequest<CleanTranscriptResponse>('/api/ai/clean-transcript', {
+    method: 'POST',
+    body: JSON.stringify({ transcript }),
   })
 }

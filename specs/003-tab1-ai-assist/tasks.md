@@ -71,32 +71,32 @@
 
 ### Backend Implementation
 
-- [ ] T014 [US1] Create AI service with `clean_transcript(transcript: str) -> str` function in backend/src/services/ai_service.py
-- [ ] T015 [US1] Add system prompt for transcript cleanup per research.md in backend/src/services/ai_service.py
-- [ ] T016 [US1] Create AI router with POST /api/ai/clean-transcript endpoint in backend/src/api/routes/ai.py
-- [ ] T017 [US1] Register AI router in backend/src/api/main.py: `app.include_router(ai_router, prefix="/api/ai", tags=["AI"])`
+- [x] T014 [US1] Create AI service with `clean_transcript(transcript: str) -> str` function in backend/src/services/ai_service.py
+- [x] T015 [US1] Add system prompt for transcript cleanup per research.md in backend/src/services/ai_service.py
+- [x] T016 [US1] Create AI router with POST /api/ai/clean-transcript endpoint in backend/src/api/routes/ai.py
+- [x] T017 [US1] Register AI router in backend/src/api/main.py: `app.include_router(ai_router, prefix="/api/ai", tags=["AI"])`
 
 ### Frontend API & Types
 
-- [ ] T018 [US1] Add CleanTranscriptResponse type and cleanTranscript() API function in frontend/src/services/api.ts
-- [ ] T019 [US1] Add AIActionState and AIPreviewState types (clean-transcript variant) to frontend/src/types/ai.ts
+- [x] T018 [US1] Add CleanTranscriptResponse type and cleanTranscript() API function in frontend/src/services/api.ts
+- [x] T019 [US1] Add AIActionState and AIPreviewState types (clean-transcript variant) to frontend/src/types/ai.ts
 
 ### Frontend Context
 
-- [ ] T020 [US1] Add aiAction and aiPreview state to ProjectContext in frontend/src/context/ProjectContext.tsx
-- [ ] T021 [US1] Add START_AI_ACTION, AI_ACTION_SUCCESS, AI_ACTION_ERROR action types to ProjectContext reducer
-- [ ] T022 [US1] Add APPLY_AI_PREVIEW, DISCARD_AI_PREVIEW action types to ProjectContext reducer
+- [x] T020 [US1] Add aiAction and aiPreview state to ProjectContext in frontend/src/context/ProjectContext.tsx
+- [x] T021 [US1] Add START_AI_ACTION, AI_ACTION_SUCCESS, AI_ACTION_ERROR action types to ProjectContext reducer
+- [x] T022 [US1] Add APPLY_AI_PREVIEW, DISCARD_AI_PREVIEW action types to ProjectContext reducer
 
 ### Frontend Components
 
-- [ ] T023 [US1] Create AIAssistSection component with "Clean Transcript (AI)" button in frontend/src/components/tab1/AIAssistSection.tsx
-- [ ] T024 [US1] Create AIPreviewModal component with text preview for cleaned transcript in frontend/src/components/tab1/AIPreviewModal.tsx
-- [ ] T025 [US1] Add Copy to clipboard functionality in AIPreviewModal
-- [ ] T026 [US1] Integrate AIAssistSection into Tab1Content.tsx after "Fill with Sample Data" button
+- [x] T023 [US1] Create AIAssistSection component with "Clean Transcript (AI)" button in frontend/src/components/tab1/AIAssistSection.tsx
+- [x] T024 [US1] Create AIPreviewModal component with text preview for cleaned transcript in frontend/src/components/tab1/AIPreviewModal.tsx
+- [x] T025 [US1] Add Copy to clipboard functionality in AIPreviewModal
+- [x] T026 [US1] Integrate AIAssistSection into Tab1Content.tsx after "Fill with Sample Data" button
 
 ### Integration Test
 
-- [ ] T027 [US1] Create integration test for clean-transcript endpoint in backend/tests/integration/test_ai_endpoints.py
+- [x] T027 [US1] Create integration test for clean-transcript endpoint in backend/tests/integration/test_ai_endpoints.py
 
 **Checkpoint**: Clean Transcript flow works end-to-end. Test manually: paste transcript → clean → preview → apply → verify update
 
