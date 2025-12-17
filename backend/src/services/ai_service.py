@@ -42,54 +42,48 @@ SUGGEST_RESOURCES_PROMPT = """You are a research assistant. Based on the followi
 Return as JSON matching the provided schema."""
 
 # JSON Schema for outline response (per research.md)
+# Note: Pass just the schema object, not the full wrapper - the LLM provider adds name/strict
 OUTLINE_SCHEMA = {
-    "name": "outline_response",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
             "items": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "level": {"type": "integer"},
-                        "notes": {"type": "string"},
-                    },
-                    "required": ["title", "level", "notes"],
-                    "additionalProperties": False,
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "level": {"type": "integer"},
+                    "notes": {"type": "string"},
                 },
-            }
-        },
-        "required": ["items"],
-        "additionalProperties": False,
+                "required": ["title", "level", "notes"],
+                "additionalProperties": False,
+            },
+        }
     },
+    "required": ["items"],
+    "additionalProperties": False,
 }
 
 # JSON Schema for resources response (per research.md)
+# Note: Pass just the schema object, not the full wrapper - the LLM provider adds name/strict
 RESOURCES_SCHEMA = {
-    "name": "resources_response",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {
-            "resources": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "label": {"type": "string"},
-                        "url_or_note": {"type": "string"},
-                    },
-                    "required": ["label", "url_or_note"],
-                    "additionalProperties": False,
+    "type": "object",
+    "properties": {
+        "resources": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "url_or_note": {"type": "string"},
                 },
-            }
-        },
-        "required": ["resources"],
-        "additionalProperties": False,
+                "required": ["label", "url_or_note"],
+                "additionalProperties": False,
+            },
+        }
     },
+    "required": ["resources"],
+    "additionalProperties": False,
 }
 
 
