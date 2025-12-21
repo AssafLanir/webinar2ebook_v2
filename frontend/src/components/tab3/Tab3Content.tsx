@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useProject } from '../../context/ProjectContext'
 import { Card } from '../common/Card'
 import { Select } from '../common/Select'
@@ -18,12 +18,13 @@ const MIN_TRANSCRIPT_LENGTH = 500
 const MIN_OUTLINE_ITEMS = 3
 
 export function Tab3Content() {
-  const { state, dispatch } = useProject()
-  const { project } = state
+  const { state, dispatch, saveProject } = useProject()
+  const { project, isSaving } = state
   const [showCustomize, setShowCustomize] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [showPreviewModal, setShowPreviewModal] = useState(false)
   const draftEditorRef = useRef<HTMLDivElement>(null)
+  const pendingSaveAfterApply = useRef(false)
 
   // Draft generation hook
   const {
@@ -33,6 +34,14 @@ export function Tab3Content() {
     reset: resetGeneration,
     isGenerating,
   } = useDraftGeneration()
+
+  // Save project after applying draft (watches for state update, then saves)
+  useEffect(() => {
+    if (pendingSaveAfterApply.current && !isSaving) {
+      pendingSaveAfterApply.current = false
+      saveProject()
+    }
+  }, [project?.draftText, project?.visualPlan, isSaving, saveProject])
 
   // Get current style config as envelope (must compute before hooks that depend on it)
   const styleEnvelope: StyleConfigEnvelope = useMemo(() => {
@@ -137,6 +146,9 @@ export function Tab3Content() {
       if (generationState.visualPlan) {
         dispatch({ type: 'SET_VISUAL_PLAN', payload: generationState.visualPlan })
       }
+
+      // Flag to trigger save after state updates
+      pendingSaveAfterApply.current = true
     }
     setShowPreviewModal(false)
     resetGeneration()
@@ -150,6 +162,9 @@ export function Tab3Content() {
       if (generationState.visualPlan) {
         dispatch({ type: 'SET_VISUAL_PLAN', payload: generationState.visualPlan })
       }
+
+      // Flag to trigger save after state updates
+      pendingSaveAfterApply.current = true
     }
     setShowPreviewModal(false)
     resetGeneration()
