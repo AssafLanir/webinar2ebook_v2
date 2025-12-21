@@ -87,6 +87,7 @@ from .api_responses import (
     DraftCancelResponse,
     DraftRegenerateResponse,
 )
+from .generation_job import GenerationJob
 
 __all__ = [
     # Project models
@@ -168,4 +169,6 @@ __all__ = [
     "DraftStatusResponse",
     "DraftCancelResponse",
     "DraftRegenerateResponse",
+    # Generation job
+    "GenerationJob",
 ]

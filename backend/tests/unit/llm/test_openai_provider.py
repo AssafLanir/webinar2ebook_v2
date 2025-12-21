@@ -21,7 +21,7 @@ from src.llm.errors import (
     TimeoutError,
 )
 from src.llm.models import ChatMessage, LLMRequest, ResponseFormat
-from src.llm.providers.openai import OpenAIProvider
+from src.llm.providers.openai import OpenAIProvider, _normalize_openai_json_schema
 
 
 class FakeAPIStatusError(Exception):
@@ -479,3 +479,117 @@ class TestOpenAIProviderGenerate:
             _ = provider.client
 
         assert "API key not configured" in str(exc_info.value)
+
+
+class TestNormalizeOpenAIJsonSchema:
+    """Tests for JSON schema normalization for OpenAI structured output."""
+
+    def test_normalize_raw_json_schema(self):
+        """Test normalizing a raw JSON schema (wraps it)."""
+        raw_schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        }
+
+        result = _normalize_openai_json_schema(raw_schema)
+
+        assert result["name"] == "response"
+        assert result["strict"] is True
+        assert result["schema"] == raw_schema
+
+    def test_normalize_pre_wrapped_schema(self):
+        """Test normalizing an already-wrapped schema (passes through)."""
+        inner_schema = {
+            "type": "object",
+            "properties": {"title": {"type": "string"}},
+            "required": ["title"],
+        }
+        wrapped_schema = {
+            "name": "DraftPlan",
+            "strict": True,
+            "schema": inner_schema,
+        }
+
+        result = _normalize_openai_json_schema(wrapped_schema)
+
+        # Should use the wrapped schema as-is
+        assert result["name"] == "DraftPlan"
+        assert result["strict"] is True
+        assert result["schema"] == inner_schema
+
+    def test_normalize_raises_for_non_object_type(self):
+        """Test that normalizer raises error for non-object schema type."""
+        array_schema = {
+            "type": "array",
+            "items": {"type": "string"},
+        }
+
+        with pytest.raises(InvalidRequestError) as exc_info:
+            _normalize_openai_json_schema(array_schema)
+
+        assert "type 'object'" in str(exc_info.value)
+        assert "'array'" in str(exc_info.value)
+
+    def test_normalize_raises_for_missing_type(self):
+        """Test that normalizer raises error when schema has no type."""
+        no_type_schema = {
+            "properties": {"name": {"type": "string"}},
+        }
+
+        with pytest.raises(InvalidRequestError) as exc_info:
+            _normalize_openai_json_schema(no_type_schema)
+
+        assert "type 'object'" in str(exc_info.value)
+        assert "None" in str(exc_info.value)
+
+    def test_normalize_raises_for_double_wrapped_schema(self):
+        """Test that double-wrapped schema is detected (inner has no type)."""
+        # This simulates the bug: schema is wrapped twice
+        inner_wrapper = {
+            "name": "DraftPlan",
+            "strict": True,
+            "schema": {"type": "object", "properties": {}},
+        }
+        # Double-wrapped: outer wrapper with inner wrapper as "schema"
+        double_wrapped = {
+            "name": "response",
+            "strict": True,
+            "schema": inner_wrapper,  # This is another wrapper, not a schema!
+        }
+
+        # The normalizer sees this as pre-wrapped (has name + schema keys)
+        # But inner_wrapper doesn't have type: "object", it has name/strict/schema
+        with pytest.raises(InvalidRequestError) as exc_info:
+            _normalize_openai_json_schema(double_wrapped)
+
+        # Should fail because schema.type is None (inner_wrapper has no 'type')
+        assert "type 'object'" in str(exc_info.value)
+
+    def test_build_request_with_pre_wrapped_schema(self):
+        """Test building request with pre-wrapped schema doesn't double-wrap."""
+        provider = OpenAIProvider(api_key="test-key")
+        inner_schema = {
+            "type": "object",
+            "properties": {"items": {"type": "array", "items": {"type": "string"}}},
+            "required": ["items"],
+        }
+        # Pre-wrapped in OpenAI format (like draft_service.py does)
+        wrapped_schema = {
+            "name": "DraftPlan",
+            "strict": True,
+            "schema": inner_schema,
+        }
+        request = LLMRequest(
+            messages=[ChatMessage(role="user", content="Generate plan")],
+            model="gpt-4o",
+            response_format=ResponseFormat(type="json_schema", json_schema=wrapped_schema),
+        )
+
+        openai_request = provider._build_request(request)
+
+        # Should use the pre-wrapped schema, not wrap it again
+        assert openai_request["response_format"]["type"] == "json_schema"
+        assert openai_request["response_format"]["json_schema"]["name"] == "DraftPlan"
+        assert openai_request["response_format"]["json_schema"]["strict"] is True
+        assert openai_request["response_format"]["json_schema"]["schema"] == inner_schema

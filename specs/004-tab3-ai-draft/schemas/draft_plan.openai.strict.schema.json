@@ -368,12 +368,10 @@
       "type": "array"
     },
     "visual_plan": {
-      "$ref": "#/$defs/VisualPlan",
-      "description": "Visual opportunities generated alongside the plan"
+      "$ref": "#/$defs/VisualPlan"
     },
     "generation_metadata": {
-      "$ref": "#/$defs/GenerationMetadata",
-      "description": "Metadata about the generation plan"
+      "$ref": "#/$defs/GenerationMetadata"
     }
   },
   "required": [

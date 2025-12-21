@@ -72,11 +72,15 @@ class GenerationStats(BaseModel):
 # ============================================================================
 
 class DraftGenerateRequest(BaseModel):
-    """Request body for draft generation."""
+    """Request body for draft generation.
+
+    Note: Validation (transcript >= 500 chars, outline >= 3 items) is done
+    in the endpoint to return proper { data, error } envelope responses.
+    """
     model_config = ConfigDict(extra="forbid")
 
-    transcript: str = Field(min_length=500, description="Source transcript (min 500 chars)")
-    outline: List[dict] = Field(min_length=3, description="Outline items (min 3)")
+    transcript: str = Field(description="Source transcript (min 500 chars)")
+    outline: List[dict] = Field(description="Outline items (min 3)")
     resources: List[dict] = Field(default_factory=list, description="Optional resources")
     style_config: dict = Field(description="StyleConfig or StyleConfigEnvelope")
 
@@ -169,6 +173,16 @@ class DraftStatusData(BaseModel):
     chapters_available: Optional[int] = Field(
         default=None,
         description="Number of chapters available in partial draft"
+    )
+
+    # Error details (if failed)
+    error_code: Optional[str] = Field(
+        default=None,
+        description="Machine-readable error code (only when failed)"
+    )
+    error_message: Optional[str] = Field(
+        default=None,
+        description="Human-readable error message (only when failed)"
     )
 
 

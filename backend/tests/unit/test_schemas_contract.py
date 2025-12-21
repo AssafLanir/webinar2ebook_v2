@@ -277,6 +277,32 @@ class TestOpenAIStrictSchema:
 
         check_required_complete(schema)
 
+    def test_openai_strict_schema_ref_must_be_alone(self):
+        """OpenAI strict mode forbids any keys alongside $ref.
+
+        If $ref is present, it must be the ONLY key in the object.
+        OpenAI returns: "$ref cannot have keywords {'description'}" otherwise.
+        """
+        schema_path = SCHEMAS_DIR / "draft_plan.openai.strict.schema.json"
+        with open(schema_path) as f:
+            schema = json.load(f)
+
+        def check_ref_alone(obj, path="root"):
+            """Recursively check that $ref has no sibling keys."""
+            if isinstance(obj, dict):
+                if "$ref" in obj:
+                    extra_keys = set(obj.keys()) - {"$ref"}
+                    assert not extra_keys, \
+                        f"$ref at {path} cannot have sibling keys: {extra_keys}. " \
+                        f"OpenAI strict mode requires $ref to be alone."
+                for key, value in obj.items():
+                    check_ref_alone(value, f"{path}.{key}")
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    check_ref_alone(item, f"{path}[{i}]")
+
+        check_ref_alone(schema)
+
     def test_openai_strict_schema_includes_all_defs(self):
         """Verify all required definitions are inlined."""
         schema_path = SCHEMAS_DIR / "draft_plan.openai.strict.schema.json"
@@ -306,6 +332,38 @@ class TestSchemaLoaderUtility:
         assert schema["$id"] == "draft_plan.openai.strict.schema.json"
         # Verify it doesn't have allOf in structure (excluding metadata)
         assert "allOf" not in schema.get("properties", {})
+
+    def test_load_draft_plan_schema_has_object_type(self):
+        """Test that loaded OpenAI schema has type='object' at root."""
+        schema = load_draft_plan_schema(provider="openai")
+        assert schema.get("type") == "object", \
+            "OpenAI strict schema must have type='object' at root level"
+
+    def test_schema_works_with_normalizer(self):
+        """Test that loaded schema works correctly with OpenAI normalizer."""
+        from src.llm.providers.openai import _normalize_openai_json_schema
+
+        # Load schema and wrap it like draft_service.py does
+        raw_schema = load_draft_plan_schema(provider="openai")
+        wrapped_schema = {
+            "name": "DraftPlan",
+            "strict": True,
+            "schema": raw_schema,
+        }
+
+        # Normalizer should accept this pre-wrapped schema
+        result = _normalize_openai_json_schema(wrapped_schema)
+
+        # Should preserve the wrapper's name (not change to "response")
+        assert result["name"] == "DraftPlan"
+        assert result["strict"] is True
+        assert result["schema"]["type"] == "object"
+
+    def test_schema_path_is_absolute(self):
+        """Test that schema path uses absolute paths (not relative to cwd)."""
+        path = get_draft_plan_schema_path(provider="openai")
+        assert path.is_absolute(), "Schema path should be absolute"
+        assert path.exists(), f"Schema path should exist: {path}"
 
     def test_load_draft_plan_schema_anthropic(self):
         """Test loading schema for Anthropic (uses internal)."""
