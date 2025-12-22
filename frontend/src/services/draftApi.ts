@@ -36,6 +36,7 @@ async function draftApiRequest<T>(
   let response: Response
 
   try {
+    console.log(`[DraftAPI] ${options?.method ?? 'GET'} ${API_BASE}${path}`)
     response = await fetch(`${API_BASE}${path}`, {
       ...options,
       headers: {
@@ -43,8 +44,10 @@ async function draftApiRequest<T>(
         ...options?.headers,
       },
     })
+    console.log(`[DraftAPI] Response status: ${response.status}`)
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error(`[DraftAPI] Fetch error:`, error)
 
     if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
       throw new ApiException(

@@ -18,6 +18,15 @@ def _utcnow() -> datetime:
     """Return timezone-aware UTC now."""
     return datetime.now(timezone.utc)
 
+
+def _ensure_tz_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """Ensure datetime is timezone-aware (assume UTC if naive)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
 from .api_responses import JobStatus, GenerationProgress, GenerationStats, TokenUsage
 from .draft_plan import DraftPlan
 from .visuals import VisualPlan
@@ -132,7 +141,10 @@ class GenerationJob(BaseModel):
         )
         generation_time_ms = 0
         if self.started_at and self.completed_at:
-            delta = self.completed_at - self.started_at
+            # Ensure both are timezone-aware for comparison
+            started = _ensure_tz_aware(self.started_at)
+            completed = _ensure_tz_aware(self.completed_at)
+            delta = completed - started  # type: ignore
             generation_time_ms = int(delta.total_seconds() * 1000)
 
         return GenerationStats(
@@ -165,7 +177,9 @@ class GenerationJob(BaseModel):
             return self.total_chapters * 15
 
         # Calculate based on actual elapsed time
-        elapsed = (_utcnow() - self.started_at).total_seconds()
+        # Ensure datetime is timezone-aware for comparison
+        started = _ensure_tz_aware(self.started_at)
+        elapsed = (_utcnow() - started).total_seconds()  # type: ignore
         time_per_chapter = elapsed / chapters_done
         remaining_chapters = self.total_chapters - chapters_done
         return int(time_per_chapter * remaining_chapters)
