@@ -370,6 +370,8 @@ export function Tab3Content() {
       <DraftPreviewModal
         isOpen={showPreviewModal}
         draftMarkdown={generationState.draftMarkdown ?? ''}
+        projectTitle={project.name}
+        projectId={project.id}
         stats={generationState.stats}
         onApply={handleApplyDraft}
         onApplyAndEdit={handleApplyAndEdit}

@@ -4,19 +4,24 @@
  * Shows:
  * - Generated markdown content (scrollable)
  * - Generation statistics (chapters, words, time)
- * - Copy to clipboard button
+ * - Copy to clipboard / Download actions
  * - Apply / Discard actions
  */
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Button } from '../common/Button'
 import type { GenerationStats } from '../../types/draft'
+import { downloadAsMarkdown, downloadAsText } from '../../utils/draftExport'
 
 export interface DraftPreviewModalProps {
   /** Whether the modal is open */
   isOpen: boolean
   /** The generated draft markdown */
   draftMarkdown: string
+  /** Project title for filename generation */
+  projectTitle?: string | null
+  /** Project ID for filename fallback */
+  projectId?: string | null
   /** Generation statistics (optional) */
   stats?: GenerationStats | null
   /** Handler for applying the draft */
@@ -30,6 +35,8 @@ export interface DraftPreviewModalProps {
 export function DraftPreviewModal({
   isOpen,
   draftMarkdown,
+  projectTitle,
+  projectId,
   stats,
   onApply,
   onApplyAndEdit,
@@ -37,12 +44,28 @@ export function DraftPreviewModal({
 }: DraftPreviewModalProps) {
   const [copied, setCopied] = useState(false)
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview')
+  const [showDownloadMenu, setShowDownloadMenu] = useState(false)
+  const downloadMenuRef = useRef<HTMLDivElement>(null)
+
+  // Close download menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (downloadMenuRef.current && !downloadMenuRef.current.contains(event.target as Node)) {
+        setShowDownloadMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   if (!isOpen) {
     return null
   }
 
+  const hasDraft = Boolean(draftMarkdown && draftMarkdown.trim())
+
   const handleCopyToClipboard = async () => {
+    if (!hasDraft) return
     try {
       await navigator.clipboard.writeText(draftMarkdown)
       setCopied(true)
@@ -50,6 +73,18 @@ export function DraftPreviewModal({
     } catch (err) {
       console.error('Failed to copy to clipboard:', err)
     }
+  }
+
+  const handleDownloadMarkdown = () => {
+    if (!hasDraft) return
+    downloadAsMarkdown(draftMarkdown, projectTitle, projectId)
+    setShowDownloadMenu(false)
+  }
+
+  const handleDownloadText = () => {
+    if (!hasDraft) return
+    downloadAsText(draftMarkdown, projectTitle, projectId)
+    setShowDownloadMenu(false)
   }
 
   const handleBackdropClick = (e: React.MouseEvent) => {
@@ -116,22 +151,66 @@ export function DraftPreviewModal({
               Raw Markdown
             </button>
           </div>
-          <button
-            onClick={handleCopyToClipboard}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors"
-          >
-            {copied ? (
-              <>
-                <CheckIcon />
-                Copied!
-              </>
-            ) : (
-              <>
-                <CopyIcon />
-                Copy
-              </>
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Copy button */}
+            <button
+              onClick={handleCopyToClipboard}
+              disabled={!hasDraft}
+              title={!hasDraft ? 'Generate a draft first' : 'Copy to clipboard'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                !hasDraft
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                  : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+              }`}
+            >
+              {copied ? (
+                <>
+                  <CheckIcon />
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <CopyIcon />
+                  Copy
+                </>
+              )}
+            </button>
+
+            {/* Download dropdown */}
+            <div className="relative" ref={downloadMenuRef}>
+              <button
+                onClick={() => setShowDownloadMenu(!showDownloadMenu)}
+                disabled={!hasDraft}
+                title={!hasDraft ? 'Generate a draft first' : 'Download draft'}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                  !hasDraft
+                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                }`}
+              >
+                <DownloadIcon />
+                Download
+                <ChevronDownIcon />
+              </button>
+
+              {showDownloadMenu && hasDraft && (
+                <div className="absolute right-0 mt-1 w-44 bg-slate-700 rounded-lg shadow-xl border border-slate-600 overflow-hidden z-10">
+                  <button
+                    onClick={handleDownloadMarkdown}
+                    className="w-full px-4 py-2 text-left text-sm text-slate-200 hover:bg-slate-600 transition-colors"
+                  >
+                    Markdown (.md)
+                  </button>
+                  <button
+                    onClick={handleDownloadText}
+                    className="w-full px-4 py-2 text-left text-sm text-slate-200 hover:bg-slate-600 transition-colors"
+                  >
+                    Plain text (.txt)
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Content */}
@@ -238,6 +317,22 @@ function CheckIcon() {
   return (
     <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+    </svg>
+  )
+}
+
+function DownloadIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+    </svg>
+  )
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
     </svg>
   )
 }
