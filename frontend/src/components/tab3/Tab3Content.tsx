@@ -23,6 +23,7 @@ export function Tab3Content() {
   const [showCustomize, setShowCustomize] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [showPreviewModal, setShowPreviewModal] = useState(false)
+  const [saveSuccess, setSaveSuccess] = useState(false)
   const draftEditorRef = useRef<HTMLDivElement>(null)
   const pendingSaveAfterApply = useRef(false)
 
@@ -94,6 +95,15 @@ export function Tab3Content() {
   const handleDraftChange = useCallback((value: string) => {
     dispatch({ type: 'UPDATE_DRAFT', payload: value })
   }, [dispatch])
+
+  // Manual save handler
+  const handleSave = useCallback(async () => {
+    const success = await saveProject()
+    if (success) {
+      setSaveSuccess(true)
+      setTimeout(() => setSaveSuccess(false), 2000)
+    }
+  }, [saveProject])
 
   // Start AI draft generation
   const handleGenerateDraft = useCallback(async () => {
@@ -307,7 +317,47 @@ export function Tab3Content() {
 
       {/* Manual Draft Editor */}
       <div ref={draftEditorRef}>
-        <Card title="Draft Content">
+        <Card
+          title="Draft Content"
+          headerAction={
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isSaving}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                saveSuccess
+                  ? 'bg-green-500/20 text-green-400'
+                  : isSaving
+                    ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                    : 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30'
+              }`}
+            >
+              {isSaving ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Saving...
+                </>
+              ) : saveSuccess ? (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Saved
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                  </svg>
+                  Save
+                </>
+              )}
+            </button>
+          }
+        >
           <DraftEditor
             value={project.draftText}
             onChange={handleDraftChange}

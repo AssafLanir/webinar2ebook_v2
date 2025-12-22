@@ -160,8 +160,12 @@ def sample_generate_request(sample_transcript, sample_outline, sample_style_conf
 
 @pytest.fixture
 def job_store():
-    """Fresh job store for testing."""
-    return JobStore()
+    """Fresh in-memory job store for testing."""
+    from src.services.job_store import InMemoryJobStore, set_job_store
+    store = InMemoryJobStore()
+    set_job_store(store)
+    yield store
+    set_job_store(None)
 
 
 # =============================================================================
@@ -169,26 +173,18 @@ def job_store():
 # =============================================================================
 
 class TestGenerateDraftPlan:
-    """Tests for generate_draft_plan function."""
+    """Tests for generate_draft_plan function (outline-driven)."""
 
     @pytest.mark.asyncio
     async def test_generate_draft_plan_returns_valid_structure(
-        self, sample_transcript, sample_outline, sample_style_config, sample_draft_plan
+        self, sample_transcript, sample_outline, sample_style_config
     ):
         """Test that generate_draft_plan returns a valid DraftPlan."""
-        # Mock the LLM client to return our sample plan
-        mock_response = MagicMock()
-        mock_response.text = sample_draft_plan.model_dump_json()
-
-        with patch("src.services.draft_service.LLMClient") as MockClient:
-            mock_client = MockClient.return_value
-            mock_client.generate = AsyncMock(return_value=mock_response)
-
-            plan = await draft_service.generate_draft_plan(
-                transcript=sample_transcript,
-                outline=sample_outline,
-                style_config=sample_style_config,
-            )
+        plan = await draft_service.generate_draft_plan(
+            transcript=sample_transcript,
+            outline=sample_outline,
+            style_config=sample_style_config,
+        )
 
         assert isinstance(plan, DraftPlan)
         assert plan.book_title
@@ -196,46 +192,30 @@ class TestGenerateDraftPlan:
         assert plan.generation_metadata is not None
 
     @pytest.mark.asyncio
-    async def test_generate_draft_plan_uses_openai_schema(
-        self, sample_transcript, sample_outline, sample_style_config, sample_draft_plan
+    async def test_generate_draft_plan_chapters_from_outline(
+        self, sample_transcript, sample_outline, sample_style_config
     ):
-        """Test that OpenAI strict schema is used for structured output."""
-        mock_response = MagicMock()
-        mock_response.text = sample_draft_plan.model_dump_json()
+        """Test that chapters are derived from outline (not LLM)."""
+        plan = await draft_service.generate_draft_plan(
+            transcript=sample_transcript,
+            outline=sample_outline,
+            style_config=sample_style_config,
+        )
 
-        with patch("src.services.draft_service.LLMClient") as MockClient:
-            mock_client = MockClient.return_value
-            mock_client.generate = AsyncMock(return_value=mock_response)
-
-            with patch("src.services.draft_service.load_draft_plan_schema") as mock_load:
-                mock_load.return_value = {"type": "object"}
-
-                await draft_service.generate_draft_plan(
-                    transcript=sample_transcript,
-                    outline=sample_outline,
-                    style_config=sample_style_config,
-                )
-
-                # Verify schema loader was called with openai provider
-                mock_load.assert_called_once_with(provider="openai")
+        # Should have same number of chapters as level-1 outline items
+        level_1_count = sum(1 for item in sample_outline if item.get("level", 1) == 1)
+        assert len(plan.chapters) == level_1_count
 
     @pytest.mark.asyncio
     async def test_generate_draft_plan_maps_all_chapters(
-        self, sample_transcript, sample_outline, sample_style_config, sample_draft_plan
+        self, sample_transcript, sample_outline, sample_style_config
     ):
         """Test that all outline items are mapped to chapters."""
-        mock_response = MagicMock()
-        mock_response.text = sample_draft_plan.model_dump_json()
-
-        with patch("src.services.draft_service.LLMClient") as MockClient:
-            mock_client = MockClient.return_value
-            mock_client.generate = AsyncMock(return_value=mock_response)
-
-            plan = await draft_service.generate_draft_plan(
-                transcript=sample_transcript,
-                outline=sample_outline,
-                style_config=sample_style_config,
-            )
+        plan = await draft_service.generate_draft_plan(
+            transcript=sample_transcript,
+            outline=sample_outline,
+            style_config=sample_style_config,
+        )
 
         # Each chapter should have an outline_item_id
         for chapter in plan.chapters:
@@ -379,7 +359,7 @@ class TestJobLifecycle:
     """Tests for job management functions."""
 
     @pytest.mark.asyncio
-    async def test_start_generation_creates_job(self, sample_generate_request):
+    async def test_start_generation_creates_job(self, sample_generate_request, job_store):
         """Test that start_generation creates a job and returns ID."""
         with patch("src.services.draft_service._generate_draft_task", new_callable=AsyncMock):
             job_id = await draft_service.start_generation(sample_generate_request)
@@ -388,7 +368,7 @@ class TestJobLifecycle:
         assert len(job_id) > 0
 
     @pytest.mark.asyncio
-    async def test_get_job_status_returns_data(self, sample_generate_request):
+    async def test_get_job_status_returns_data(self, sample_generate_request, job_store):
         """Test that get_job_status returns status data."""
         with patch("src.services.draft_service._generate_draft_task", new_callable=AsyncMock):
             job_id = await draft_service.start_generation(sample_generate_request)
@@ -400,13 +380,13 @@ class TestJobLifecycle:
         assert status.status in [s.value for s in JobStatus]
 
     @pytest.mark.asyncio
-    async def test_get_job_status_not_found(self):
+    async def test_get_job_status_not_found(self, job_store):
         """Test that get_job_status returns None for unknown job."""
         status = await draft_service.get_job_status("nonexistent-job-id")
         assert status is None
 
     @pytest.mark.asyncio
-    async def test_cancel_job_sets_flag(self, sample_generate_request):
+    async def test_cancel_job_sets_flag(self, sample_generate_request, job_store):
         """Test that cancel_job sets the cancel flag."""
         with patch("src.services.draft_service._generate_draft_task", new_callable=AsyncMock):
             job_id = await draft_service.start_generation(sample_generate_request)
@@ -417,7 +397,7 @@ class TestJobLifecycle:
         assert cancel_data.cancelled is True
 
     @pytest.mark.asyncio
-    async def test_cancel_job_not_found(self):
+    async def test_cancel_job_not_found(self, job_store):
         """Test that cancel_job returns None for unknown job."""
         cancel_data = await draft_service.cancel_job("nonexistent-job-id")
         assert cancel_data is None
@@ -523,3 +503,183 @@ class TestVisualOpportunities:
         # But not in markdown
         assert "VISUAL" not in markdown
         assert "[IMAGE]" not in markdown
+
+
+# =============================================================================
+# Outline-Driven Chapter Structure Tests
+# =============================================================================
+
+class TestOutlineDrivenChapters:
+    """Tests for outline-driven chapter structure."""
+
+    @pytest.mark.asyncio
+    async def test_total_chapters_equals_top_level_outline_items(
+        self, sample_transcript, sample_style_config
+    ):
+        """Test that total chapters equals number of top-level (level=1) outline items."""
+        outline = [
+            {"id": "ch1", "title": "Introduction", "level": 1, "order": 0},
+            {"id": "ch1-sec1", "title": "Background", "level": 2, "order": 1},
+            {"id": "ch2", "title": "Main Content", "level": 1, "order": 2},
+            {"id": "ch2-sec1", "title": "Details", "level": 2, "order": 3},
+            {"id": "ch2-sec2", "title": "Examples", "level": 2, "order": 4},
+            {"id": "ch3", "title": "Conclusion", "level": 1, "order": 5},
+        ]
+
+        plan = await draft_service.generate_draft_plan(
+            transcript=sample_transcript,
+            outline=outline,
+            style_config=sample_style_config,
+        )
+
+        # Should have exactly 3 chapters (level=1 items)
+        assert len(plan.chapters) == 3
+
+        # Verify chapter titles match top-level outline items
+        assert plan.chapters[0].title == "Introduction"
+        assert plan.chapters[1].title == "Main Content"
+        assert plan.chapters[2].title == "Conclusion"
+
+    @pytest.mark.asyncio
+    async def test_chapter_titles_match_outline(self, sample_transcript, sample_style_config):
+        """Test that chapter titles exactly match the outline item titles."""
+        outline = [
+            {"id": "ch1", "title": "Getting Started with Python", "level": 1, "order": 0},
+            {"id": "ch2", "title": "Advanced Techniques", "level": 1, "order": 1},
+            {"id": "ch3", "title": "Best Practices", "level": 1, "order": 2},
+        ]
+
+        plan = await draft_service.generate_draft_plan(
+            transcript=sample_transcript,
+            outline=outline,
+            style_config=sample_style_config,
+        )
+
+        assert plan.chapters[0].title == "Getting Started with Python"
+        assert plan.chapters[1].title == "Advanced Techniques"
+        assert plan.chapters[2].title == "Best Practices"
+
+    @pytest.mark.asyncio
+    async def test_nested_items_become_key_points(
+        self, sample_transcript, sample_style_config
+    ):
+        """Test that nested outline items (level > 1) become key_points in chapters."""
+        outline = [
+            {"id": "ch1", "title": "Chapter One", "level": 1, "order": 0},
+            {"id": "sec1", "title": "First Section", "level": 2, "order": 1, "notes": "Important details"},
+            {"id": "sec2", "title": "Second Section", "level": 2, "order": 2},
+            {"id": "ch2", "title": "Chapter Two", "level": 1, "order": 3},
+        ]
+
+        plan = await draft_service.generate_draft_plan(
+            transcript=sample_transcript,
+            outline=outline,
+            style_config=sample_style_config,
+        )
+
+        # Chapter 1 should have key_points from nested items
+        assert len(plan.chapters[0].key_points) == 2
+        assert "First Section: Important details" in plan.chapters[0].key_points
+        assert "Second Section" in plan.chapters[0].key_points
+
+        # Chapter 2 should have no key_points (no nested items)
+        assert len(plan.chapters[1].key_points) == 0
+
+    @pytest.mark.asyncio
+    async def test_chapter_order_respects_outline_order(
+        self, sample_transcript, sample_style_config
+    ):
+        """Test that chapters are ordered according to outline order field."""
+        # Outline items not in order by index
+        outline = [
+            {"id": "ch3", "title": "Third", "level": 1, "order": 2},
+            {"id": "ch1", "title": "First", "level": 1, "order": 0},
+            {"id": "ch2", "title": "Second", "level": 1, "order": 1},
+        ]
+
+        plan = await draft_service.generate_draft_plan(
+            transcript=sample_transcript,
+            outline=outline,
+            style_config=sample_style_config,
+        )
+
+        # Chapters should be ordered by 'order' field
+        assert plan.chapters[0].title == "First"
+        assert plan.chapters[0].chapter_number == 1
+        assert plan.chapters[1].title == "Second"
+        assert plan.chapters[1].chapter_number == 2
+        assert plan.chapters[2].title == "Third"
+        assert plan.chapters[2].chapter_number == 3
+
+    @pytest.mark.asyncio
+    async def test_outline_item_ids_preserved(self, sample_transcript, sample_style_config):
+        """Test that outline_item_id is preserved from source outline."""
+        outline = [
+            {"id": "unique-id-123", "title": "Chapter One", "level": 1, "order": 0},
+            {"id": "unique-id-456", "title": "Chapter Two", "level": 1, "order": 1},
+        ]
+
+        plan = await draft_service.generate_draft_plan(
+            transcript=sample_transcript,
+            outline=outline,
+            style_config=sample_style_config,
+        )
+
+        assert plan.chapters[0].outline_item_id == "unique-id-123"
+        assert plan.chapters[1].outline_item_id == "unique-id-456"
+
+    @pytest.mark.asyncio
+    async def test_transcript_segments_mapped_to_chapters(
+        self, sample_transcript, sample_style_config
+    ):
+        """Test that transcript segments are mapped to chapters."""
+        outline = [
+            {"id": "ch1", "title": "Part One", "level": 1, "order": 0},
+            {"id": "ch2", "title": "Part Two", "level": 1, "order": 1},
+        ]
+
+        plan = await draft_service.generate_draft_plan(
+            transcript=sample_transcript,
+            outline=outline,
+            style_config=sample_style_config,
+        )
+
+        # Each chapter should have transcript segments
+        for chapter in plan.chapters:
+            assert len(chapter.transcript_segments) > 0
+            seg = chapter.transcript_segments[0]
+            assert seg.start_char >= 0
+            assert seg.end_char > seg.start_char
+
+    @pytest.mark.asyncio
+    async def test_empty_outline_creates_fallback_chapter(
+        self, sample_transcript, sample_style_config
+    ):
+        """Test that empty outline creates a single fallback chapter."""
+        plan = await draft_service.generate_draft_plan(
+            transcript=sample_transcript,
+            outline=[],
+            style_config=sample_style_config,
+        )
+
+        # Should create one fallback chapter
+        assert len(plan.chapters) == 1
+        assert plan.chapters[0].title == "Content"
+
+    @pytest.mark.asyncio
+    async def test_book_title_from_first_outline_item(
+        self, sample_transcript, sample_style_config
+    ):
+        """Test that book title is derived from first top-level outline item."""
+        outline = [
+            {"id": "ch1", "title": "The Complete Guide", "level": 1, "order": 0},
+            {"id": "ch2", "title": "Advanced Topics", "level": 1, "order": 1},
+        ]
+
+        plan = await draft_service.generate_draft_plan(
+            transcript=sample_transcript,
+            outline=outline,
+            style_config=sample_style_config,
+        )
+
+        assert plan.book_title == "The Complete Guide"

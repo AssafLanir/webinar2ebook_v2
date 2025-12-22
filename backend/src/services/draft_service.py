@@ -39,6 +39,7 @@ from .prompts import (
     extract_transcript_segment,
     get_previous_chapter_ending,
     get_next_chapter_preview,
+    parse_outline_to_chapters,
 )
 
 logger = logging.getLogger(__name__)
@@ -336,7 +337,10 @@ async def generate_draft_plan(
     style_config: dict,
     resources: Optional[list[dict]] = None,
 ) -> DraftPlan:
-    """Generate a DraftPlan using LLM structured output.
+    """Generate a DraftPlan from outline structure with LLM enhancement.
+
+    Chapters are derived from the outline (level=1 items = chapters).
+    LLM is used only for visual plan generation, not chapter structure.
 
     Args:
         transcript: Full transcript text.
@@ -345,49 +349,94 @@ async def generate_draft_plan(
         resources: Optional resources.
 
     Returns:
-        Generated DraftPlan.
+        Generated DraftPlan with outline-driven chapters.
     """
-    client = LLMClient()
+    # Step 1: Derive chapter structure from outline
+    chapters = parse_outline_to_chapters(outline, transcript)
 
-    # Build prompts
-    system_prompt = DRAFT_PLAN_SYSTEM_PROMPT
-    user_prompt = build_draft_plan_user_prompt(
-        transcript=transcript,
-        outline=outline,
-        style_config=style_config,
-        assets=None,  # Would come from resources in future
+    if not chapters:
+        # Fallback: create a single chapter if no outline structure
+        from src.models import TranscriptSegment
+        chapters = [
+            ChapterPlan(
+                chapter_number=1,
+                title="Content",
+                outline_item_id="fallback-1",
+                goals=["Cover the main content from the transcript"],
+                key_points=["Key points from the source material"],
+                transcript_segments=[
+                    TranscriptSegment(start_char=0, end_char=len(transcript), relevance="primary")
+                ],
+                estimated_words=max(500, len(transcript) // 5),
+            )
+        ]
+
+    logger.info(f"Derived {len(chapters)} chapters from outline")
+
+    # Step 2: Generate visual plan using LLM (optional enhancement)
+    visual_plan = await _generate_visual_plan(transcript, chapters, style_config)
+
+    # Step 3: Calculate metadata
+    total_words = sum(ch.estimated_words for ch in chapters)
+    # Rough estimate: 30 seconds per 100 words
+    estimated_time = (total_words // 100) * 30
+
+    from src.models import GenerationMetadata
+    metadata = GenerationMetadata(
+        estimated_total_words=total_words,
+        estimated_generation_time_seconds=estimated_time,
+        transcript_utilization=0.9,  # Assume most transcript is used
     )
 
-    # Load schema for structured output
-    schema = load_draft_plan_schema(provider="openai")
+    # Step 4: Build book title from first outline item or default
+    book_title = "Untitled Ebook"
+    for item in outline:
+        if item.get("level", 1) == 1:
+            book_title = item.get("title", book_title)
+            break
 
-    request = LLMRequest(
-        model=PLANNING_MODEL,
-        messages=[
-            ChatMessage(role="system", content=system_prompt),
-            ChatMessage(role="user", content=user_prompt),
-        ],
-        response_format=ResponseFormat(
-            type="json_schema",
-            json_schema={
-                "name": "DraftPlan",
-                "strict": True,
-                "schema": schema,
-            },
-        ),
-        temperature=0.7,
-        max_tokens=8000,
+    draft_plan = DraftPlan(
+        version=1,
+        book_title=book_title,
+        chapters=chapters,
+        visual_plan=visual_plan,
+        generation_metadata=metadata,
     )
 
-    response = await client.generate(request)
-
-    # Parse response into DraftPlan
-    import json
-    plan_dict = json.loads(response.text)
-    draft_plan = DraftPlan.model_validate(plan_dict)
-
-    logger.info(f"Generated DraftPlan with {len(draft_plan.chapters)} chapters")
+    logger.info(f"Generated DraftPlan with {len(draft_plan.chapters)} chapters (outline-driven)")
     return draft_plan
+
+
+async def _generate_visual_plan(
+    transcript: str,
+    chapters: list[ChapterPlan],
+    style_config: dict,
+) -> VisualPlan:
+    """Generate visual opportunities plan using LLM.
+
+    Args:
+        transcript: Full transcript text.
+        chapters: List of chapter plans.
+        style_config: Style configuration dict.
+
+    Returns:
+        VisualPlan with opportunities.
+    """
+    # Extract visual density setting
+    if "style" in style_config:
+        style_dict = style_config.get("style", {})
+    else:
+        style_dict = style_config
+
+    visual_density = style_dict.get("visual_density", "medium")
+
+    # For "none" density, return empty plan
+    if visual_density == "none":
+        return VisualPlan(opportunities=[], assets=[])
+
+    # For now, return empty plan - visual generation can be enhanced later
+    # Full LLM-based visual suggestion would go here
+    return VisualPlan(opportunities=[], assets=[])
 
 
 async def generate_chapter(

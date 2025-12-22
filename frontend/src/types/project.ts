@@ -221,6 +221,7 @@ export type ProjectAction =
 
   // Project lifecycle
   | { type: 'SET_PROJECT'; payload: Project }
+  | { type: 'UPDATE_PROJECT_DATA'; payload: Project }  // Updates project without changing tab
   | { type: 'CREATE_PROJECT'; payload: { name: string; webinarType: WebinarType } }
   | { type: 'CLEAR_PROJECT' }
 

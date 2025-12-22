@@ -26,6 +26,17 @@ from src.models import (
     TranscriptSegment,
     GenerationProgress,
 )
+from src.services.job_store import InMemoryJobStore, set_job_store
+
+
+# Use in-memory store for tests
+@pytest.fixture(autouse=True)
+def reset_job_store():
+    """Reset job store to in-memory for tests."""
+    store = InMemoryJobStore()
+    set_job_store(store)
+    yield store
+    set_job_store(None)
 
 
 client = TestClient(app)

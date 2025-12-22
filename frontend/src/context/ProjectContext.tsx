@@ -85,6 +85,13 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
         error: null,
       }
 
+    case 'UPDATE_PROJECT_DATA':
+      // Update project data without changing tab (used by saveProject)
+      return {
+        ...state,
+        project: action.payload,
+      }
+
     case 'CREATE_PROJECT': {
       // This is now used for local fallback only
       const newProject: Project = {
@@ -621,7 +628,8 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       void _createdAt
       void _updatedAt
       const updated = await apiUpdateProject(id, projectData)
-      dispatch({ type: 'SET_PROJECT', payload: updated })
+      // Use UPDATE_PROJECT_DATA to preserve current tab (not SET_PROJECT which resets to tab 1)
+      dispatch({ type: 'UPDATE_PROJECT_DATA', payload: updated })
       dispatch({ type: 'SET_SAVING', payload: false })
       return true
     } catch (error) {

@@ -42,11 +42,11 @@ def mock_llm_client():
 @pytest.fixture
 async def reset_job_store():
     """Reset the job store before and after each test."""
-    store = get_job_store()
-    # Clear all jobs
-    store._jobs.clear()
+    from src.services.job_store import InMemoryJobStore, set_job_store
+    store = InMemoryJobStore()
+    set_job_store(store)
     yield store
-    store._jobs.clear()
+    set_job_store(None)
 
 
 @pytest.fixture

@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-from src.models import ChapterPlan, StyleConfig, StyleConfigEnvelope
+from typing import List
+from src.models import ChapterPlan, StyleConfig, StyleConfigEnvelope, TranscriptSegment
 
 
 # ==============================================================================
@@ -314,3 +315,136 @@ def get_next_chapter_preview(
 
     next_chapter = chapters[next_index]
     return (next_chapter.title, next_chapter.key_points[:3])
+
+
+# ==============================================================================
+# Outline-Driven Chapter Structure
+# ==============================================================================
+
+def parse_outline_to_chapters(
+    outline: list[dict],
+    transcript: str,
+) -> list[ChapterPlan]:
+    """Parse outline into chapters based on structure.
+
+    Top-level items (level=1) become chapters.
+    Nested items (level>1) become section hints within chapters.
+    Transcript is split proportionally among chapters.
+
+    Args:
+        outline: List of outline item dicts with id, title, level, order.
+        transcript: Full transcript text for proportional mapping.
+
+    Returns:
+        List of ChapterPlan objects with basic structure.
+    """
+    if not outline:
+        return []
+
+    # Sort outline by order
+    sorted_outline = sorted(outline, key=lambda x: x.get("order", 0))
+
+    # Find top-level items (chapters) and group sub-items
+    chapters: list[ChapterPlan] = []
+    current_sections: list[dict] = []
+    chapter_number = 0
+
+    for item in sorted_outline:
+        level = item.get("level", 1)
+
+        if level == 1:
+            # This is a chapter
+            chapter_number += 1
+
+            # Create chapter plan with sections from previous accumulation
+            chapter = ChapterPlan(
+                chapter_number=chapter_number,
+                title=item.get("title", f"Chapter {chapter_number}"),
+                outline_item_id=item.get("id", f"ch-{chapter_number}"),
+                goals=[],  # Will be populated later
+                key_points=[],  # Populated from sections
+                transcript_segments=[],  # Will be mapped below
+                estimated_words=1500,
+            )
+            chapters.append(chapter)
+            current_sections = []
+
+        else:
+            # This is a sub-section - add to current chapter's key points
+            if chapters:
+                section_title = item.get("title", "")
+                notes = item.get("notes", "")
+                if section_title:
+                    key_point = section_title
+                    if notes:
+                        key_point = f"{section_title}: {notes}"
+                    chapters[-1].key_points.append(key_point)
+
+    # Map transcript proportionally to chapters
+    if chapters and transcript:
+        _map_transcript_to_chapters(chapters, transcript)
+
+    return chapters
+
+
+def _map_transcript_to_chapters(
+    chapters: list[ChapterPlan],
+    transcript: str,
+) -> None:
+    """Distribute transcript content proportionally among chapters.
+
+    Simple proportional split based on number of chapters.
+    Could be enhanced with keyword matching in the future.
+
+    Args:
+        chapters: List of ChapterPlan objects to update in place.
+        transcript: Full transcript text.
+    """
+    if not chapters or not transcript:
+        return
+
+    total_len = len(transcript)
+    segment_size = total_len // len(chapters)
+
+    for i, chapter in enumerate(chapters):
+        start = i * segment_size
+        # Last chapter gets all remaining content
+        end = total_len if i == len(chapters) - 1 else (i + 1) * segment_size
+
+        chapter.transcript_segments = [
+            TranscriptSegment(
+                start_char=start,
+                end_char=end,
+                relevance="primary",
+            )
+        ]
+        # Estimate words based on transcript segment length (rough: 5 chars per word)
+        chapter.estimated_words = max(500, (end - start) // 5)
+
+
+def build_chapter_enhancement_prompt(
+    chapter: ChapterPlan,
+    transcript_segment: str,
+) -> str:
+    """Build prompt to enhance a chapter with goals and additional key points.
+
+    Args:
+        chapter: Basic ChapterPlan from outline.
+        transcript_segment: The mapped transcript text.
+
+    Returns:
+        Prompt for LLM to generate goals and key points.
+    """
+    return f"""Based on this chapter outline and transcript segment, generate:
+1. 2-4 learning goals for the reader
+2. Additional key points beyond those already listed
+
+Chapter: {chapter.title}
+Existing key points: {json.dumps(chapter.key_points)}
+
+Transcript segment:
+```
+{transcript_segment[:3000]}...
+```
+
+Respond with JSON: {{"goals": ["goal1", ...], "additional_key_points": ["point1", ...]}}"""
