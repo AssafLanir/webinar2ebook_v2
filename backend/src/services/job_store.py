@@ -35,7 +35,20 @@ JOBS_COLLECTION = "generation_jobs"
 
 
 class BaseJobStore(ABC):
-    """Abstract base class for job stores."""
+    """Abstract base class for job stores.
+
+    Implementations must provide CRUD operations and lifecycle hooks.
+    Lifecycle hooks (start/stop_cleanup_task) are called by FastAPI lifespan
+    and may be no-ops if cleanup is handled externally (e.g., MongoDB TTL).
+    """
+
+    async def start_cleanup_task(self) -> None:
+        """Called on application startup. Override for cleanup initialization."""
+        pass
+
+    async def stop_cleanup_task(self) -> None:
+        """Called on application shutdown. Override to cancel background tasks."""
+        pass
 
     @abstractmethod
     async def create_job(self, project_id: Optional[str] = None) -> str:
@@ -212,13 +225,21 @@ class MongoJobStore(BaseJobStore):
     """MongoDB-backed job store with TTL index.
 
     Jobs persist across server restarts.
-    Uses MongoDB TTL index for automatic cleanup.
+    Uses MongoDB TTL index for automatic cleanup (no background task needed).
     """
 
     def __init__(self, ttl_seconds: int = DEFAULT_JOB_TTL_SECONDS):
         """Initialize MongoDB job store."""
         self._ttl_seconds = ttl_seconds
         self._index_created = False
+
+    async def start_cleanup_task(self) -> None:
+        """No-op: MongoDB TTL index handles cleanup automatically."""
+        await self.ensure_indexes()
+
+    async def stop_cleanup_task(self) -> None:
+        """No-op: MongoDB TTL index handles cleanup automatically."""
+        pass
 
     async def _get_collection(self):
         """Get the MongoDB collection."""
