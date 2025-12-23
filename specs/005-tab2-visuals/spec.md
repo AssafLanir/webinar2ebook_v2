@@ -54,7 +54,11 @@ As a user, I can pick an image from the library and attach it to a specific visu
 As a user, I can refresh the page and still see the same assets and assignments.
 
 ### US4 (P2) — Download/copy an asset
-As a user, I can download an uploaded image from the library.
+As a user, I can download an uploaded image from the library, or copy its URL/markdown snippet to clipboard.
+
+> **Note:** "Copy image to clipboard" (binary) is excluded due to browser permission complexity. Instead:
+> - **Copy URL**: Copies the project-scoped content endpoint URL
+> - **Copy Markdown**: Copies `![caption](url)` snippet for pasting into external docs
 
 ### US5 (P2) — Lightweight metadata editing
 As a user, I can edit caption/alt text for an image.
@@ -92,10 +96,13 @@ Tab 2 is split into two sections:
   - Filename (truncated)
   - Size + dimensions (e.g., `1200×800`)
   - Actions:
-    - "Assign…" (opens opportunity picker filtered to *unassigned* opportunities)
     - "Download" (P2)
+    - "Copy URL" / "Copy Markdown" (P2)
     - "Delete"
     - "Edit metadata" (P2: caption/alt text)
+    - "Assign…" (P2 — opens opportunity picker filtered to *unassigned* opportunities)
+
+> **MVP Note:** Assignment is **opportunity-driven only** in P1 — user clicks "Assign" on an OpportunityCard and picks from the library. The reverse flow (AssetCard → "Assign to opportunity...") is P2.
 
 > **P2 Note:** For large libraries (50+ images), consider adding pagination or infinite scroll.
 
@@ -350,6 +357,7 @@ Frontend:
 ## 12. P2 (explicitly out of MVP)
 
 - Use `VisualOpportunity.candidate_asset_ids` to highlight "suggested assets" in the picker.
-- Download/copy buttons.
+- Download button + Copy URL / Copy Markdown buttons (see US4).
+- AssetCard → "Assign to opportunity..." flow (MVP uses opportunity-driven assignment only).
 - "Selected for export" flag (prefer computed from assignments or add later).
 - Pagination/infinite scroll for large asset libraries.
