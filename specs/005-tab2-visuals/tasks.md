@@ -108,14 +108,14 @@
 
 ### Implementation for User Story 3
 
-- [ ] T032 [US3] Ensure visualPlan.assets and visualPlan.assignments are included in project save payload in `frontend/src/services/api.ts`
-- [ ] T033 [US3] Add delete asset endpoint DELETE `/api/projects/{project_id}/visuals/assets/{asset_id}` in `backend/src/api/routes/visuals.py`
-- [ ] T034 [US3] Implement delete handler that removes GridFS bytes in `backend/src/services/visual_asset_service.py`
-- [ ] T034a [US3] Add delete integration test (removes GridFS bytes, returns success envelope) in `backend/tests/integration/test_visuals_endpoints.py`
-- [ ] T035 [US3] Add delete button to AssetCard with confirmation in `frontend/src/components/tab2/AssetCard.tsx`
-- [ ] T036 [US3] Add ProjectContext action for REMOVE_VISUAL_ASSET in `frontend/src/context/ProjectContext.tsx`
-- [ ] T037 [US3] Remove assignment records referencing deleted asset (delete the VisualAssignment entry, not set status) in `frontend/src/context/ProjectContext.tsx`
-- [ ] T038 [US3] Wire up delete + saveProject in Tab2Content in `frontend/src/components/tab2/Tab2Content.tsx`
+- [x] T032 [US3] Ensure visualPlan.assets and visualPlan.assignments are included in project save payload in `frontend/src/services/api.ts`
+- [x] T033 [US3] Add delete asset endpoint DELETE `/api/projects/{project_id}/visuals/assets/{asset_id}` in `backend/src/api/routes/visuals.py`
+- [x] T034 [US3] Implement delete handler that removes GridFS bytes in `backend/src/services/visual_asset_service.py`
+- [x] T034a [US3] Add delete integration test (removes GridFS bytes, returns success envelope) in `backend/tests/integration/test_visuals_endpoints.py`
+- [x] T035 [US3] Add delete button to AssetCard with confirmation in `frontend/src/components/tab2/AssetCard.tsx`
+- [x] T036 [US3] Add ProjectContext action for REMOVE_VISUAL_ASSET in `frontend/src/context/ProjectContext.tsx`
+- [x] T037 [US3] Remove assignment records referencing deleted asset (delete the VisualAssignment entry, not set status) in `frontend/src/context/ProjectContext.tsx`
+- [x] T038 [US3] Wire up delete + saveProject in Tab2Content in `frontend/src/components/tab2/Tab2Content.tsx`
 
 **Checkpoint**: Full CRUD for assets, assignments auto-cleared on delete, persistence complete
 
