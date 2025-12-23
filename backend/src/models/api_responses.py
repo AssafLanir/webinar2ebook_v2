@@ -264,6 +264,83 @@ class DraftRegenerateResponse(BaseModel):
 
 
 # ============================================================================
+# Export API Response Models (Spec 006)
+# ============================================================================
+
+from .export_job import ExportJobStatus
+
+
+class PreviewData(BaseModel):
+    """Data payload for GET /api/projects/{id}/ebook/preview response."""
+    model_config = ConfigDict(extra="forbid")
+
+    html: str = Field(description="Complete HTML document with embedded styles")
+
+
+class PreviewResponse(BaseModel):
+    """Envelope for GET /api/projects/{id}/ebook/preview response."""
+    model_config = ConfigDict(extra="forbid")
+
+    data: Optional[PreviewData] = Field(default=None, description="Response data on success")
+    error: Optional[ErrorDetail] = Field(default=None, description="Error details on failure")
+
+
+class ExportStartData(BaseModel):
+    """Data payload for POST /api/projects/{id}/ebook/export response."""
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str = Field(description="UUID of the created export job")
+
+
+class ExportStartResponse(BaseModel):
+    """Envelope for POST /api/projects/{id}/ebook/export response."""
+    model_config = ConfigDict(extra="forbid")
+
+    data: Optional[ExportStartData] = Field(default=None, description="Response data on success")
+    error: Optional[ErrorDetail] = Field(default=None, description="Error details on failure")
+
+
+class ExportStatusData(BaseModel):
+    """Data payload for GET /api/projects/{id}/ebook/export/status/{job_id} response."""
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str = Field(description="Job identifier")
+    status: ExportJobStatus = Field(description="Current export job status")
+    progress: int = Field(ge=0, le=100, description="Progress percentage (0-100)")
+    download_url: Optional[str] = Field(
+        default=None,
+        description="Download URL when status is 'completed', null otherwise"
+    )
+    error_message: Optional[str] = Field(
+        default=None,
+        description="Error message when status is 'failed', null otherwise"
+    )
+
+
+class ExportStatusResponse(BaseModel):
+    """Envelope for GET /api/projects/{id}/ebook/export/status/{job_id} response."""
+    model_config = ConfigDict(extra="forbid")
+
+    data: Optional[ExportStatusData] = Field(default=None, description="Response data on success")
+    error: Optional[ErrorDetail] = Field(default=None, description="Error details on failure")
+
+
+class ExportCancelData(BaseModel):
+    """Data payload for POST /api/projects/{id}/ebook/export/cancel/{job_id} response."""
+    model_config = ConfigDict(extra="forbid")
+
+    cancelled: bool = Field(description="True if cancellation was successful")
+
+
+class ExportCancelResponse(BaseModel):
+    """Envelope for POST /api/projects/{id}/ebook/export/cancel/{job_id} response."""
+    model_config = ConfigDict(extra="forbid")
+
+    data: Optional[ExportCancelData] = Field(default=None, description="Response data on success")
+    error: Optional[ErrorDetail] = Field(default=None, description="Error details on failure")
+
+
+# ============================================================================
 # Legacy aliases for backward compatibility
 # (Tests may use these directly - keeping them as aliases)
 # ============================================================================

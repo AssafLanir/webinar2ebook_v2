@@ -21,10 +21,11 @@ from src.api.exceptions import (
     ValidationError,
 )
 from src.api.response import error_response
-from src.api.routes import ai, draft, files, health, projects, visuals
+from src.api.routes import ai, draft, ebook, files, health, projects, visuals
 from src.llm import LLMError
 from src.db.mongo import close_database
 from src.services.job_store import get_job_store
+from src.services.export_job_store import get_export_job_store
 
 
 @asynccontextmanager
@@ -33,9 +34,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     job_store = get_job_store()
     await job_store.start_cleanup_task()
+    export_job_store = get_export_job_store()
+    await export_job_store.start_cleanup_task()
     yield
     # Shutdown
     await job_store.stop_cleanup_task()
+    await export_job_store.stop_cleanup_task()
     await close_database()
 
 
@@ -147,3 +151,4 @@ app.include_router(files.router)
 app.include_router(ai.router, prefix="/api")
 app.include_router(draft.router, prefix="/api")
 app.include_router(visuals.router)
+app.include_router(ebook.router)

@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExportStartRequest",
+  "description": "Request body for POST /api/projects/{project_id}/ebook/export",
+  "type": "object",
+  "properties": {
+    "format": {
+      "type": "string",
+      "enum": ["pdf"],
+      "description": "Export format (only 'pdf' supported in MVP)"
+    }
+  },
+  "required": ["format"]
+}
