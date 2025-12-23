@@ -288,6 +288,15 @@ class EbookRenderer:
         result_parts: list[str] = []
         last_end = 0
 
+        # Track which section images were matched (for fallback)
+        matched_section_keys: set[str] = set()
+
+        # Build reverse lookup: section_key -> chapter_index
+        section_to_chapter: dict[str, int] = {}
+        for section_key in by_section:
+            chapter_idx = int(section_key.split(":")[0])
+            section_to_chapter[section_key] = chapter_idx
+
         # Find all H1 and H2 tags with their positions
         heading_pattern = re.compile(r'<h([12])[^>]*(?:id="([^"]*)")?[^>]*>(.*?)</h\1>', re.IGNORECASE)
 
@@ -308,19 +317,30 @@ class EbookRenderer:
                     for img in by_chapter[chapter_count]:
                         result_parts.append(self._render_figure(img, embed_images))
 
+                # Also insert any unmatched section images for this chapter (fallback)
+                for section_key, images in by_section.items():
+                    if section_to_chapter.get(section_key) == chapter_count:
+                        if section_key not in matched_section_keys:
+                            # This section wasn't matched yet - insert at chapter start
+                            for img in images:
+                                result_parts.append(self._render_figure(img, embed_images))
+                            matched_section_keys.add(section_key)
+
             elif level == "2" and heading_id:
                 # Check for section-level images
                 section_key = f"{chapter_count}:{heading_id}"
-                if section_key in by_section:
+                if section_key in by_section and section_key not in matched_section_keys:
                     for img in by_section[section_key]:
                         result_parts.append(self._render_figure(img, embed_images))
+                    matched_section_keys.add(section_key)
 
                 # Also try matching by slug of the heading text
                 slug = self._slugify(heading_text)
                 alt_section_key = f"{chapter_count}:{slug}"
-                if alt_section_key in by_section and alt_section_key != section_key:
+                if alt_section_key in by_section and alt_section_key not in matched_section_keys:
                     for img in by_section[alt_section_key]:
                         result_parts.append(self._render_figure(img, embed_images))
+                    matched_section_keys.add(alt_section_key)
 
         # Add remaining content
         result_parts.append(html[last_end:])
@@ -335,23 +355,34 @@ class EbookRenderer:
             embed: Whether to embed as base64 data URI.
 
         Returns:
-            HTML figure element.
+            HTML figure element, or empty string if image can't be rendered.
         """
         asset = image_data.asset
         opp = image_data.opportunity
 
         # Determine image source
         if embed and image_data.content:
+            # PDF mode with embedded image data
             b64 = base64.b64encode(image_data.content).decode("utf-8")
             src = f"data:{image_data.media_type};base64,{b64}"
+        elif embed and not image_data.content:
+            # PDF mode but no image data available - skip this image
+            logger.warning(
+                f"Skipping image in PDF: no content available for asset {asset.id} "
+                f"(storage_key={asset.storage_key})"
+            )
+            return ""
         elif asset.source_url:
+            # Preview mode with external URL
             src = asset.source_url
         elif asset.storage_key:
-            # For preview, use API endpoint URL
-            src = f"/api/visuals/assets/{asset.id}/file"
+            # Preview mode with local storage - use absolute API endpoint URL
+            # (relative URLs don't work in iframe with doc.write())
+            src = f"http://localhost:8000/api/projects/{self.project.id}/visuals/assets/{asset.id}/content?size=full"
         else:
-            # Fallback placeholder
-            src = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>"
+            # No image source available - skip
+            logger.warning(f"Skipping image: no source available for asset {asset.id}")
+            return ""
 
         # Alt text priority: asset.alt_text > asset.caption > opp.caption > filename
         alt_text = (
