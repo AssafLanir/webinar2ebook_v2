@@ -88,8 +88,22 @@ from .api_responses import (
     DraftStatusResponse,
     DraftCancelResponse,
     DraftRegenerateResponse,
+    # Export API models (Spec 006)
+    PreviewData,
+    PreviewResponse,
+    ExportStartData,
+    ExportStartResponse,
+    ExportStatusData,
+    ExportStatusResponse,
+    ExportCancelData,
+    ExportCancelResponse,
 )
 from .generation_job import GenerationJob
+from .export_job import (
+    ExportJob,
+    ExportJobStatus,
+    ExportFormat,
+)
 
 __all__ = [
     # Project models
@@ -175,4 +189,17 @@ __all__ = [
     "DraftRegenerateResponse",
     # Generation job
     "GenerationJob",
+    # Export job
+    "ExportJob",
+    "ExportJobStatus",
+    "ExportFormat",
+    # Export API models (Spec 006)
+    "PreviewData",
+    "PreviewResponse",
+    "ExportStartData",
+    "ExportStartResponse",
+    "ExportStatusData",
+    "ExportStatusResponse",
+    "ExportCancelData",
+    "ExportCancelResponse",
 ]
