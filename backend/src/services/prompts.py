@@ -94,6 +94,88 @@ def build_draft_plan_user_prompt(
 
 
 # ==============================================================================
+# Visual Opportunity Prompts
+# ==============================================================================
+
+VISUAL_OPPORTUNITY_SYSTEM_PROMPT = """You are an expert at identifying where visual elements would enhance an ebook.
+
+Your task is to analyze chapter content and suggest visual opportunities - places where diagrams, charts, screenshots, or other visuals would help readers understand the material better.
+
+For each opportunity, provide:
+- chapter_index: Which chapter (1-based)
+- visual_type: One of: screenshot, diagram, chart, table, icon, photo, other
+- title: Short title for the visual (2-6 words)
+- prompt: What the visual should show
+- caption: Caption text to display under the visual
+- rationale: Why this visual helps the reader
+- confidence: How confident you are this visual would help (0.0-1.0)
+
+Focus on:
+- Complex concepts that benefit from visualization
+- Processes or workflows that could be shown as diagrams
+- Data or comparisons that work well as charts/tables
+- UI elements or tools mentioned that could use screenshots
+- Key frameworks or models that benefit from visual representation
+
+Do NOT suggest visuals for:
+- Simple concepts easily understood from text
+- Generic decorative images
+- Content where a visual adds no educational value"""
+
+
+# Density guidelines for opportunity count
+VISUAL_DENSITY_GUIDANCE = {
+    "light": "Generate 1-2 visual opportunities total across all chapters. Only suggest visuals for the most impactful moments.",
+    "medium": "Generate approximately 1-2 visual opportunities per chapter. Focus on key concepts and processes.",
+    "heavy": "Generate 2-4 visual opportunities per chapter. Be thorough in identifying visualization opportunities.",
+}
+
+
+def build_visual_opportunity_user_prompt(
+    chapters: list[ChapterPlan],
+    visual_density: str,
+) -> str:
+    """Build user prompt for visual opportunity generation.
+
+    Args:
+        chapters: List of chapter plans with titles and key points.
+        visual_density: One of 'light', 'medium', 'heavy'.
+
+    Returns:
+        Formatted user prompt string.
+    """
+    density_guidance = VISUAL_DENSITY_GUIDANCE.get(
+        visual_density,
+        VISUAL_DENSITY_GUIDANCE["medium"]
+    )
+
+    parts = [
+        "## Density Guidance",
+        density_guidance,
+        "",
+        "## Chapters to Analyze",
+        "",
+    ]
+
+    for chapter in chapters:
+        parts.append(f"### Chapter {chapter.chapter_number}: {chapter.title}")
+        if chapter.key_points:
+            parts.append("Key points:")
+            for point in chapter.key_points:
+                parts.append(f"- {point}")
+        parts.append("")
+
+    parts.extend([
+        "## Instructions",
+        "Analyze the chapters above and generate visual opportunities.",
+        "Return a JSON object with an 'opportunities' array.",
+        f"Remember: {density_guidance}",
+    ])
+
+    return "\n".join(parts)
+
+
+# ==============================================================================
 # Chapter Generation Prompts
 # ==============================================================================
 

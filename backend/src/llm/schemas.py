@@ -3,6 +3,7 @@
 Provides utilities for loading JSON schemas for LLM calls:
 - Internal schema for tests/docs/Anthropic
 - OpenAI strict schema for production OpenAI calls
+- Visual opportunity generation schema
 """
 
 import json
@@ -12,6 +13,69 @@ from pathlib import Path
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
+
+
+# OpenAI-compatible schema for visual opportunity generation
+# Simplified schema - LLM generates core fields, we add defaults for the rest
+VISUAL_OPPORTUNITIES_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "opportunities": {
+            "type": "array",
+            "description": "List of visual opportunities identified in the content",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "chapter_index": {
+                        "type": "integer",
+                        "description": "1-based chapter index where this visual should appear"
+                    },
+                    "visual_type": {
+                        "type": "string",
+                        "enum": ["screenshot", "diagram", "chart", "table", "icon", "photo", "other"],
+                        "description": "What kind of visual this should be"
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Short title for the visual (2-6 words)"
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "Description of what the visual should show"
+                    },
+                    "caption": {
+                        "type": "string",
+                        "description": "Caption text to display under the visual"
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "Why this visual helps the reader understand the content"
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "description": "Confidence score 0.0-1.0 for how helpful this visual would be"
+                    }
+                },
+                "required": ["chapter_index", "visual_type", "title", "prompt", "caption", "rationale", "confidence"],
+                "additionalProperties": False
+            }
+        }
+    },
+    "required": ["opportunities"],
+    "additionalProperties": False
+}
+
+
+def load_visual_opportunities_schema() -> dict[str, Any]:
+    """Load the schema for visual opportunity generation.
+
+    Returns a simplified schema that generates core opportunity fields.
+    Other fields (id, placement, source_policy, etc.) are set to defaults.
+
+    Returns:
+        The JSON schema dict ready to pass to LLM request.
+    """
+    return VISUAL_OPPORTUNITIES_SCHEMA
 
 # Schema directory relative to repo root
 SCHEMAS_DIR = (
