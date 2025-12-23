@@ -25,6 +25,8 @@ See `spec0_tech.md` (and repo README if present).
 ## Active Technologies
 - Python 3.11 (backend), TypeScript 5.x (frontend) (004-tab3-style-visuals-schemas)
 - MongoDB (projects), local filesystem (file uploads) (004-tab3-style-visuals-schemas)
+- Python 3.11 (backend), TypeScript 5.x (frontend) + FastAPI, Pydantic v2, React, Tailwind CSS, Pillow, motor (MongoDB async) (005-tab2-visuals)
+- MongoDB (projects collection) + GridFS (image binaries) (005-tab2-visuals)
 
 ## Recent Changes
 - 004-tab3-style-visuals-schemas: Added Python 3.11 (backend), TypeScript 5.x (frontend)

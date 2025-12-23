@@ -1,0 +1,271 @@
+openapi: 3.0.3
+info:
+  title: Visuals API
+  description: |
+    API endpoints for Tab 2 Visual Library and Asset Management.
+    All endpoints are project-scoped for security.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+
+paths:
+  /api/projects/{project_id}/visuals/assets/upload:
+    post:
+      summary: Upload visual assets
+      description: |
+        Upload one or more images to the project's visual library.
+        - Accepts PNG, JPEG, WebP
+        - Max 10MB per file
+        - Max 10 files per request
+        - Generates thumbnails automatically
+        - Sets default caption from filename
+      operationId: uploadAssets
+      tags:
+        - Visuals
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                  description: Image files to upload (max 10)
+              required:
+                - files
+      responses:
+        '200':
+          description: Upload successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                unsupportedType:
+                  value:
+                    data: null
+                    error:
+                      code: UNSUPPORTED_MEDIA_TYPE
+                      message: "File 'document.pdf' is not a supported image type"
+                tooLarge:
+                  value:
+                    data: null
+                    error:
+                      code: UPLOAD_TOO_LARGE
+                      message: "File 'huge.png' exceeds 10MB limit"
+                tooManyFiles:
+                  value:
+                    data: null
+                    error:
+                      code: TOO_MANY_FILES
+                      message: "Maximum 10 files per upload"
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/projects/{project_id}/visuals/assets/{asset_id}/content:
+    get:
+      summary: Serve asset content
+      description: |
+        Returns the binary content of an asset.
+        - Verifies asset belongs to the project
+        - Supports thumbnail or full size
+      operationId: getAssetContent
+      tags:
+        - Visuals
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/AssetId'
+        - name: size
+          in: query
+          description: Which variant to serve
+          schema:
+            type: string
+            enum: [thumb, full]
+            default: thumb
+      responses:
+        '200':
+          description: Image binary
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Asset not found or not owned by project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/projects/{project_id}/visuals/assets/{asset_id}:
+    delete:
+      summary: Delete an asset
+      description: |
+        Deletes an asset and its binary data from GridFS.
+        - Removes both original and thumbnail
+        - Frontend must update visualPlan.assets and clear assignments
+      operationId: deleteAsset
+      tags:
+        - Visuals
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/AssetId'
+      responses:
+        '200':
+          description: Asset deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+        '404':
+          description: Asset not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      description: Project ID
+      schema:
+        type: string
+        example: "507f1f77bcf86cd799439011"
+
+    AssetId:
+      name: asset_id
+      in: path
+      required: true
+      description: Asset ID (UUID)
+      schema:
+        type: string
+        format: uuid
+        example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+  schemas:
+    VisualAsset:
+      type: object
+      required:
+        - id
+        - filename
+        - media_type
+        - origin
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        media_type:
+          type: string
+          example: "image/png"
+        origin:
+          type: string
+          enum: [client_upload, ai_generated, external_url]
+        source_url:
+          type: string
+          nullable: true
+        storage_key:
+          type: string
+          nullable: true
+        width:
+          type: integer
+          nullable: true
+        height:
+          type: integer
+          nullable: true
+        alt_text:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        original_filename:
+          type: string
+          nullable: true
+        size_bytes:
+          type: integer
+          nullable: true
+        caption:
+          type: string
+          nullable: true
+        sha256:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    UploadResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            assets:
+              type: array
+              items:
+                $ref: '#/components/schemas/VisualAsset'
+        error:
+          type: object
+          nullable: true
+
+    DeleteResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            deleted:
+              type: boolean
+              example: true
+        error:
+          type: object
+          nullable: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          nullable: true
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: "ASSET_NOT_FOUND"
+            message:
+              type: string
+              example: "Asset not found or not owned by this project"
