@@ -108,6 +108,7 @@ def normalize_visual_plan(data: dict | None) -> VisualPlan:
     - None/missing → returns empty VisualPlan
     - Valid VisualPlan shape → validates and returns
     - Partial data → fills missing fields with defaults
+    - Missing assignments field → treated as [] (Spec 005 compatibility)
 
     Args:
         data: Raw visualPlan from database
@@ -116,13 +117,17 @@ def normalize_visual_plan(data: dict | None) -> VisualPlan:
         VisualPlan (never None)
     """
     if data is None:
-        return VisualPlan(opportunities=[], assets=[])
+        return VisualPlan(opportunities=[], assets=[], assignments=[])
+
+    # Ensure assignments field exists (legacy projects won't have it)
+    if isinstance(data, dict) and "assignments" not in data:
+        data = {**data, "assignments": []}
 
     try:
         return VisualPlan.model_validate(data)
     except Exception:
         # Can't parse - return empty
-        return VisualPlan(opportunities=[], assets=[])
+        return VisualPlan(opportunities=[], assets=[], assignments=[])
 
 
 def normalize_project_data(doc: dict) -> dict:

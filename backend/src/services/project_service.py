@@ -84,7 +84,7 @@ async def create_project(request: CreateProjectRequest) -> Project:
         "visuals": [],
         "draftText": "",
         "styleConfig": None,
-        "visualPlan": {"opportunities": [], "assets": []},  # Canonical empty VisualPlan
+        "visualPlan": {"opportunities": [], "assets": [], "assignments": []},  # Canonical empty VisualPlan
         "finalTitle": "",
         "finalSubtitle": "",
         "creditsText": "",
@@ -140,7 +140,7 @@ async def update_project(project_id: str, request: UpdateProjectRequest) -> Proj
             style_config_data = request.styleConfig
 
     # Normalize visualPlan if provided
-    visual_plan_data = {"opportunities": [], "assets": []}  # Default empty
+    visual_plan_data = {"opportunities": [], "assets": [], "assignments": []}  # Default empty
     if request.visualPlan:
         if hasattr(request.visualPlan, "model_dump"):
             visual_plan_data = request.visualPlan.model_dump()

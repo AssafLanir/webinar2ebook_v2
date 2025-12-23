@@ -54,6 +54,8 @@ from .style_config_migrations import migrate_style_config_envelope
 from .visuals import (
     VisualAsset,
     VisualAssetOrigin,
+    VisualAssignment,
+    VisualAssignmentStatus,
     VisualOpportunity,
     VisualPlan,
     VisualPlacement,
@@ -139,6 +141,8 @@ __all__ = [
     # Visuals
     "VisualAsset",
     "VisualAssetOrigin",
+    "VisualAssignment",
+    "VisualAssignmentStatus",
     "VisualOpportunity",
     "VisualPlan",
     "VisualPlacement",

@@ -34,14 +34,14 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Extend VisualAsset model with new fields (original_filename, size_bytes, caption, sha256, created_at) in `backend/src/models/visuals.py`
-- [ ] T005 [P] Create VisualAssignment model in `backend/src/models/visuals.py`
-- [ ] T006 Add assignments field to VisualPlan model in `backend/src/models/visuals.py`
-- [ ] T007 [P] Update VisualPlan default handling in project load (treat missing assignments as []) in `backend/src/services/project_service.py`
-- [ ] T008 [P] Create frontend types for VisualAsset extensions in `frontend/src/types/visuals.ts`
-- [ ] T009 [P] Create frontend VisualAssignment type in `frontend/src/types/visuals.ts`
-- [ ] T010 Update frontend VisualPlan type with assignments array in `frontend/src/types/visuals.ts`
-- [ ] T011 [P] Add legacy project.visuals → visualPlan.assets migration helper in `frontend/src/utils/visualMigration.ts`
+- [x] T004 Extend VisualAsset model with new fields (original_filename, size_bytes, caption, sha256, created_at) in `backend/src/models/visuals.py`
+- [x] T005 [P] Create VisualAssignment model in `backend/src/models/visuals.py`
+- [x] T006 Add assignments field to VisualPlan model in `backend/src/models/visuals.py`
+- [x] T007 [P] Update VisualPlan default handling in project load (treat missing assignments as []) in `backend/src/services/project_service.py`
+- [x] T008 [P] Create frontend types for VisualAsset extensions in `frontend/src/types/visuals.ts`
+- [x] T009 [P] Create frontend VisualAssignment type in `frontend/src/types/visuals.ts`
+- [x] T010 Update frontend VisualPlan type with assignments array in `frontend/src/types/visuals.ts`
+- [x] T011 [P] Add legacy project.visuals → visualPlan.assets migration helper in `frontend/src/utils/visualMigration.ts`
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
