@@ -1,0 +1,169 @@
+{
+  "$defs": {
+    "DraftRegenerateData": {
+      "additionalProperties": false,
+      "description": "Data payload for POST /api/ai/draft/regenerate response.",
+      "properties": {
+        "section_markdown": {
+          "description": "Regenerated section markdown",
+          "title": "Section Markdown",
+          "type": "string"
+        },
+        "section_start_line": {
+          "description": "Start line in original draft",
+          "minimum": 1,
+          "title": "Section Start Line",
+          "type": "integer"
+        },
+        "section_end_line": {
+          "description": "End line in original draft",
+          "minimum": 1,
+          "title": "Section End Line",
+          "type": "integer"
+        },
+        "generation_stats": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GenerationStats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Generation statistics"
+        }
+      },
+      "required": [
+        "section_markdown",
+        "section_start_line",
+        "section_end_line"
+      ],
+      "title": "DraftRegenerateData",
+      "type": "object"
+    },
+    "ErrorDetail": {
+      "additionalProperties": false,
+      "description": "Error detail structure for API responses.",
+      "properties": {
+        "code": {
+          "description": "Machine-readable error code",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "description": "Human-readable error message",
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ErrorDetail",
+      "type": "object"
+    },
+    "GenerationStats": {
+      "additionalProperties": false,
+      "description": "Statistics about the completed generation.",
+      "properties": {
+        "chapters_generated": {
+          "description": "Number of chapters generated",
+          "minimum": 0,
+          "title": "Chapters Generated",
+          "type": "integer"
+        },
+        "total_words": {
+          "description": "Total word count of draft",
+          "minimum": 0,
+          "title": "Total Words",
+          "type": "integer"
+        },
+        "generation_time_ms": {
+          "description": "Total generation time in milliseconds",
+          "minimum": 0,
+          "title": "Generation Time Ms",
+          "type": "integer"
+        },
+        "tokens_used": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TokenUsage"
+            }
+          ],
+          "description": "Token usage breakdown"
+        }
+      },
+      "required": [
+        "chapters_generated",
+        "total_words",
+        "generation_time_ms",
+        "tokens_used"
+      ],
+      "title": "GenerationStats",
+      "type": "object"
+    },
+    "TokenUsage": {
+      "additionalProperties": false,
+      "description": "Token usage statistics for a generation.",
+      "properties": {
+        "prompt_tokens": {
+          "description": "Input tokens used",
+          "minimum": 0,
+          "title": "Prompt Tokens",
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "description": "Output tokens generated",
+          "minimum": 0,
+          "title": "Completion Tokens",
+          "type": "integer"
+        },
+        "total_tokens": {
+          "description": "Total tokens used",
+          "minimum": 0,
+          "title": "Total Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens"
+      ],
+      "title": "TokenUsage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Envelope for POST /api/ai/draft/regenerate response.",
+  "properties": {
+    "data": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DraftRegenerateData"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Response data on success"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ErrorDetail"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Error details on failure"
+    }
+  },
+  "title": "DraftRegenerateResponse",
+  "type": "object"
+}

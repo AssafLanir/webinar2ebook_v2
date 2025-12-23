@@ -1,0 +1,189 @@
+import type { StyleConfigEnvelope } from "../types/style";
+
+export type StylePreset = {
+  id: string;
+  label: string;
+  description: string;
+  value: StyleConfigEnvelope;
+};
+
+export const STYLE_PRESETS: StylePreset[] = [
+  {
+    id: "default_webinar_ebook_v1",
+    label: "Default webinar ebook",
+    description: "Balanced, readable, action-oriented. Light visuals suggested (client assets).",
+    value: {
+      version: 1,
+      preset_id: "default_webinar_ebook_v1",
+      style: {
+        target_audience: "mixed",
+        reader_role: "general",
+        primary_goal: "enable_action",
+        reader_takeaway_style: "principles",
+        tone: "professional",
+        formality: "medium",
+        brand_voice: "neutral",
+        perspective: "you",
+        reading_level: "standard",
+        book_format: "guide",
+        chapter_count_target: 8,
+        chapter_length_target: "medium",
+        include_summary_per_chapter: true,
+        include_key_takeaways: true,
+        include_action_steps: true,
+        include_examples: true,
+        faithfulness_level: "balanced",
+        allowed_extrapolation: "light",
+        source_policy: "transcript_plus_provided_resources",
+        citation_style: "inline_links",
+        avoid_hallucinations: true,
+        visual_density: "light",
+        preferred_visual_types: ["diagram", "table", "screenshot"],
+        visual_source_policy: "client_assets_only",
+        caption_style: "explanatory",
+        diagram_style: "simple",
+        resolve_repetitions: "reduce",
+        handle_q_and_a: "append_as_faq",
+        include_speaker_quotes: "sparingly",
+        output_format: "markdown"
+      }
+    }
+  },
+  {
+    id: "saas_marketing_ebook_v1",
+    label: "SaaS marketing ebook",
+    description: "Persuasive narrative with checklists/templates and mid visual density.",
+    value: {
+      version: 1,
+      preset_id: "saas_marketing_ebook_v1",
+      style: {
+        book_format: "ebook_marketing",
+        primary_goal: "persuade",
+        reader_role: "marketer",
+        target_audience: "mixed",
+        tone: "professional",
+        brand_voice: "premium",
+        perspective: "you",
+        chapter_count_target: 7,
+        chapter_length_target: "medium",
+        include_checklists: true,
+        include_templates: true,
+        include_examples: true,
+        faithfulness_level: "balanced",
+        allowed_extrapolation: "light",
+        source_policy: "transcript_plus_provided_resources",
+        citation_style: "inline_links",
+        visual_density: "medium",
+        preferred_visual_types: ["diagram", "chart", "table", "screenshot"],
+        visual_source_policy: "client_assets_only",
+        caption_style: "explanatory",
+        handle_q_and_a: "weave_into_chapters",
+        output_format: "markdown"
+      }
+    }
+  },
+  {
+    id: "training_tutorial_handbook_v1",
+    label: "Training / tutorial handbook",
+    description: "Step-by-step learning. Heavy on screenshots/diagrams. Very strict about transcript.",
+    value: {
+      version: 1,
+      preset_id: "training_tutorial_handbook_v1",
+      style: {
+        book_format: "tutorial",
+        primary_goal: "teach",
+        reader_role: "educator",
+        target_audience: "beginners",
+        tone: "friendly",
+        formality: "low",
+        perspective: "you",
+        chapter_count_target: 10,
+        chapter_length_target: "short",
+        include_action_steps: true,
+        include_checklists: true,
+        include_examples: true,
+        faithfulness_level: "strict",
+        allowed_extrapolation: "none",
+        source_policy: "transcript_only",
+        citation_style: "none",
+        visual_density: "heavy",
+        preferred_visual_types: ["screenshot", "diagram", "table"],
+        visual_source_policy: "client_assets_only",
+        caption_style: "instructional",
+        handle_q_and_a: "append_as_faq",
+        output_format: "markdown"
+      }
+    }
+  },
+  {
+    id: "executive_brief_v1",
+    label: "Executive brief",
+    description: "Short, punchy, high signal. Minimal fluff. Optional light citations.",
+    value: {
+      version: 1,
+      preset_id: "executive_brief_v1",
+      style: {
+        book_format: "executive_brief",
+        primary_goal: "inform",
+        reader_role: "founder",
+        target_audience: "intermediate",
+        tone: "authoritative",
+        formality: "high",
+        perspective: "third_person",
+        chapter_count_target: 4,
+        chapter_length_target: "short",
+        include_summary_per_chapter: true,
+        include_key_takeaways: true,
+        include_action_steps: false,
+        include_checklists: false,
+        include_templates: false,
+        include_examples: false,
+        faithfulness_level: "strict",
+        allowed_extrapolation: "none",
+        source_policy: "transcript_plus_provided_resources",
+        citation_style: "footnotes_light",
+        visual_density: "light",
+        preferred_visual_types: ["chart", "diagram", "table"],
+        visual_source_policy: "client_assets_only",
+        caption_style: "short",
+        handle_q_and_a: "omit",
+        output_format: "markdown"
+      }
+    }
+  },
+  {
+    id: "course_notes_v1",
+    label: "Course notes",
+    description: "Structured learning notes: summaries + takeaways + practice steps.",
+    value: {
+      version: 1,
+      preset_id: "course_notes_v1",
+      style: {
+        book_format: "course_notes",
+        primary_goal: "teach",
+        reader_role: "general",
+        target_audience: "mixed",
+        tone: "professional",
+        formality: "medium",
+        perspective: "you",
+        chapter_count_target: 8,
+        chapter_length_target: "medium",
+        include_summary_per_chapter: true,
+        include_key_takeaways: true,
+        include_action_steps: true,
+        include_checklists: true,
+        include_examples: true,
+        faithfulness_level: "balanced",
+        allowed_extrapolation: "light",
+        source_policy: "transcript_only",
+        citation_style: "none",
+        visual_density: "medium",
+        preferred_visual_types: ["diagram", "table"],
+        visual_source_policy: "client_assets_only",
+        caption_style: "explanatory",
+        handle_q_and_a: "append_as_faq",
+        output_format: "markdown"
+      }
+    }
+  }
+];

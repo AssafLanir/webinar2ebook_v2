@@ -1,0 +1,58 @@
+{
+  "additionalProperties": false,
+  "description": "Progress information during generation.",
+  "properties": {
+    "current_chapter": {
+      "description": "Current chapter being generated (0 if not started)",
+      "minimum": 0,
+      "title": "Current Chapter",
+      "type": "integer"
+    },
+    "total_chapters": {
+      "description": "Total chapters to generate",
+      "minimum": 0,
+      "title": "Total Chapters",
+      "type": "integer"
+    },
+    "current_chapter_title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Title of current chapter",
+      "title": "Current Chapter Title"
+    },
+    "chapters_completed": {
+      "default": 0,
+      "description": "Number of chapters completed",
+      "minimum": 0,
+      "title": "Chapters Completed",
+      "type": "integer"
+    },
+    "estimated_remaining_seconds": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Estimated seconds remaining",
+      "title": "Estimated Remaining Seconds"
+    }
+  },
+  "required": [
+    "current_chapter",
+    "total_chapters"
+  ],
+  "title": "GenerationProgress",
+  "type": "object"
+}

@@ -15,6 +15,7 @@ from .errors import (
     TimeoutError,
 )
 from .models import ChatMessage, LLMRequest, LLMResponse, ResponseFormat, Usage
+from .schemas import get_draft_plan_schema_path, load_draft_plan_schema
 
 __all__ = [
     "LLMClient",
@@ -30,4 +31,6 @@ __all__ = [
     "InvalidRequestError",
     "ContentFilterError",
     "ProviderError",
+    "load_draft_plan_schema",
+    "get_draft_plan_schema_path",
 ]

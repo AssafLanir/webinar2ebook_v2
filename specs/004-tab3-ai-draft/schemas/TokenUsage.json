@@ -1,0 +1,31 @@
+{
+  "additionalProperties": false,
+  "description": "Token usage statistics for a generation.",
+  "properties": {
+    "prompt_tokens": {
+      "description": "Input tokens used",
+      "minimum": 0,
+      "title": "Prompt Tokens",
+      "type": "integer"
+    },
+    "completion_tokens": {
+      "description": "Output tokens generated",
+      "minimum": 0,
+      "title": "Completion Tokens",
+      "type": "integer"
+    },
+    "total_tokens": {
+      "description": "Total tokens used",
+      "minimum": 0,
+      "title": "Total Tokens",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens"
+  ],
+  "title": "TokenUsage",
+  "type": "object"
+}

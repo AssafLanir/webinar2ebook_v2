@@ -1,0 +1,73 @@
+{
+  "$defs": {
+    "TokenUsage": {
+      "additionalProperties": false,
+      "description": "Token usage statistics for a generation.",
+      "properties": {
+        "prompt_tokens": {
+          "description": "Input tokens used",
+          "minimum": 0,
+          "title": "Prompt Tokens",
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "description": "Output tokens generated",
+          "minimum": 0,
+          "title": "Completion Tokens",
+          "type": "integer"
+        },
+        "total_tokens": {
+          "description": "Total tokens used",
+          "minimum": 0,
+          "title": "Total Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens"
+      ],
+      "title": "TokenUsage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Statistics about the completed generation.",
+  "properties": {
+    "chapters_generated": {
+      "description": "Number of chapters generated",
+      "minimum": 0,
+      "title": "Chapters Generated",
+      "type": "integer"
+    },
+    "total_words": {
+      "description": "Total word count of draft",
+      "minimum": 0,
+      "title": "Total Words",
+      "type": "integer"
+    },
+    "generation_time_ms": {
+      "description": "Total generation time in milliseconds",
+      "minimum": 0,
+      "title": "Generation Time Ms",
+      "type": "integer"
+    },
+    "tokens_used": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/TokenUsage"
+        }
+      ],
+      "description": "Token usage breakdown"
+    }
+  },
+  "required": [
+    "chapters_generated",
+    "total_words",
+    "generation_time_ms",
+    "tokens_used"
+  ],
+  "title": "GenerationStats",
+  "type": "object"
+}

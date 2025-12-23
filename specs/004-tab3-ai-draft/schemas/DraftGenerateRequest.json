@@ -1,0 +1,41 @@
+{
+  "additionalProperties": false,
+  "description": "Request body for draft generation.",
+  "properties": {
+    "transcript": {
+      "description": "Source transcript (min 500 chars)",
+      "minLength": 500,
+      "title": "Transcript",
+      "type": "string"
+    },
+    "outline": {
+      "description": "Outline items (min 3)",
+      "items": {
+        "type": "object"
+      },
+      "minItems": 3,
+      "title": "Outline",
+      "type": "array"
+    },
+    "resources": {
+      "description": "Optional resources",
+      "items": {
+        "type": "object"
+      },
+      "title": "Resources",
+      "type": "array"
+    },
+    "style_config": {
+      "description": "StyleConfig or StyleConfigEnvelope",
+      "title": "Style Config",
+      "type": "object"
+    }
+  },
+  "required": [
+    "transcript",
+    "outline",
+    "style_config"
+  ],
+  "title": "DraftGenerateRequest",
+  "type": "object"
+}

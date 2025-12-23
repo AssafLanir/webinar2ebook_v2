@@ -8,8 +8,10 @@ import type {
   WebinarType,
   Visual,
   AIPreviewData,
+  StyleConfigEnvelope,
 } from '../types/project'
 import { INITIAL_STATE, DEFAULT_STYLE_CONFIG } from '../types/project'
+import { STYLE_PRESETS } from '../constants/stylePresets'
 import { generateId } from '../utils/idGenerator'
 import {
   SAMPLE_TRANSCRIPT,
@@ -83,6 +85,13 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
         error: null,
       }
 
+    case 'UPDATE_PROJECT_DATA':
+      // Update project data without changing tab (used by saveProject)
+      return {
+        ...state,
+        project: action.payload,
+      }
+
     case 'CREATE_PROJECT': {
       // This is now used for local fallback only
       const newProject: Project = {
@@ -100,6 +109,7 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
         })),
         draftText: '',
         styleConfig: { ...DEFAULT_STYLE_CONFIG },
+        visualPlan: null,
         finalTitle: '',
         finalSubtitle: '',
         creditsText: '',
@@ -305,16 +315,58 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
       }
     }
 
-    case 'UPDATE_STYLE_CONFIG':
+    case 'SET_STYLE_PRESET': {
+      if (!state.project) return state
+      const preset = STYLE_PRESETS.find(p => p.id === action.payload)
+      if (!preset) return state
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          styleConfig: { ...preset.value },
+        },
+      }
+    }
+
+    case 'SET_STYLE_CONFIG_ENVELOPE':
       if (!state.project) return state
       return {
         ...state,
         project: {
           ...state.project,
+          styleConfig: action.payload,
+        },
+      }
+
+    case 'UPDATE_STYLE_CONFIG': {
+      if (!state.project) return state
+      // Get current style config as envelope, or use default
+      const currentEnvelope: StyleConfigEnvelope =
+        state.project.styleConfig && 'style' in state.project.styleConfig
+          ? (state.project.styleConfig as StyleConfigEnvelope)
+          : DEFAULT_STYLE_CONFIG
+      return {
+        ...state,
+        project: {
+          ...state.project,
           styleConfig: {
-            ...state.project.styleConfig,
-            ...action.payload,
+            ...currentEnvelope,
+            style: {
+              ...currentEnvelope.style,
+              ...action.payload,
+            },
           },
+        },
+      }
+    }
+
+    case 'SET_VISUAL_PLAN':
+      if (!state.project) return state
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: action.payload,
         },
       }
 
@@ -576,7 +628,8 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       void _createdAt
       void _updatedAt
       const updated = await apiUpdateProject(id, projectData)
-      dispatch({ type: 'SET_PROJECT', payload: updated })
+      // Use UPDATE_PROJECT_DATA to preserve current tab (not SET_PROJECT which resets to tab 1)
+      dispatch({ type: 'UPDATE_PROJECT_DATA', payload: updated })
       dispatch({ type: 'SET_SAVING', payload: false })
       return true
     } catch (error) {

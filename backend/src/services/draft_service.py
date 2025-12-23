@@ -1,0 +1,586 @@
+"""Draft generation service for ebook creation.
+
+Orchestrates the async generation workflow:
+1. Create job and start background task
+2. Generate DraftPlan (structure + mappings)
+3. Generate chapters sequentially with context
+4. Assemble final draft
+
+Uses in-memory job store for state management.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import datetime
+from typing import Optional
+
+from src.llm import LLMClient, LLMRequest, ChatMessage, ResponseFormat, load_draft_plan_schema
+from src.models import (
+    DraftPlan,
+    ChapterPlan,
+    VisualPlan,
+    GenerationJob,
+    JobStatus,
+    DraftGenerateRequest,
+    DraftStatusData,
+    DraftCancelData,
+    DraftRegenerateData,
+    GenerationProgress,
+)
+
+from .job_store import get_job_store, get_job, update_job
+from .prompts import (
+    DRAFT_PLAN_SYSTEM_PROMPT,
+    build_draft_plan_user_prompt,
+    build_chapter_system_prompt,
+    build_chapter_user_prompt,
+    extract_transcript_segment,
+    get_previous_chapter_ending,
+    get_next_chapter_preview,
+    parse_outline_to_chapters,
+)
+
+logger = logging.getLogger(__name__)
+
+# Default LLM models
+PLANNING_MODEL = "gpt-4o-mini"  # Faster, cheaper for structured planning
+CHAPTER_MODEL = "gpt-4o-mini"   # Could use gpt-4o for higher quality
+
+
+# ==============================================================================
+# Public API
+# ==============================================================================
+
+async def start_generation(
+    request: DraftGenerateRequest,
+    project_id: Optional[str] = None,
+) -> str:
+    """Start draft generation and return job ID.
+
+    Creates a job and starts background generation task.
+    Returns immediately for async polling.
+
+    Args:
+        request: Generation request with transcript, outline, style config.
+        project_id: Optional associated project ID.
+
+    Returns:
+        Job ID for status polling.
+    """
+    store = get_job_store()
+    job_id = await store.create_job(project_id=project_id)
+
+    logger.info(f"Starting draft generation job {job_id}")
+
+    # Start background task
+    asyncio.create_task(
+        _generate_draft_task(job_id, request),
+        name=f"draft_generation_{job_id}",
+    )
+
+    return job_id
+
+
+async def get_job_status(job_id: str) -> Optional[DraftStatusData]:
+    """Get current status of a generation job.
+
+    Args:
+        job_id: The job identifier.
+
+    Returns:
+        Status data if job found, None otherwise.
+    """
+    job = await get_job(job_id)
+    if not job:
+        return None
+
+    # Determine what to return based on status
+    is_active = job.status in (JobStatus.queued, JobStatus.planning, JobStatus.generating)
+    is_completed = job.status == JobStatus.completed
+    is_failed = job.status == JobStatus.failed
+    is_partial = job.status in (JobStatus.cancelled, JobStatus.failed)
+    has_chapters = bool(job.chapters_completed)
+
+    # Build partial draft for progress updates or partial results
+    partial_draft = None
+    if (is_active or is_partial) and has_chapters:
+        partial_draft = _assemble_partial_draft(job)
+
+    # Build progress info
+    progress = None
+    if is_active or is_failed:
+        # Active/failed: show current progress
+        progress = job.get_progress()
+    elif is_completed:
+        # Completed: show finalized 100% progress
+        progress = GenerationProgress(
+            current_chapter=job.total_chapters,
+            total_chapters=job.total_chapters,
+            current_chapter_title=None,
+            chapters_completed=job.total_chapters,
+            estimated_remaining_seconds=0,
+        )
+
+    return DraftStatusData(
+        job_id=job.job_id,
+        status=job.status,
+        progress=progress,
+        draft_markdown=job.draft_markdown if is_completed else None,
+        draft_plan=job.draft_plan if is_completed else None,
+        visual_plan=job.visual_plan if is_completed else None,
+        generation_stats=job.get_stats() if is_completed else None,
+        partial_draft_markdown=partial_draft,
+        chapters_available=len(job.chapters_completed) if has_chapters else None,
+        error_code=job.error_code if is_failed else None,
+        error_message=job.error if is_failed else None,
+    )
+
+
+async def cancel_job(job_id: str) -> Optional[DraftCancelData]:
+    """Request cancellation of a generation job.
+
+    Cancellation happens after the current chapter completes.
+
+    Args:
+        job_id: The job identifier.
+
+    Returns:
+        Cancel data if job found, None otherwise.
+    """
+    job = await get_job(job_id)
+    if not job:
+        return None
+
+    if job.is_terminal():
+        return DraftCancelData(
+            job_id=job.job_id,
+            status=job.status,
+            cancelled=False,
+            message=f"Job already in terminal state: {job.status.value}",
+            partial_draft_markdown=job.draft_markdown,
+            chapters_available=len(job.chapters_completed) if job.chapters_completed else None,
+        )
+
+    # Request cancellation
+    await update_job(job_id, cancel_requested=True)
+
+    return DraftCancelData(
+        job_id=job.job_id,
+        status=job.status,
+        cancelled=True,
+        message="Cancellation requested. Job will stop after current chapter.",
+        partial_draft_markdown=None,
+        chapters_available=len(job.chapters_completed) if job.chapters_completed else None,
+    )
+
+
+async def regenerate_section(
+    section_outline_item_id: str,
+    draft_plan: DraftPlan,
+    existing_draft: str,
+    style_config: dict,
+) -> Optional[DraftRegenerateData]:
+    """Regenerate a single section/chapter.
+
+    Args:
+        section_outline_item_id: Outline item ID to regenerate.
+        draft_plan: The original DraftPlan.
+        existing_draft: Current full draft markdown.
+        style_config: Style configuration dict.
+
+    Returns:
+        Regenerate data with new section content.
+    """
+    # Find the chapter to regenerate
+    chapter_plan = None
+    chapter_index = -1
+    for i, ch in enumerate(draft_plan.chapters):
+        if ch.outline_item_id == section_outline_item_id:
+            chapter_plan = ch
+            chapter_index = i
+            break
+
+    if not chapter_plan:
+        logger.warning(f"Section not found: {section_outline_item_id}")
+        return None
+
+    # Find section boundaries in existing draft
+    start_line, end_line = _find_section_boundaries(
+        existing_draft,
+        chapter_plan.chapter_number,
+        chapter_plan.title,
+    )
+
+    # Generate new content
+    # Note: This would need the transcript to work properly
+    # For now, return placeholder - full implementation in Phase 5
+    new_section = f"## Chapter {chapter_plan.chapter_number}: {chapter_plan.title}\n\n[Regenerated content placeholder]"
+
+    return DraftRegenerateData(
+        section_markdown=new_section,
+        section_start_line=start_line,
+        section_end_line=end_line,
+        generation_stats=None,
+    )
+
+
+# ==============================================================================
+# Background Generation Task
+# ==============================================================================
+
+async def _generate_draft_task(
+    job_id: str,
+    request: DraftGenerateRequest,
+) -> None:
+    """Background task that performs the actual generation.
+
+    Args:
+        job_id: The job identifier.
+        request: Generation request.
+    """
+    try:
+        # Phase 1: Generate DraftPlan
+        await update_job(job_id, status=JobStatus.planning)
+        logger.info(f"Job {job_id}: Starting planning phase")
+
+        draft_plan = await generate_draft_plan(
+            transcript=request.transcript,
+            outline=request.outline,
+            style_config=request.style_config,
+            resources=request.resources,
+        )
+
+        job = await get_job(job_id)
+        if not job:
+            return
+
+        await update_job(
+            job_id,
+            draft_plan=draft_plan,
+            visual_plan=draft_plan.visual_plan,
+            total_chapters=len(draft_plan.chapters),
+        )
+
+        # Check for cancellation
+        if job.cancel_requested:
+            await update_job(job_id, status=JobStatus.cancelled)
+            logger.info(f"Job {job_id}: Cancelled during planning")
+            return
+
+        # Phase 2: Generate chapters
+        await update_job(job_id, status=JobStatus.generating)
+        logger.info(f"Job {job_id}: Starting generation phase ({len(draft_plan.chapters)} chapters)")
+
+        chapters_completed: list[str] = []
+
+        for i, chapter_plan in enumerate(draft_plan.chapters):
+            # Check for cancellation between chapters
+            job = await get_job(job_id)
+            if job and job.cancel_requested:
+                await update_job(
+                    job_id,
+                    status=JobStatus.cancelled,
+                    chapters_completed=chapters_completed,
+                )
+                logger.info(f"Job {job_id}: Cancelled after chapter {i}")
+                return
+
+            await update_job(job_id, current_chapter=i + 1)
+            logger.debug(f"Job {job_id}: Generating chapter {i + 1}/{len(draft_plan.chapters)}")
+
+            chapter_md = await generate_chapter(
+                chapter_plan=chapter_plan,
+                transcript=request.transcript,
+                book_title=draft_plan.book_title,
+                style_config=request.style_config,
+                chapters_completed=chapters_completed,
+                all_chapters=draft_plan.chapters,
+            )
+
+            chapters_completed.append(chapter_md)
+            await update_job(job_id, chapters_completed=chapters_completed)
+
+        # Assemble final draft
+        final_markdown = assemble_chapters(
+            book_title=draft_plan.book_title,
+            chapters=chapters_completed,
+        )
+
+        await update_job(
+            job_id,
+            status=JobStatus.completed,
+            draft_markdown=final_markdown,
+            chapters_completed=chapters_completed,
+        )
+
+        logger.info(f"Job {job_id}: Generation completed")
+
+    except Exception as e:
+        logger.error(f"Job {job_id}: Generation failed: {e}", exc_info=True)
+        await update_job(
+            job_id,
+            status=JobStatus.failed,
+            error=str(e),
+            error_code="GENERATION_ERROR",
+        )
+
+
+# ==============================================================================
+# Core Generation Functions (to be fully implemented in Phase 3)
+# ==============================================================================
+
+async def generate_draft_plan(
+    transcript: str,
+    outline: list[dict],
+    style_config: dict,
+    resources: Optional[list[dict]] = None,
+) -> DraftPlan:
+    """Generate a DraftPlan from outline structure with LLM enhancement.
+
+    Chapters are derived from the outline (level=1 items = chapters).
+    LLM is used only for visual plan generation, not chapter structure.
+
+    Args:
+        transcript: Full transcript text.
+        outline: List of outline items.
+        style_config: StyleConfig or StyleConfigEnvelope dict.
+        resources: Optional resources.
+
+    Returns:
+        Generated DraftPlan with outline-driven chapters.
+    """
+    # Step 1: Derive chapter structure from outline
+    chapters = parse_outline_to_chapters(outline, transcript)
+
+    if not chapters:
+        # Fallback: create a single chapter if no outline structure
+        from src.models import TranscriptSegment
+        chapters = [
+            ChapterPlan(
+                chapter_number=1,
+                title="Content",
+                outline_item_id="fallback-1",
+                goals=["Cover the main content from the transcript"],
+                key_points=["Key points from the source material"],
+                transcript_segments=[
+                    TranscriptSegment(start_char=0, end_char=len(transcript), relevance="primary")
+                ],
+                estimated_words=max(500, len(transcript) // 5),
+            )
+        ]
+
+    logger.info(f"Derived {len(chapters)} chapters from outline")
+
+    # Step 2: Generate visual plan using LLM (optional enhancement)
+    visual_plan = await _generate_visual_plan(transcript, chapters, style_config)
+
+    # Step 3: Calculate metadata
+    total_words = sum(ch.estimated_words for ch in chapters)
+    # Rough estimate: 30 seconds per 100 words
+    estimated_time = (total_words // 100) * 30
+
+    from src.models import GenerationMetadata
+    metadata = GenerationMetadata(
+        estimated_total_words=total_words,
+        estimated_generation_time_seconds=estimated_time,
+        transcript_utilization=0.9,  # Assume most transcript is used
+    )
+
+    # Step 4: Build book title from first outline item or default
+    book_title = "Untitled Ebook"
+    for item in outline:
+        if item.get("level", 1) == 1:
+            book_title = item.get("title", book_title)
+            break
+
+    draft_plan = DraftPlan(
+        version=1,
+        book_title=book_title,
+        chapters=chapters,
+        visual_plan=visual_plan,
+        generation_metadata=metadata,
+    )
+
+    logger.info(f"Generated DraftPlan with {len(draft_plan.chapters)} chapters (outline-driven)")
+    return draft_plan
+
+
+async def _generate_visual_plan(
+    transcript: str,
+    chapters: list[ChapterPlan],
+    style_config: dict,
+) -> VisualPlan:
+    """Generate visual opportunities plan using LLM.
+
+    Args:
+        transcript: Full transcript text.
+        chapters: List of chapter plans.
+        style_config: Style configuration dict.
+
+    Returns:
+        VisualPlan with opportunities.
+    """
+    # Extract visual density setting
+    if "style" in style_config:
+        style_dict = style_config.get("style", {})
+    else:
+        style_dict = style_config
+
+    visual_density = style_dict.get("visual_density", "medium")
+
+    # For "none" density, return empty plan
+    if visual_density == "none":
+        return VisualPlan(opportunities=[], assets=[])
+
+    # For now, return empty plan - visual generation can be enhanced later
+    # Full LLM-based visual suggestion would go here
+    return VisualPlan(opportunities=[], assets=[])
+
+
+async def generate_chapter(
+    chapter_plan: ChapterPlan,
+    transcript: str,
+    book_title: str,
+    style_config: dict,
+    chapters_completed: list[str],
+    all_chapters: list[ChapterPlan],
+) -> str:
+    """Generate a single chapter using LLM.
+
+    Args:
+        chapter_plan: The plan for this chapter.
+        transcript: Full transcript text.
+        book_title: Title of the ebook.
+        style_config: StyleConfig dict.
+        chapters_completed: Previously completed chapters (for context).
+        all_chapters: All chapter plans (for next chapter preview).
+
+    Returns:
+        Generated chapter markdown.
+    """
+    client = LLMClient()
+
+    # Extract style config if wrapped
+    if "style" in style_config:
+        style_dict = style_config.get("style", {})
+    else:
+        style_dict = style_config
+
+    # Get transcript segment for this chapter
+    transcript_segment = extract_transcript_segment(transcript, chapter_plan)
+
+    # Get context from previous/next chapters
+    previous_ending = get_previous_chapter_ending(chapters_completed)
+    chapter_index = chapter_plan.chapter_number - 1
+    next_preview = get_next_chapter_preview(all_chapters, chapter_index)
+
+    # Build prompts
+    system_prompt = build_chapter_system_prompt(
+        book_title=book_title,
+        chapter_number=chapter_plan.chapter_number,
+        style_config=style_dict,
+    )
+    user_prompt = build_chapter_user_prompt(
+        chapter_plan=chapter_plan,
+        transcript_segment=transcript_segment,
+        previous_chapter_ending=previous_ending,
+        next_chapter_preview=next_preview,
+    )
+
+    request = LLMRequest(
+        model=CHAPTER_MODEL,
+        messages=[
+            ChatMessage(role="system", content=system_prompt),
+            ChatMessage(role="user", content=user_prompt),
+        ],
+        temperature=0.7,
+        max_tokens=4000,
+    )
+
+    response = await client.generate(request)
+
+    logger.debug(f"Generated chapter {chapter_plan.chapter_number}: {len(response.text)} chars")
+    return response.text
+
+
+def assemble_chapters(
+    book_title: str,
+    chapters: list[str],
+) -> str:
+    """Assemble individual chapters into final draft.
+
+    Args:
+        book_title: Title of the ebook.
+        chapters: List of chapter markdown strings.
+
+    Returns:
+        Complete draft markdown.
+    """
+    parts = [
+        f"# {book_title}",
+        "",
+    ]
+
+    for chapter in chapters:
+        parts.append(chapter)
+        parts.append("")  # Blank line between chapters
+
+    return "\n".join(parts)
+
+
+def _assemble_partial_draft(job: GenerationJob) -> Optional[str]:
+    """Assemble partial draft from completed chapters.
+
+    Args:
+        job: The generation job.
+
+    Returns:
+        Partial markdown if chapters available, None otherwise.
+    """
+    if not job.chapters_completed:
+        return None
+
+    title = job.draft_plan.book_title if job.draft_plan else "Untitled"
+    markdown = assemble_chapters(title, job.chapters_completed)
+
+    # Add note about incomplete generation
+    markdown += "\n\n---\n\n"
+    markdown += f"*Generation incomplete. {len(job.chapters_completed)} of {job.total_chapters} chapters available.*\n"
+
+    return markdown
+
+
+def _find_section_boundaries(
+    draft_markdown: str,
+    chapter_number: int,
+    chapter_title: str,
+) -> tuple[int, int]:
+    """Find start and end lines of a chapter in the draft.
+
+    Args:
+        draft_markdown: Full draft markdown.
+        chapter_number: Chapter number to find.
+        chapter_title: Chapter title.
+
+    Returns:
+        Tuple of (start_line, end_line) (1-indexed).
+    """
+    lines = draft_markdown.split("\n")
+    start_line = 1
+    end_line = len(lines)
+
+    # Find chapter heading pattern: ## Chapter N: Title
+    chapter_pattern = f"## Chapter {chapter_number}:"
+
+    for i, line in enumerate(lines):
+        if line.startswith(chapter_pattern):
+            start_line = i + 1  # 1-indexed
+
+        # Find next chapter heading to get end
+        elif line.startswith("## Chapter ") and start_line > 1:
+            end_line = i  # Line before next chapter
+            break
+
+    return (start_line, end_line)

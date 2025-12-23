@@ -1,0 +1,22 @@
+{
+  "additionalProperties": false,
+  "description": "Error detail structure for API responses.",
+  "properties": {
+    "code": {
+      "description": "Machine-readable error code",
+      "title": "Code",
+      "type": "string"
+    },
+    "message": {
+      "description": "Human-readable error message",
+      "title": "Message",
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "title": "ErrorDetail",
+  "type": "object"
+}

@@ -13,6 +13,7 @@ from src.models.project import (
     UpdateProjectRequest,
     WebinarType,
 )
+from src.services.normalization import normalize_project_data
 
 COLLECTION_NAME = "projects"
 
@@ -28,7 +29,14 @@ def _to_project_summary(doc: dict) -> ProjectSummary:
 
 
 def _to_project(doc: dict) -> Project:
-    """Convert MongoDB document to Project model."""
+    """Convert MongoDB document to Project model.
+
+    Applies normalization to ensure backward-compatible fields
+    are converted to canonical shapes.
+    """
+    # Normalize legacy/missing fields to canonical shapes
+    normalized = normalize_project_data(doc)
+
     return Project(
         id=str(doc["_id"]),
         name=doc["name"],
@@ -40,7 +48,8 @@ def _to_project(doc: dict) -> Project:
         resources=doc.get("resources", []),
         visuals=doc.get("visuals", []),
         draftText=doc.get("draftText", ""),
-        styleConfig=doc.get("styleConfig"),
+        styleConfig=normalized.get("styleConfig"),
+        visualPlan=normalized.get("visualPlan"),
         finalTitle=doc.get("finalTitle", ""),
         finalSubtitle=doc.get("finalSubtitle", ""),
         creditsText=doc.get("creditsText", ""),
@@ -75,6 +84,7 @@ async def create_project(request: CreateProjectRequest) -> Project:
         "visuals": [],
         "draftText": "",
         "styleConfig": None,
+        "visualPlan": {"opportunities": [], "assets": []},  # Canonical empty VisualPlan
         "finalTitle": "",
         "finalSubtitle": "",
         "creditsText": "",
@@ -120,7 +130,23 @@ async def update_project(project_id: str, request: UpdateProjectRequest) -> Proj
 
     now = datetime.now(UTC)
 
-    # Build update document
+    # Build update document with canonical shapes
+    # Normalize styleConfig if provided (ensures canonical format on save)
+    style_config_data = None
+    if request.styleConfig:
+        if hasattr(request.styleConfig, "model_dump"):
+            style_config_data = request.styleConfig.model_dump()
+        elif isinstance(request.styleConfig, dict):
+            style_config_data = request.styleConfig
+
+    # Normalize visualPlan if provided
+    visual_plan_data = {"opportunities": [], "assets": []}  # Default empty
+    if request.visualPlan:
+        if hasattr(request.visualPlan, "model_dump"):
+            visual_plan_data = request.visualPlan.model_dump()
+        elif isinstance(request.visualPlan, dict):
+            visual_plan_data = request.visualPlan
+
     update_doc = {
         "name": request.name,
         "webinarType": request.webinarType.value,
@@ -130,7 +156,8 @@ async def update_project(project_id: str, request: UpdateProjectRequest) -> Proj
         "resources": [res.model_dump() for res in request.resources],
         "visuals": [vis.model_dump() for vis in request.visuals],
         "draftText": request.draftText,
-        "styleConfig": request.styleConfig.model_dump() if request.styleConfig else None,
+        "styleConfig": style_config_data,
+        "visualPlan": visual_plan_data,
         "finalTitle": request.finalTitle,
         "finalSubtitle": request.finalSubtitle,
         "creditsText": request.creditsText,

@@ -21,3 +21,10 @@ This file is intentionally minimal to avoid drift. Do not duplicate package vers
 
 ## Commands
 See `spec0_tech.md` (and repo README if present).
+
+## Active Technologies
+- Python 3.11 (backend), TypeScript 5.x (frontend) (004-tab3-style-visuals-schemas)
+- MongoDB (projects), local filesystem (file uploads) (004-tab3-style-visuals-schemas)
+
+## Recent Changes
+- 004-tab3-style-visuals-schemas: Added Python 3.11 (backend), TypeScript 5.x (frontend)

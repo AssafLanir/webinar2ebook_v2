@@ -4,6 +4,7 @@ Implements the LLMProvider interface for OpenAI's Chat Completions API.
 Supports structured outputs via response_format.json_schema.
 """
 
+import logging
 import os
 import time
 from typing import Any
@@ -22,6 +23,55 @@ from ..errors import (
 )
 from ..models import ChatMessage, LLMRequest, LLMResponse, Usage
 from .base import LLMProvider
+
+logger = logging.getLogger(__name__)
+
+
+def _normalize_openai_json_schema(loaded: dict) -> dict:
+    """Normalize JSON schema for OpenAI structured output.
+
+    OpenAI expects: {"name": "...", "strict": true, "schema": {...}}
+    where schema.type must be "object".
+
+    This handles two cases:
+    1. Already wrapped: {"name": "...", "strict": ..., "schema": {...}}
+       -> Use as-is
+    2. Raw JSON Schema: {"type": "object", "properties": {...}, ...}
+       -> Wrap with default name
+
+    Args:
+        loaded: Either a raw JSON schema or OpenAI wrapper format.
+
+    Returns:
+        Properly formatted OpenAI json_schema object.
+
+    Raises:
+        InvalidRequestError: If the schema doesn't have type "object".
+    """
+    # Check if already in OpenAI wrapper format
+    if isinstance(loaded, dict) and "schema" in loaded and "name" in loaded:
+        # Already wrapped - use as-is
+        js = loaded
+    else:
+        # Raw JSON Schema - wrap it
+        js = {"name": "response", "strict": True, "schema": loaded}
+
+    schema = js.get("schema") or {}
+    schema_type = schema.get("type")
+
+    if schema_type != "object":
+        raise InvalidRequestError(
+            f"JSON schema must have top-level type 'object'. "
+            f"Got type={schema_type!r}. wrapper_keys={list(js.keys())}",
+            provider="openai",
+        )
+
+    logger.debug(
+        f"Using OpenAI json_schema: name={js.get('name')}, "
+        f"strict={js.get('strict')}, schema.type={schema_type}"
+    )
+
+    return js
 
 
 class OpenAIProvider(LLMProvider):
@@ -149,13 +199,13 @@ class OpenAIProvider(LLMProvider):
 
         if request.response_format:
             if request.response_format.type == "json_schema":
+                # Normalize schema - handles both raw JSON Schema and pre-wrapped format
+                normalized_schema = _normalize_openai_json_schema(
+                    request.response_format.json_schema
+                )
                 openai_request["response_format"] = {
                     "type": "json_schema",
-                    "json_schema": {
-                        "name": "response",
-                        "strict": True,
-                        "schema": request.response_format.json_schema,
-                    },
+                    "json_schema": normalized_schema,
                 }
             elif request.response_format.type == "json_object":
                 openai_request["response_format"] = {"type": "json_object"}
