@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from datetime import datetime
 from typing import Optional
 
 from src.llm import LLMClient, LLMRequest, ChatMessage, ResponseFormat, load_draft_plan_schema
+from src.llm.schemas import load_visual_opportunities_schema
 from src.models import (
     DraftPlan,
     ChapterPlan,
@@ -29,6 +31,7 @@ from src.models import (
     DraftRegenerateData,
     GenerationProgress,
 )
+from src.models.visuals import VisualOpportunity, VisualPlacement, VisualType, VisualSourcePolicy
 from src.models.style_config import (
     compute_words_per_chapter,
     TotalLengthPreset,
@@ -45,6 +48,8 @@ from .prompts import (
     get_previous_chapter_ending,
     get_next_chapter_preview,
     parse_outline_to_chapters,
+    VISUAL_OPPORTUNITY_SYSTEM_PROMPT,
+    build_visual_opportunity_user_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -456,11 +461,89 @@ async def _generate_visual_plan(
 
     # For "none" density, return empty plan
     if visual_density == "none":
+        logger.info("Visual density is 'none', skipping opportunity generation")
         return VisualPlan(opportunities=[], assets=[])
 
-    # For now, return empty plan - visual generation can be enhanced later
-    # Full LLM-based visual suggestion would go here
-    return VisualPlan(opportunities=[], assets=[])
+    # Skip if no chapters to analyze
+    if not chapters:
+        logger.info("No chapters to analyze for visual opportunities")
+        return VisualPlan(opportunities=[], assets=[])
+
+    try:
+        client = LLMClient()
+
+        # Build prompts
+        user_prompt = build_visual_opportunity_user_prompt(chapters, visual_density)
+
+        # Load schema for structured output
+        schema = load_visual_opportunities_schema()
+
+        request = LLMRequest(
+            model=PLANNING_MODEL,
+            messages=[
+                ChatMessage(role="system", content=VISUAL_OPPORTUNITY_SYSTEM_PROMPT),
+                ChatMessage(role="user", content=user_prompt),
+            ],
+            temperature=0.7,
+            max_tokens=2000,
+            response_format=ResponseFormat(
+                type="json_schema",
+                json_schema={
+                    "name": "visual_opportunities",
+                    "strict": True,
+                    "schema": schema,
+                },
+            ),
+        )
+
+        response = await client.generate(request)
+
+        # Parse response
+        import json
+        result = json.loads(response.text)
+        raw_opportunities = result.get("opportunities", [])
+
+        # Convert to VisualOpportunity objects with defaults
+        opportunities: list[VisualOpportunity] = []
+        for raw in raw_opportunities:
+            try:
+                # Map visual_type string to enum
+                visual_type_str = raw.get("visual_type", "other")
+                try:
+                    visual_type = VisualType(visual_type_str)
+                except ValueError:
+                    visual_type = VisualType.other
+
+                opportunity = VisualOpportunity(
+                    id=str(uuid.uuid4()),
+                    chapter_index=raw.get("chapter_index", 1),
+                    section_path=None,  # Default
+                    placement=VisualPlacement.after_heading,  # Default
+                    visual_type=visual_type,
+                    source_policy=VisualSourcePolicy.client_assets_only,  # Default
+                    title=raw.get("title", "Untitled Visual"),
+                    prompt=raw.get("prompt", ""),
+                    caption=raw.get("caption", ""),
+                    required=False,  # Default
+                    candidate_asset_ids=[],  # Default
+                    confidence=max(0.0, min(1.0, raw.get("confidence", 0.6))),
+                    rationale=raw.get("rationale"),
+                )
+                opportunities.append(opportunity)
+            except Exception as e:
+                logger.warning(f"Failed to parse opportunity: {e}")
+                continue
+
+        # Sort by chapter_index ASC, then confidence DESC (deterministic ordering)
+        opportunities.sort(key=lambda o: (o.chapter_index, -o.confidence))
+
+        logger.info(f"Generated {len(opportunities)} visual opportunities (density={visual_density})")
+        return VisualPlan(opportunities=opportunities, assets=[])
+
+    except Exception as e:
+        # On LLM failure, log and return empty opportunities (draft still succeeds)
+        logger.error(f"Failed to generate visual opportunities: {e}")
+        return VisualPlan(opportunities=[], assets=[])
 
 
 async def generate_chapter(
