@@ -5,6 +5,8 @@
  * - Upload images to visual library
  * - View uploaded assets as thumbnails
  * - Delete assets
+ * - View visual opportunities grouped by chapter
+ * - Assign/skip/unassign assets to opportunities
  * - Auto-save after changes
  */
 
@@ -13,11 +15,14 @@ import { useProject } from "../../context/ProjectContext";
 import { Card } from "../common/Card";
 import { FileUploadDropzone } from "./FileUploadDropzone";
 import { AssetGrid } from "./AssetGrid";
+import { OpportunityList } from "./OpportunityList";
+import { AssetPickerModal } from "./AssetPickerModal";
 import {
   uploadVisualAssets,
   deleteVisualAsset,
   VisualsApiError,
 } from "../../services/visualsApi";
+import type { VisualOpportunity } from "../../types/visuals";
 
 // Debounce delay for auto-save (ms)
 const SAVE_DEBOUNCE_MS = 1500;
@@ -29,6 +34,9 @@ export function Tab2Content() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Asset picker modal state
+  const [pickerOpportunity, setPickerOpportunity] = useState<VisualOpportunity | null>(null);
 
   // Debounced save ref
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -61,10 +69,13 @@ export function Tab2Content() {
   if (!project) return null;
 
   const assets = project.visualPlan?.assets ?? [];
+  const opportunities = project.visualPlan?.opportunities ?? [];
+  const assignments = project.visualPlan?.assignments ?? [];
   const assetCount = assets.length;
   const maxAssets = 10;
   const canUpload = assetCount < maxAssets;
 
+  // Upload handler
   const handleFilesSelected = async (files: File[]) => {
     if (!canUpload) {
       setUploadError(`Maximum ${maxAssets} assets per project`);
@@ -93,6 +104,7 @@ export function Tab2Content() {
     }
   };
 
+  // Delete handler
   const handleDeleteAsset = async (assetId: string) => {
     setIsDeleting(true);
 
@@ -100,7 +112,7 @@ export function Tab2Content() {
       // Delete from server (GridFS)
       await deleteVisualAsset(project.id, assetId);
 
-      // Remove from state
+      // Remove from state (also removes related assignments)
       dispatch({ type: "REMOVE_VISUAL_ASSET", payload: assetId });
 
       // Trigger auto-save
@@ -114,6 +126,39 @@ export function Tab2Content() {
     } finally {
       setIsDeleting(false);
     }
+  };
+
+  // Assignment handlers
+  const handleAssignClick = (opportunityId: string) => {
+    const opportunity = opportunities.find((o) => o.id === opportunityId);
+    if (opportunity) {
+      setPickerOpportunity(opportunity);
+    }
+  };
+
+  const handleSkip = (opportunityId: string) => {
+    dispatch({ type: "SKIP_VISUAL_OPPORTUNITY", payload: opportunityId });
+    debouncedSave();
+  };
+
+  const handleUnassign = (opportunityId: string) => {
+    dispatch({ type: "REMOVE_VISUAL_ASSIGNMENT", payload: opportunityId });
+    debouncedSave();
+  };
+
+  const handleAssetSelected = (assetId: string) => {
+    if (pickerOpportunity) {
+      dispatch({
+        type: "SET_VISUAL_ASSIGNMENT",
+        payload: { opportunityId: pickerOpportunity.id, assetId },
+      });
+      debouncedSave();
+    }
+    setPickerOpportunity(null);
+  };
+
+  const handlePickerCancel = () => {
+    setPickerOpportunity(null);
   };
 
   return (
@@ -185,16 +230,29 @@ export function Tab2Content() {
         </div>
       </Card>
 
-      {/* Visual Opportunities Section - placeholder for future US2 */}
-      {project.visualPlan?.opportunities &&
-        project.visualPlan.opportunities.length > 0 && (
-          <Card title="Visual Opportunities">
-            <p className="text-sm text-gray-500">
-              {project.visualPlan.opportunities.length} visual opportunities
-              from your draft. Assignment feature coming soon.
-            </p>
-          </Card>
-        )}
+      {/* Visual Opportunities Section */}
+      <Card title="Visual Opportunities">
+        <OpportunityList
+          projectId={project.id}
+          opportunities={opportunities}
+          assignments={assignments}
+          assets={assets}
+          onAssign={handleAssignClick}
+          onSkip={handleSkip}
+          onUnassign={handleUnassign}
+        />
+      </Card>
+
+      {/* Asset Picker Modal */}
+      {pickerOpportunity && (
+        <AssetPickerModal
+          projectId={project.id}
+          opportunity={pickerOpportunity}
+          assets={assets}
+          onSelect={handleAssetSelected}
+          onCancel={handlePickerCancel}
+        />
+      )}
     </div>
   );
 }

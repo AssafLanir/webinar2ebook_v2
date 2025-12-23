@@ -249,6 +249,11 @@ export type ProjectAction =
   | { type: 'ADD_VISUAL_ASSETS'; payload: import('./visuals').VisualAsset[] }
   | { type: 'REMOVE_VISUAL_ASSET'; payload: string }  // assetId
 
+  // Tab 2: Visual Assignments (Spec 005 - US2)
+  | { type: 'SET_VISUAL_ASSIGNMENT'; payload: { opportunityId: string; assetId: string } }
+  | { type: 'SKIP_VISUAL_OPPORTUNITY'; payload: string }  // opportunityId
+  | { type: 'REMOVE_VISUAL_ASSIGNMENT'; payload: string }  // opportunityId
+
   // Tab 3: Draft
   | { type: 'SET_STYLE_PRESET'; payload: string }
   | { type: 'SET_STYLE_CONFIG_ENVELOPE'; payload: StyleConfigEnvelope }

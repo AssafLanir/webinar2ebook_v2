@@ -88,13 +88,13 @@
 
 ### Implementation for User Story 2
 
-- [ ] T025 [P] [US2] Create OpportunityCard component (title, type, rationale, assignment state) in `frontend/src/components/tab2/OpportunityCard.tsx`
-- [ ] T026 [P] [US2] Create OpportunityList component (grouped by chapter) in `frontend/src/components/tab2/OpportunityList.tsx`
-- [ ] T027 [US2] Create AssetPickerModal component (select asset for opportunity) in `frontend/src/components/tab2/AssetPickerModal.tsx`
-- [ ] T028 [US2] Add empty state for no opportunities in OpportunityList in `frontend/src/components/tab2/OpportunityList.tsx`
-- [ ] T029 [US2] Add ProjectContext actions for SET_VISUAL_ASSIGNMENT, REMOVE_VISUAL_ASSIGNMENT in `frontend/src/context/ProjectContext.tsx`
-- [ ] T030 [US2] Implement assign/unassign/skip handlers in Tab2Content in `frontend/src/components/tab2/Tab2Content.tsx`
-- [ ] T031 [US2] Wire up debounced saveProject after assignment changes in `frontend/src/components/tab2/Tab2Content.tsx`
+- [x] T025 [P] [US2] Create OpportunityCard component (title, type, rationale, assignment state) in `frontend/src/components/tab2/OpportunityCard.tsx`
+- [x] T026 [P] [US2] Create OpportunityList component (grouped by chapter) in `frontend/src/components/tab2/OpportunityList.tsx`
+- [x] T027 [US2] Create AssetPickerModal component (select asset for opportunity) in `frontend/src/components/tab2/AssetPickerModal.tsx`
+- [x] T028 [US2] Add empty state for no opportunities in OpportunityList in `frontend/src/components/tab2/OpportunityList.tsx`
+- [x] T029 [US2] Add ProjectContext actions for SET_VISUAL_ASSIGNMENT, REMOVE_VISUAL_ASSIGNMENT in `frontend/src/context/ProjectContext.tsx`
+- [x] T030 [US2] Implement assign/unassign/skip handlers in Tab2Content in `frontend/src/components/tab2/Tab2Content.tsx`
+- [x] T031 [US2] Wire up debounced saveProject after assignment changes in `frontend/src/components/tab2/Tab2Content.tsx`
 
 **Checkpoint**: User can assign assets to opportunities, skip opportunities, and assignments persist
 

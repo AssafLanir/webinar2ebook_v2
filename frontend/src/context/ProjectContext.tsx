@@ -375,6 +375,87 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
       }
     }
 
+    // Tab 2: Visual Assignments (Spec 005 - US2)
+    case 'SET_VISUAL_ASSIGNMENT': {
+      if (!state.project) return state
+      const { opportunityId, assetId } = action.payload
+      const currentAssignments = state.project.visualPlan?.assignments ?? []
+      // Remove existing assignment for this opportunity if any
+      const filteredAssignments = currentAssignments.filter(
+        (a) => a.opportunity_id !== opportunityId
+      )
+      // Add new assignment
+      const newAssignment = {
+        opportunity_id: opportunityId,
+        status: 'assigned' as const,
+        asset_id: assetId,
+        updated_at: new Date().toISOString(),
+      }
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: state.project.visualPlan?.assets ?? [],
+            assignments: [...filteredAssignments, newAssignment],
+          },
+        },
+      }
+    }
+
+    case 'SKIP_VISUAL_OPPORTUNITY': {
+      if (!state.project) return state
+      const opportunityId = action.payload
+      const currentAssignments = state.project.visualPlan?.assignments ?? []
+      // Remove existing assignment for this opportunity if any
+      const filteredAssignments = currentAssignments.filter(
+        (a) => a.opportunity_id !== opportunityId
+      )
+      // Add skipped assignment
+      const newAssignment = {
+        opportunity_id: opportunityId,
+        status: 'skipped' as const,
+        asset_id: null,
+        updated_at: new Date().toISOString(),
+      }
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: state.project.visualPlan?.assets ?? [],
+            assignments: [...filteredAssignments, newAssignment],
+          },
+        },
+      }
+    }
+
+    case 'REMOVE_VISUAL_ASSIGNMENT': {
+      if (!state.project) return state
+      const opportunityId = action.payload
+      const currentAssignments = state.project.visualPlan?.assignments ?? []
+      // Remove assignment for this opportunity (makes it "unassigned")
+      const filteredAssignments = currentAssignments.filter(
+        (a) => a.opportunity_id !== opportunityId
+      )
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: state.project.visualPlan?.assets ?? [],
+            assignments: filteredAssignments,
+          },
+        },
+      }
+    }
+
     case 'SET_STYLE_PRESET': {
       if (!state.project) return state
       const preset = STYLE_PRESETS.find(p => p.id === action.payload)
