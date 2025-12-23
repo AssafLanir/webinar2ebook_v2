@@ -7,9 +7,11 @@ import { StyleControls } from './StyleControls'
 import { DraftEditor } from './DraftEditor'
 import { GenerateProgress } from './GenerateProgress'
 import { DraftPreviewModal } from './DraftPreviewModal'
+import { QAResultsPanel } from './QAResultsPanel'
 import { useDraftGeneration } from '../../hooks/useDraftGeneration'
 import { STYLE_PRESETS } from '../../constants/stylePresets'
 import { downloadAsMarkdown, downloadAsText } from '../../utils/draftExport'
+import { runQAChecks, type QAResult, type QAIssue } from '../../utils/draftQA'
 import type { StyleConfig, StyleConfigEnvelope } from '../../types/style'
 import type { DraftGenerateRequest } from '../../types/draft'
 import { DEFAULT_STYLE_CONFIG } from '../../types/project'
@@ -27,6 +29,9 @@ export function Tab3Content() {
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [draftCopied, setDraftCopied] = useState(false)
   const [showDraftDownloadMenu, setShowDraftDownloadMenu] = useState(false)
+  const [qaResult, setQaResult] = useState<QAResult | null>(null)
+  const [isRunningQA, setIsRunningQA] = useState(false)
+  const [showQAPanel, setShowQAPanel] = useState(false)
   const draftEditorRef = useRef<HTMLDivElement>(null)
   const draftDownloadMenuRef = useRef<HTMLDivElement>(null)
   const pendingSaveAfterApply = useRef(false)
@@ -144,6 +149,47 @@ export function Tab3Content() {
     downloadAsText(project.draftText, project.name, project.id)
     setShowDraftDownloadMenu(false)
   }, [project?.draftText, project?.name, project?.id])
+
+  // Run Quick QA checks
+  const handleRunQA = useCallback(() => {
+    if (!project?.draftText) return
+
+    setIsRunningQA(true)
+    setShowQAPanel(true)
+
+    // Run checks asynchronously to not block UI
+    setTimeout(() => {
+      const result = runQAChecks(project.draftText)
+      setQaResult(result)
+      setIsRunningQA(false)
+    }, 100)
+  }, [project?.draftText])
+
+  // Handle clicking on a QA issue to scroll to it
+  const handleQAIssueClick = useCallback((issue: QAIssue) => {
+    // Find the textarea in the DraftEditor
+    const textarea = draftEditorRef.current?.querySelector('textarea')
+    if (!textarea) return
+
+    // Focus the textarea
+    textarea.focus()
+
+    // Set selection to the issue position
+    textarea.setSelectionRange(issue.position, issue.position + issue.length)
+
+    // Scroll the textarea to show the selection
+    // Calculate approximate scroll position
+    const textBefore = project?.draftText?.slice(0, issue.position) ?? ''
+    const linesBefore = textBefore.split('\n').length
+    const lineHeight = 24 // approximate line height in pixels
+    const scrollTop = Math.max(0, (linesBefore - 5) * lineHeight)
+    textarea.scrollTop = scrollTop
+  }, [project?.draftText])
+
+  // Close QA panel
+  const handleCloseQA = useCallback(() => {
+    setShowQAPanel(false)
+  }, [])
 
   // Start AI draft generation
   const handleGenerateDraft = useCallback(async () => {
@@ -432,6 +478,45 @@ export function Tab3Content() {
                 )}
               </div>
 
+              {/* Quick QA button */}
+              <button
+                type="button"
+                onClick={handleRunQA}
+                disabled={!project?.draftText || isRunningQA}
+                title={!project?.draftText ? 'No draft to check' : 'Run quality checks'}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                  !project?.draftText
+                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    : isRunningQA
+                      ? 'bg-purple-500/20 text-purple-400'
+                      : qaResult && qaResult.totalIssues > 0
+                        ? 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30'
+                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                }`}
+              >
+                {isRunningQA ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Checking...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                    </svg>
+                    Quick QA
+                    {qaResult && qaResult.totalIssues > 0 && (
+                      <span className="ml-1 px-1.5 py-0.5 text-xs bg-yellow-500/30 rounded-full">
+                        {qaResult.totalIssues}
+                      </span>
+                    )}
+                  </>
+                )}
+              </button>
+
               {/* Save button */}
               <button
                 type="button"
@@ -477,6 +562,16 @@ export function Tab3Content() {
             onChange={handleDraftChange}
             onGenerate={handleGenerateDraft}
           />
+
+          {/* QA Results Panel */}
+          {showQAPanel && (
+            <QAResultsPanel
+              result={qaResult}
+              isRunning={isRunningQA}
+              onIssueClick={handleQAIssueClick}
+              onClose={handleCloseQA}
+            />
+          )}
         </Card>
       </div>
 
