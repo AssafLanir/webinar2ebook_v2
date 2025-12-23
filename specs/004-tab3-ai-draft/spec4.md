@@ -262,38 +262,33 @@ The DraftPlan reduces hallucinations and enables chunked generation:
 
 ### 8.2 DraftPlan Schema
 
-**Canonical schema** (from `backend/src/models/draft_plan.py`):
-**JSON Schema**: [`specs/004-tab3-ai-draft/schemas/DraftPlan.json`](./specs/004-tab3-ai-draft/schemas/DraftPlan.json)
-
 ```typescript
 interface DraftPlan {
-  version: number;                         // Schema version (default: 1)
-  book_title: string;                      // Title of the generated ebook
-  chapters: ChapterPlan[];                 // Planned chapters
-  visual_plan: VisualPlan;                 // Visual opportunities (default: empty)
-  generation_metadata: GenerationMetadata; // Metadata about the plan
+  version: 1;
+  book_title: string;
+  chapters: ChapterPlan[];
+  visual_opportunities: VisualOpportunity[];
+  generation_metadata: {
+    estimated_total_words: number;
+    estimated_generation_time_seconds: number;
+    transcript_utilization: number; // 0.0-1.0, how much transcript is used
+  };
 }
 
 interface ChapterPlan {
-  chapter_number: number;                  // 1-based chapter number
-  title: string;                           // Chapter title
-  outline_item_id: string;                 // Reference to source outline item
-  goals: string[];                         // 2-4 learning objectives
-  key_points: string[];                    // 3-6 main points to cover
-  transcript_segments: TranscriptSegment[]; // Mapped transcript portions
-  estimated_words: number;                 // Estimated word count (default: 1500)
+  chapter_number: number;
+  title: string;
+  outline_item_id: string; // Reference to source outline item
+  goals: string[]; // 2-4 learning objectives
+  key_points: string[]; // 3-6 main points to cover
+  transcript_segments: TranscriptSegment[];
+  estimated_words: number;
 }
 
 interface TranscriptSegment {
-  start_char: number;                      // Starting character index (>= 0)
-  end_char: number;                        // Ending character index (>= 0)
-  relevance: "primary" | "supporting" | "reference"; // Segment relevance
-}
-
-interface GenerationMetadata {
-  estimated_total_words: number;           // Total estimated word count
-  estimated_generation_time_seconds: number; // Estimated generation time
-  transcript_utilization: number;          // Fraction of transcript used (0.0-1.0)
+  start_char: number;
+  end_char: number;
+  relevance: "primary" | "supporting" | "reference";
 }
 ```
 
@@ -314,86 +309,51 @@ Generate **visual suggestions** alongside the draft, without inserting placehold
 
 ### 9.2 VisualOpportunity Schema
 
-**Canonical schema** (from `backend/src/models/visuals.py`):
-**JSON Schema**: [`specs/004-tab3-ai-draft/schemas/VisualOpportunity.json`](./specs/004-tab3-ai-draft/schemas/VisualOpportunity.json)
-
 ```typescript
-// Enums
-type VisualType = "screenshot" | "diagram" | "chart" | "table" | "icon" | "photo" | "other";
-type VisualSourcePolicy = "client_assets_only" | "allow_new_suggestions";
-type VisualPlacement = "after_heading" | "inline" | "end_of_section" | "end_of_chapter" | "sidebar";
-
 interface VisualOpportunity {
-  id: string;                              // Stable UUID for UI selection
-  chapter_index: number;                   // 1-based chapter index
-  section_path: string | null;             // Optional: "2.3" or heading slug
-  placement: VisualPlacement;              // Default: "after_heading"
+  id: string; // UUID
+  section_ref: string; // e.g., "Chapter 2 > Pricing Strategy > Tier Comparison"
+  suggested_type: "screenshot" | "diagram" | "chart" | "table" | "photo" | "icon" | "other";
+  prompt: string; // What it should depict (clear and specific)
+  rationale?: string; // Why it helps the reader
+  priority: "high" | "medium" | "low";
+  constraints?: string[]; // e.g., ["client_assets_only"]
 
-  visual_type: VisualType;                 // What kind of visual
-  source_policy: VisualSourcePolicy;       // Default: "client_assets_only"
-
-  title: string;                           // Short title (figure label)
-  prompt: string;                          // What visual should show (LLM description)
-  caption: string;                         // Caption text under visual
-
-  required: boolean;                       // Default: false
-  candidate_asset_ids: string[];           // Known assets that fit (default: [])
-
-  confidence: number;                      // 0.0-1.0, default: 0.6
-  rationale: string | null;                // Why this helps the reader
+  // Reserved for Spec 005
+  attached_visual_id: string | null;
+  status: "suggested" | "attached" | "skipped";
 }
 ```
 
-**Note**: No `attached_visual_id` or `status` fields — attachment happens in Tab 2 (Spec 005) via `VisualPlan.assets`.
-
-### 9.3 VisualAsset Schema
-
-**Canonical schema** (from `backend/src/models/visuals.py`):
-**JSON Schema**: [`specs/004-tab3-ai-draft/schemas/VisualAsset.json`](./specs/004-tab3-ai-draft/schemas/VisualAsset.json)
+### 9.3 VisualAsset Schema (Reserved for Spec 005)
 
 ```typescript
-type VisualAssetOrigin = "client_provided" | "user_uploaded" | "generated" | "external_link";
-
 interface VisualAsset {
-  id: string;                     // Stable UUID for referencing
-  filename: string;               // Original filename (or derived name)
-  media_type: string;             // MIME type, e.g. "image/png"
-  origin: VisualAssetOrigin;      // Default: "client_provided"
-
-  // Storage (exactly one typically present)
-  source_url: string | null;      // External link if applicable
-  storage_key: string | null;     // Internal storage path if stored by app
-
-  // Dimensions (optional)
-  width: number | null;           // >= 1
-  height: number | null;          // >= 1
-
-  alt_text: string | null;        // Accessibility / SEO
-  tags: string[];                 // Default: []
+  id: string; // UUID
+  kind: "custom" | "gallery";
+  source: "client" | "internal" | "generated" | "stock" | "unknown";
+  original_filename: string;
+  mime_type: string; // e.g., "image/png"
+  storage_url: string;
+  thumb_url?: string;
+  title?: string;
+  caption?: string;
+  alt_text?: string;
+  credit?: string;
+  license?: string;
+  selected_for_export: boolean;
+  created_at: string; // ISO datetime
+  updated_at: string;
 }
 ```
 
-### 9.4 VisualPlan Schema
+### 9.4 Visual Requirements (MVP)
 
-**Canonical schema** (from `backend/src/models/visuals.py`):
-**JSON Schema**: [`specs/004-tab3-ai-draft/schemas/VisualPlan.json`](./specs/004-tab3-ai-draft/schemas/VisualPlan.json)
-
-```typescript
-interface VisualPlan {
-  opportunities: VisualOpportunity[];  // Default: []
-  assets: VisualAsset[];               // Default: []
-}
-```
-
-The `VisualPlan` is the top-level container persisted in the project. Tab 3 populates `opportunities`; Tab 2 (Spec 005) attaches `assets`.
-
-### 9.5 Visual Requirements (MVP)
-
-- **FR-VIS-01**: DraftPlan MUST produce a `VisualPlan` with `opportunities[]` (may be empty for short content)
+- **FR-VIS-01**: DraftPlan MUST include `visual_opportunities[]` (may be empty for short content)
 - **FR-VIS-02**: Visual opportunities are generated during DraftPlan phase (available even if generation is cancelled)
-- **FR-VIS-03**: Do NOT insert `[IMAGE]`, `VISUAL_SLOT_01`, or similar markers in markdown — visuals are metadata only
-- **FR-VIS-04**: Persist `VisualPlan` in project state for Tab 2
-- **FR-VIS-05**: Initialize `VisualPlan(opportunities=[], assets=[])` in project if not present
+- **FR-VIS-03**: Do NOT insert `[IMAGE]`, `VISUAL_SLOT_01`, or similar markers in markdown
+- **FR-VIS-04**: Persist `visual_opportunities` in project state for Tab 2
+- **FR-VIS-05**: Initialize `visual_assets: []` in project if not present
 
 ---
 
@@ -403,98 +363,69 @@ The `VisualPlan` is the top-level container persisted in the project. Tab 3 popu
 
 Style config tells the model what kind of ebook to write. It shapes tone, structure, depth, and visual suggestions.
 
-### 10.2 StyleConfigEnvelope Schema
-
-**Canonical schema** (from `backend/src/models/style_config.py`):
-**JSON Schema**: [`specs/004-tab3-ai-draft/schemas/StyleConfigEnvelope.json`](./specs/004-tab3-ai-draft/schemas/StyleConfigEnvelope.json)
-
-The style config is wrapped in an envelope for versioning and preset tracking:
-
-```typescript
-interface StyleConfigEnvelope {
-  version: number;           // Current: 1, for migrations
-  preset_id: string;         // e.g., "default_webinar_ebook_v1"
-  style: StyleConfig;        // The actual configuration
-}
-```
-
-### 10.3 StyleConfig Schema
-
-The comprehensive `StyleConfig` includes ~35 fields across several categories. Key fields shown below (see `backend/src/models/style_config.py` for full schema):
+### 10.2 StyleConfig Schema
 
 ```typescript
 interface StyleConfig {
-  // Audience & Goal
-  target_audience: "beginners" | "intermediate" | "experts" | "mixed";
-  reader_role: "founder" | "marketer" | "sales" | "product" | "engineer" | "hr" | "finance" | "educator" | "general";
-  primary_goal: "inform" | "teach" | "persuade" | "enable_action";
-  reader_takeaway_style: "principles" | "how_to_steps" | "analysis" | "reference";
+  // Book structure
+  book_format: "playbook" | "handbook" | "tutorial" | "guide" | "ebook_marketing" | "executive_brief" | "course_notes";
+  chapter_count_target: number; // 3-20
 
-  // Tone & Voice
+  // Writing style
   tone: "friendly" | "professional" | "authoritative" | "conversational" | "academic";
-  formality: "low" | "medium" | "high";
-  brand_voice: "neutral" | "casual" | "premium" | "technical";
-  perspective: "you" | "we" | "third_person";
-  reading_level: "simple" | "standard" | "advanced";
+  target_audience: "beginners" | "intermediate" | "advanced" | "mixed";
+  reader_role: "founder" | "marketer" | "sales" | "product" | "engineer" | "hr" | "finance" | "educator" | "general";
 
-  // Book Structure
-  book_format: "guide" | "tutorial" | "handbook" | "playbook" | "ebook_marketing" | "executive_brief" | "course_notes" | "whitepaper";
-  chapter_count_target: number;              // 3-20
-  chapter_length_target: "short" | "medium" | "long";
-
-  // Content Inclusions
-  include_summary_per_chapter: boolean;
-  include_key_takeaways: boolean;
-  include_action_steps: boolean;
-  include_checklists: boolean;
-  include_templates: boolean;
-  include_examples: boolean;
-
-  // Source Fidelity
+  // Content policy
   faithfulness_level: "strict" | "balanced" | "creative";
-  allowed_extrapolation: "none" | "light" | "moderate";
+  // strict: Only information explicitly in transcript
+  // balanced: Transcript + reasonable inferences
+  // creative: May add examples and elaboration
+
   source_policy: "transcript_only" | "transcript_plus_provided_resources";
-  citation_style: "none" | "inline_links" | "footnotes_light" | "academic";
-  avoid_hallucinations: boolean;
 
   // Visuals
   visual_density: "none" | "light" | "medium" | "heavy";
-  preferred_visual_types: VisualType[];      // e.g., ["diagram", "table", "screenshot"]
+  // none: 0 suggestions, light: 1-3, medium: 4-8, heavy: 9+
   visual_source_policy: "client_assets_only" | "allow_new_suggestions";
-  caption_style: "short" | "explanatory" | "instructional";
-  diagram_style: "simple" | "detailed" | "technical";
-
-  // Transcript Handling
-  resolve_repetitions: "keep" | "reduce" | "consolidate";
-  handle_q_and_a: "omit" | "append_as_faq" | "weave_into_chapters";
-  include_speaker_quotes: "never" | "sparingly" | "freely";
 
   // Output
-  output_format: "markdown";                 // Only markdown for v1
-  heading_style: "numbered" | "plain";
-  callout_blocks: "none" | "tips_only" | "tips_and_warnings";
-  table_preference: "avoid" | "when_helpful" | "prefer";
+  output_format: "markdown"; // Only markdown for v1
+}
+```
+
+### 10.3 Default Values
+
+```json
+{
+  "book_format": "guide",
+  "chapter_count_target": 8,
+  "tone": "professional",
+  "target_audience": "mixed",
+  "reader_role": "general",
+  "faithfulness_level": "balanced",
+  "source_policy": "transcript_only",
+  "visual_density": "medium",
+  "visual_source_policy": "client_assets_only",
+  "output_format": "markdown"
 }
 ```
 
 ### 10.4 Presets
 
-**Canonical presets** (from `frontend/src/constants/stylePresets.ts`):
-
-| Preset ID | Label | Description |
-|-----------|-------|-------------|
-| `default_webinar_ebook_v1` | Default webinar ebook | Balanced, readable, action-oriented. Light visuals. |
-| `saas_marketing_ebook_v1` | SaaS marketing ebook | Persuasive narrative with checklists/templates. Medium visuals. |
-| `training_tutorial_handbook_v1` | Training / tutorial handbook | Step-by-step learning. Heavy screenshots/diagrams. Very strict. |
-| `executive_brief_v1` | Executive brief | Short, punchy, high signal. Minimal fluff. Light citations. |
-| `course_notes_v1` | Course notes | Structured learning notes: summaries + takeaways + practice steps. |
+| Preset Name | Format | Tone | Audience | Chapters | Visual Density |
+|-------------|--------|------|----------|----------|----------------|
+| Default Webinar Ebook | guide | professional | mixed | 8 | medium |
+| SaaS Marketing Ebook | ebook_marketing | friendly | beginners | 6 | heavy |
+| Training Handbook | handbook | conversational | mixed | 10 | medium |
+| Executive Brief | executive_brief | authoritative | advanced | 4 | light |
+| Course Notes | course_notes | academic | intermediate | 12 | light |
 
 ### 10.5 Validation Rules
 
 - **FR-STYLE-01**: `chapter_count_target` MUST be 3-20
 - **FR-STYLE-02**: If outline has N level-1 items and `chapter_count_target` > N, show warning: "Target chapters (X) exceeds outline chapters (Y). Some chapters may be split or expanded."
-- **FR-STYLE-03**: `StyleConfigEnvelope` MUST be persisted with project
-- **FR-STYLE-04**: Extra fields are forbidden (Pydantic `extra="forbid"`) to prevent schema drift
+- **FR-STYLE-03**: Style config MUST be persisted with project
 
 ---
 
@@ -556,159 +487,35 @@ interface StyleConfig {
 
 ## 13. Backend / API Requirements
 
-### 13.1 Endpoints (Async Job Pattern)
-
-Draft generation uses an async job pattern for long-running operations:
-1. Client submits request → receives `job_id`
-2. Client polls status endpoint for progress
-3. Client can cancel mid-generation
-4. Completed results include partial drafts if cancelled
-
-**All responses use the standard `{ data, error }` envelope pattern.**
-
-**JSON Schemas**: See [`specs/004-tab3-ai-draft/schemas/`](./specs/004-tab3-ai-draft/schemas/) for all request/response schemas.
-
-**LLM Schemas**: Two self-contained schemas are maintained:
-- [`draft_plan.internal.schema.json`](./specs/004-tab3-ai-draft/schemas/draft_plan.internal.schema.json) - Internal schema (tests, docs, Anthropic)
-- [`draft_plan.openai.strict.schema.json`](./specs/004-tab3-ai-draft/schemas/draft_plan.openai.strict.schema.json) - OpenAI strict mode (production)
+### 13.1 Endpoints
 
 #### POST /api/ai/draft/generate
 
-Start draft generation (returns immediately with job_id).
+Generate a complete ebook draft.
 
-**Request**: [`DraftGenerateRequest.json`](./specs/004-tab3-ai-draft/schemas/DraftGenerateRequest.json)
+**Request:**
 ```json
 {
   "transcript": "string (≥500 chars)",
   "outline": [{ "id": "string", "title": "string", "level": 1, "notes": "string?" }],
   "resources": [{ "label": "string", "url_or_note": "string" }],
-  "style_config": { StyleConfigEnvelope }
+  "style_config": { StyleConfig }
 }
 ```
 
-**Response**: [`DraftGenerateResponse.json`](./specs/004-tab3-ai-draft/schemas/DraftGenerateResponse.json)
+**Response:**
 ```json
 {
   "data": {
-    "job_id": "job-uuid-123",
-    "status": "queued",
-    "progress": null,
-    "draft_markdown": null,
-    "draft_plan": null,
-    "visual_plan": null,
-    "generation_stats": null
-  },
-  "error": null
-}
-```
-
-#### GET /api/ai/draft/status/:job_id
-
-Poll generation progress.
-
-**Response**: [`DraftStatusResponse.json`](./specs/004-tab3-ai-draft/schemas/DraftStatusResponse.json)
-
-**Status: generating**
-```json
-{
-  "data": {
-    "job_id": "job-uuid-123",
-    "status": "generating",
-    "progress": {
-      "current_chapter": 3,
-      "total_chapters": 8,
-      "current_chapter_title": "Pricing Strategy",
-      "chapters_completed": 2,
-      "estimated_remaining_seconds": 90
-    },
-    "draft_markdown": null,
-    "draft_plan": null,
-    "visual_plan": null,
-    "generation_stats": null,
-    "partial_draft_markdown": null,
-    "chapters_available": null
-  },
-  "error": null
-}
-```
-
-**Status: completed**
-```json
-{
-  "data": {
-    "job_id": "job-uuid-123",
-    "status": "completed",
-    "progress": null,
     "draft_markdown": "# My Ebook\n\n## Chapter 1...",
-    "draft_plan": {
-      "version": 1,
-      "book_title": "My Ebook",
-      "chapters": [...],
-      "visual_plan": { "opportunities": [...], "assets": [] },
-      "generation_metadata": {
-        "estimated_total_words": 12000,
-        "estimated_generation_time_seconds": 120,
-        "transcript_utilization": 0.85
-      }
-    },
-    "visual_plan": {
-      "opportunities": [
-        {
-          "id": "vo-uuid-1",
-          "chapter_index": 2,
-          "section_path": "2.1",
-          "placement": "after_heading",
-          "visual_type": "diagram",
-          "source_policy": "client_assets_only",
-          "title": "System Architecture",
-          "prompt": "A diagram showing the overall system architecture",
-          "caption": "Figure 2.1: System Architecture Overview",
-          "required": false,
-          "candidate_asset_ids": [],
-          "confidence": 0.8,
-          "rationale": "Helps readers visualize the system structure"
-        }
-      ],
-      "assets": []
-    },
+    "draft_plan": { DraftPlan },
+    "visual_opportunities": [{ VisualOpportunity }],
     "generation_stats": {
       "chapters_generated": 8,
       "total_words": 12450,
       "generation_time_ms": 45000,
-      "tokens_used": { "prompt_tokens": 15000, "completion_tokens": 20000, "total_tokens": 35000 }
-    },
-    "partial_draft_markdown": null,
-    "chapters_available": null
-  },
-  "error": null
-}
-```
-
-**Status: failed**
-```json
-{
-  "data": null,
-  "error": {
-    "code": "GENERATION_FAILED",
-    "message": "AI service temporarily unavailable. Please try again."
-  }
-}
-```
-
-#### POST /api/ai/draft/cancel/:job_id
-
-Cancel generation (stops after current chapter completes).
-
-**Response**: [`DraftCancelResponse.json`](./specs/004-tab3-ai-draft/schemas/DraftCancelResponse.json)
-```json
-{
-  "data": {
-    "job_id": "job-uuid-123",
-    "status": "cancelled",
-    "cancelled": true,
-    "message": "Generation cancelled after chapter 4 of 8",
-    "partial_draft_markdown": "# My Ebook\n\n## Chapter 1...",
-    "chapters_available": 4
+      "tokens_used": { "prompt": 15000, "completion": 20000 }
+    }
   },
   "error": null
 }
@@ -716,31 +523,25 @@ Cancel generation (stops after current chapter completes).
 
 #### POST /api/ai/draft/regenerate
 
-Regenerate a single section (synchronous, typically fast).
+Regenerate a single section.
 
-**Request**: [`DraftRegenerateRequest.json`](./specs/004-tab3-ai-draft/schemas/DraftRegenerateRequest.json)
+**Request:**
 ```json
 {
   "section_outline_item_id": "string",
   "draft_plan": { DraftPlan },
   "existing_draft": "string (full markdown)",
-  "style_config": { StyleConfigEnvelope }
+  "style_config": { StyleConfig }
 }
 ```
 
-**Response**: [`DraftRegenerateResponse.json`](./specs/004-tab3-ai-draft/schemas/DraftRegenerateResponse.json)
+**Response:**
 ```json
 {
   "data": {
     "section_markdown": "## Chapter 3: Pricing Strategy\n\n...",
     "section_start_line": 145,
-    "section_end_line": 210,
-    "generation_stats": {
-      "chapters_generated": 1,
-      "total_words": 1500,
-      "generation_time_ms": 8000,
-      "tokens_used": { "prompt_tokens": 3000, "completion_tokens": 2000, "total_tokens": 5000 }
-    }
+    "section_end_line": 210
   },
   "error": null
 }
@@ -767,38 +568,30 @@ Regenerate a single section (synchronous, typically fast).
 
 ### 14.1 Project Fields (additions)
 
-**Canonical schema** (from `backend/src/models/project.py`):
-
 ```typescript
 interface Project {
   // ... existing fields from 001/002 ...
 
   // New fields for 004
-  draftText: string;                                    // Full markdown draft (was draft_markdown)
-  draftPlan: DraftPlan | null;                          // Internal generation plan
-  visualPlan: VisualPlan | null;                        // Contains opportunities[] and assets[]
-  styleConfig: StyleConfigEnvelope | LegacyStyleConfig | null;  // Wrapped style config
+  draft_markdown: string | null;
+  draft_plan: DraftPlan | null;
+  visual_opportunities: VisualOpportunity[];
+  visual_assets: VisualAsset[]; // Empty for 004, populated in 005
+  style_config: {
+    version: number;
+    preset_id: string | null;
+    config: StyleConfig;
+  };
 }
 ```
 
-**Note on backward compatibility**: The `styleConfig` field accepts both `StyleConfigEnvelope` (new canonical) and `LegacyStyleConfig` (old simple format). On load, legacy formats MUST be normalized to `StyleConfigEnvelope`. See Section 14.3.
-
 ### 14.2 Persistence Rules
 
-- **FR-PERSIST-01**: `draftText` MUST be persisted when user clicks "Apply"
-- **FR-PERSIST-02**: `draftPlan` MUST be persisted alongside draft for regeneration
-- **FR-PERSIST-03**: `visualPlan` MUST be persisted for Tab 2 (contains both opportunities and assets)
-- **FR-PERSIST-04**: `styleConfig` MUST be persisted as `StyleConfigEnvelope` (canonical format only)
+- **FR-PERSIST-01**: `draft_markdown` MUST be persisted when user clicks "Apply"
+- **FR-PERSIST-02**: `draft_plan` MUST be persisted alongside draft for regeneration
+- **FR-PERSIST-03**: `visual_opportunities` MUST be persisted for Tab 2
+- **FR-PERSIST-04**: `style_config` MUST be persisted and restored when project is opened
 - **FR-PERSIST-05**: Existing project fields MUST remain unchanged (backward compatible)
-
-### 14.3 Normalization on Load
-
-When loading a project from persistence:
-
-- **FR-NORM-01**: If `styleConfig` is null/missing → initialize with default `StyleConfigEnvelope`
-- **FR-NORM-02**: If `styleConfig` is `LegacyStyleConfig` (old format) → migrate to `StyleConfigEnvelope(version=1, preset_id="legacy", style=...)`
-- **FR-NORM-03**: If `visualPlan` is null/missing → initialize with `VisualPlan(opportunities=[], assets=[])`
-- **FR-NORM-04**: On save, always persist the canonical shapes only (no legacy formats)
 
 ---
 
@@ -869,9 +662,9 @@ When loading a project from persistence:
 **Given**: Draft generation completes for 8-chapter book with visual_density="medium"
 **When**: User views visual opportunities
 **Then**:
-- 4-8 visual opportunities are listed in `visualPlan.opportunities`
-- Each has: `chapter_index`, `visual_type`, `title`, `prompt`, `caption`, `confidence`
-- No image placeholders appear in markdown (visuals are metadata only)
+- 4-8 visual opportunities are listed
+- Each has section_ref, suggested_type, prompt, priority
+- No image placeholders appear in markdown
 
 ---
 
@@ -905,4 +698,3 @@ When loading a project from persistence:
 - AI-assisted visual generation
 - Collaborative editing
 - Version history for drafts
-.

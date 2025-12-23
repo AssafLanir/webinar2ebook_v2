@@ -22,9 +22,9 @@
 
 **Purpose**: Backend dependencies and GridFS configuration
 
-- [ ] T001 Add Pillow to backend dependencies in `backend/pyproject.toml`
-- [ ] T002 [P] Create GridFS service module in `backend/src/services/gridfs_service.py`
-- [ ] T003 [P] Add GridFS connection helper to `backend/src/db/mongo.py`
+- [x] T001 Add Pillow to backend dependencies in `backend/pyproject.toml`
+- [x] T002 [P] Create GridFS service module in `backend/src/services/gridfs_service.py`
+- [x] T003 [P] Add GridFS connection helper to `backend/src/db/mongo.py`
 
 ---
 

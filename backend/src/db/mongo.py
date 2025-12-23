@@ -2,7 +2,7 @@
 
 import os
 
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 # Configuration from environment variables with defaults
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
@@ -42,3 +42,17 @@ def set_client(client: AsyncIOMotorClient | None) -> None:
     """Set the client instance (for testing)."""
     global _client
     _client = client
+
+
+async def get_gridfs_bucket(bucket_name: str = "visuals") -> AsyncIOMotorGridFSBucket:
+    """Get a GridFS bucket for storing binary files.
+
+    Args:
+        bucket_name: Name of the GridFS bucket (default: "visuals").
+                     Files are stored in {bucket_name}.files and {bucket_name}.chunks.
+
+    Returns:
+        AsyncIOMotorGridFSBucket for async file operations.
+    """
+    db = await get_database()
+    return AsyncIOMotorGridFSBucket(db, bucket_name=bucket_name)
