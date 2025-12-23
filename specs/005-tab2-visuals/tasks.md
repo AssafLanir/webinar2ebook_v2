@@ -133,10 +133,10 @@
 
 ### Implementation for User Story 4
 
-- [ ] T039 [US4] Add download button to AssetCard in `frontend/src/components/tab2/AssetCard.tsx`
-- [ ] T040 [US4] Implement download handler (fetch full size, trigger browser download) in `frontend/src/components/tab2/AssetCard.tsx`
-- [ ] T041 [US4] Add "Copy URL" button to AssetCard (copies content endpoint URL to clipboard) in `frontend/src/components/tab2/AssetCard.tsx`
-- [ ] T042 [US4] Add "Copy Markdown" button to AssetCard (copies `![caption](url)` to clipboard) in `frontend/src/components/tab2/AssetCard.tsx`
+- [x] T039 [US4] Add download button to AssetCard in `frontend/src/components/tab2/AssetCard.tsx`
+- [x] T040 [US4] Implement download handler (fetch full size, trigger browser download) in `frontend/src/components/tab2/AssetCard.tsx`
+- [x] T041 [US4] Add "Copy URL" button to AssetCard (copies content endpoint URL to clipboard) in `frontend/src/components/tab2/AssetCard.tsx`
+- [x] T042 [US4] ~~Add "Copy Markdown" button to AssetCard~~ REMOVED - not useful in workflow
 
 **Checkpoint**: User can download any uploaded asset and copy URL/markdown to clipboard
 

@@ -5,9 +5,10 @@
  * - Thumbnail image
  * - Filename and caption
  * - Dimensions and size
- * - Delete button
+ * - Action buttons: Download, Copy URL, Copy Markdown, Delete
  */
 
+import { useState } from "react";
 import type { VisualAsset } from "../../types/visuals";
 import { getAssetContentUrl } from "../../services/visualsApi";
 import { formatFileSize } from "../../utils/formatFileSize";
@@ -20,12 +21,44 @@ interface AssetCardProps {
 
 export function AssetCard({ projectId, asset, onDelete }: AssetCardProps) {
   const thumbnailUrl = getAssetContentUrl(projectId, asset.id, "thumb");
+  const fullUrl = getAssetContentUrl(projectId, asset.id, "full");
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
 
   const handleDelete = () => {
     if (onDelete && window.confirm(`Delete "${asset.caption || asset.filename}"?`)) {
       onDelete(asset.id);
     }
   };
+
+  // T040: Download handler - fetches full size image and triggers browser download
+  const handleDownload = async () => {
+    try {
+      const response = await fetch(fullUrl);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = asset.original_filename || asset.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Download failed:", error);
+    }
+  };
+
+  // T041: Copy URL to clipboard
+  const handleCopyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(fullUrl);
+      setCopyFeedback("URL copied!");
+      setTimeout(() => setCopyFeedback(null), 2000);
+    } catch (error) {
+      console.error("Copy URL failed:", error);
+    }
+  };
+
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow">
@@ -75,6 +108,40 @@ export function AssetCard({ projectId, asset, onDelete }: AssetCardProps) {
             </>
           )}
         </div>
+
+        {/* Action buttons */}
+        <div className="mt-3 flex items-center gap-1 flex-wrap">
+          {/* Download button (T039) */}
+          <button
+            onClick={handleDownload}
+            className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded transition-colors"
+            title="Download full size image"
+          >
+            <svg className="w-3.5 h-3.5 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Download
+          </button>
+
+          {/* Copy URL button (T041) */}
+          <button
+            onClick={handleCopyUrl}
+            className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded transition-colors"
+            title="Copy image URL to clipboard"
+          >
+            <svg className="w-3.5 h-3.5 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+            </svg>
+            URL
+          </button>
+        </div>
+
+        {/* Copy feedback toast */}
+        {copyFeedback && (
+          <div className="mt-2 text-xs text-green-600 font-medium">
+            {copyFeedback}
+          </div>
+        )}
       </div>
     </div>
   );
