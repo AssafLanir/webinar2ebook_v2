@@ -18,6 +18,7 @@ interface FileUploadDropzoneProps {
 
 const ACCEPTED_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const ACCEPTED_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp"];
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
 export function FileUploadDropzone({
   onFilesSelected,
@@ -41,8 +42,15 @@ export function FileUploadDropzone({
       }
 
       for (const file of fileArray) {
+        // Check file type
         if (!ACCEPTED_TYPES.includes(file.type)) {
-          errors.push(`${file.name}: unsupported type`);
+          errors.push(`${file.name}: unsupported type (use PNG, JPG, or WebP)`);
+          continue;
+        }
+        // Check file size (T047)
+        if (file.size > MAX_FILE_SIZE_BYTES) {
+          const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+          errors.push(`${file.name}: too large (${sizeMB}MB, max 10MB)`);
           continue;
         }
         validFiles.push(file);

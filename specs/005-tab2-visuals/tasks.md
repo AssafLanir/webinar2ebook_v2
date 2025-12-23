@@ -163,10 +163,10 @@
 
 **Purpose**: Error handling, regeneration warning, cleanup
 
-- [ ] T047 Add upload validation error handling (file type, size) with toast notifications in `frontend/src/components/tab2/FileUploadDropzone.tsx`
-- [ ] T048 Add regeneration warning modal (clear assignments on confirm) in `frontend/src/components/tab3/Tab3Content.tsx`
-- [ ] T049 [P] Add error codes (UNSUPPORTED_MEDIA_TYPE, UPLOAD_TOO_LARGE, etc.) to backend in `backend/src/api/exceptions.py`
-- [ ] T050 [P] Clean up legacy Tab2Content components (VisualGallery, AddCustomVisual) in `frontend/src/components/tab2/`
+- [x] T047 Add upload validation error handling (file type, size) with toast notifications in `frontend/src/components/tab2/FileUploadDropzone.tsx`
+- [x] T048 Add regeneration warning modal (clear assignments on confirm) in `frontend/src/components/tab3/Tab3Content.tsx`
+- [x] T049 [P] Add error codes (UNSUPPORTED_MEDIA_TYPE, UPLOAD_TOO_LARGE, etc.) to backend in `backend/src/api/exceptions.py` - ALREADY DONE
+- [x] T050 [P] Clean up legacy Tab2Content components (VisualGallery, AddCustomVisual) in `frontend/src/components/tab2/`
 - [ ] T051 Run manual acceptance scenarios AS-001 through AS-007 from spec
 
 ---
