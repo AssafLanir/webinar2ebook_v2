@@ -10,6 +10,7 @@ import type {
   AIPreviewData,
   StyleConfigEnvelope,
 } from '../types/project'
+import type { VisualAsset } from '../types/visuals'
 import { INITIAL_STATE, DEFAULT_STYLE_CONFIG } from '../types/project'
 import { STYLE_PRESETS } from '../constants/stylePresets'
 import { generateId } from '../utils/idGenerator'
@@ -311,6 +312,169 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
         project: {
           ...state.project,
           visuals: [...state.project.visuals, newVisual],
+        },
+      }
+    }
+
+    // Tab 2: Visual Assets (Spec 005)
+    case 'ADD_VISUAL_ASSET': {
+      if (!state.project) return state
+      const currentAssets = state.project.visualPlan?.assets ?? []
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: [...currentAssets, action.payload],
+            assignments: state.project.visualPlan?.assignments ?? [],
+          },
+        },
+      }
+    }
+
+    case 'ADD_VISUAL_ASSETS': {
+      if (!state.project) return state
+      const currentAssets = state.project.visualPlan?.assets ?? []
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: [...currentAssets, ...action.payload],
+            assignments: state.project.visualPlan?.assignments ?? [],
+          },
+        },
+      }
+    }
+
+    case 'REMOVE_VISUAL_ASSET': {
+      if (!state.project) return state
+      const assetId = action.payload
+      const filteredAssets = (state.project.visualPlan?.assets ?? []).filter(
+        (a: VisualAsset) => a.id !== assetId
+      )
+      // Also remove any assignments referencing this asset
+      const filteredAssignments = (state.project.visualPlan?.assignments ?? []).filter(
+        (a) => a.asset_id !== assetId
+      )
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: filteredAssets,
+            assignments: filteredAssignments,
+          },
+        },
+      }
+    }
+
+    case 'UPDATE_VISUAL_ASSET_METADATA': {
+      if (!state.project) return state
+      const { assetId, updates } = action.payload
+      const currentAssets = state.project.visualPlan?.assets ?? []
+      const updatedAssets = currentAssets.map((a: VisualAsset) =>
+        a.id === assetId
+          ? { ...a, caption: updates.caption ?? a.caption, alt_text: updates.alt_text ?? a.alt_text }
+          : a
+      )
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: updatedAssets,
+            assignments: state.project.visualPlan?.assignments ?? [],
+          },
+        },
+      }
+    }
+
+    // Tab 2: Visual Assignments (Spec 005 - US2)
+    case 'SET_VISUAL_ASSIGNMENT': {
+      if (!state.project) return state
+      const { opportunityId, assetId } = action.payload
+      const currentAssignments = state.project.visualPlan?.assignments ?? []
+      // Remove existing assignment for this opportunity if any
+      const filteredAssignments = currentAssignments.filter(
+        (a) => a.opportunity_id !== opportunityId
+      )
+      // Add new assignment
+      const newAssignment = {
+        opportunity_id: opportunityId,
+        status: 'assigned' as const,
+        asset_id: assetId,
+        updated_at: new Date().toISOString(),
+      }
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: state.project.visualPlan?.assets ?? [],
+            assignments: [...filteredAssignments, newAssignment],
+          },
+        },
+      }
+    }
+
+    case 'SKIP_VISUAL_OPPORTUNITY': {
+      if (!state.project) return state
+      const opportunityId = action.payload
+      const currentAssignments = state.project.visualPlan?.assignments ?? []
+      // Remove existing assignment for this opportunity if any
+      const filteredAssignments = currentAssignments.filter(
+        (a) => a.opportunity_id !== opportunityId
+      )
+      // Add skipped assignment
+      const newAssignment = {
+        opportunity_id: opportunityId,
+        status: 'skipped' as const,
+        asset_id: null,
+        updated_at: new Date().toISOString(),
+      }
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: state.project.visualPlan?.assets ?? [],
+            assignments: [...filteredAssignments, newAssignment],
+          },
+        },
+      }
+    }
+
+    case 'REMOVE_VISUAL_ASSIGNMENT': {
+      if (!state.project) return state
+      const opportunityId = action.payload
+      const currentAssignments = state.project.visualPlan?.assignments ?? []
+      // Remove assignment for this opportunity (makes it "unassigned")
+      const filteredAssignments = currentAssignments.filter(
+        (a) => a.opportunity_id !== opportunityId
+      )
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: state.project.visualPlan?.assets ?? [],
+            assignments: filteredAssignments,
+          },
         },
       }
     }

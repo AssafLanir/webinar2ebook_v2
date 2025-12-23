@@ -28,6 +28,7 @@ export function Tab3Content() {
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [draftCopied, setDraftCopied] = useState(false)
   const [showDraftDownloadMenu, setShowDraftDownloadMenu] = useState(false)
+  const [showRegenerationWarning, setShowRegenerationWarning] = useState(false)
   const draftEditorRef = useRef<HTMLDivElement>(null)
   const draftDownloadMenuRef = useRef<HTMLDivElement>(null)
   const pendingSaveAfterApply = useRef(false)
@@ -170,9 +171,30 @@ export function Tab3Content() {
     setShowDraftDownloadMenu(false)
   }, [project?.draftText, project?.name, project?.id])
 
-  // Start AI draft generation
-  const handleGenerateDraft = useCallback(async () => {
+  // Check if there are existing visual assignments (T048)
+  const hasExistingAssignments = useMemo(() => {
+    const assignments = project?.visualPlan?.assignments ?? []
+    return assignments.length > 0
+  }, [project?.visualPlan?.assignments])
+
+  // Start AI draft generation (with warning check)
+  const handleGenerateClick = useCallback(() => {
     if (!validation.isValid || !project) return
+
+    // If there are existing assignments, show warning first (T048)
+    if (hasExistingAssignments) {
+      setShowRegenerationWarning(true)
+      return
+    }
+
+    // No existing assignments, proceed directly
+    handleGenerateDraftConfirmed()
+  }, [validation.isValid, project, hasExistingAssignments])
+
+  // Actually start generation (after confirmation if needed)
+  const handleGenerateDraftConfirmed = useCallback(async () => {
+    if (!validation.isValid || !project) return
+    setShowRegenerationWarning(false)
 
     // Build request payload
     const request: DraftGenerateRequest = {
@@ -194,6 +216,11 @@ export function Tab3Content() {
 
     await startGeneration(request)
   }, [validation.isValid, project, styleEnvelope, startGeneration])
+
+  // Cancel regeneration warning
+  const handleCancelRegeneration = useCallback(() => {
+    setShowRegenerationWarning(false)
+  }, [])
 
   // Cancel generation
   const handleCancelGeneration = useCallback(async () => {
@@ -264,8 +291,8 @@ export function Tab3Content() {
   // Retry generation after failure
   const handleRetry = useCallback(() => {
     resetGeneration()
-    handleGenerateDraft()
-  }, [resetGeneration, handleGenerateDraft])
+    handleGenerateDraftConfirmed()
+  }, [resetGeneration, handleGenerateDraftConfirmed])
 
   const currentPreset = STYLE_PRESETS.find(p => p.id === currentPresetId)
 
@@ -369,7 +396,7 @@ export function Tab3Content() {
             </p>
             <Button
               variant="primary"
-              onClick={handleGenerateDraft}
+              onClick={handleGenerateClick}
               disabled={!validation.isValid}
             >
               <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -522,6 +549,49 @@ export function Tab3Content() {
         onApplyAndEdit={handleApplyAndEdit}
         onDiscard={handleDiscardDraft}
       />
+
+      {/* Regeneration Warning Modal (T048) */}
+      {showRegenerationWarning && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 rounded-lg shadow-xl max-w-md w-full mx-4 border border-slate-700">
+            <div className="px-6 py-4 border-b border-slate-700">
+              <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                <svg className="w-5 h-5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                Regenerate Draft?
+              </h3>
+            </div>
+            <div className="px-6 py-4">
+              <p className="text-slate-300 mb-3">
+                You have existing visual assignments in Tab 2. Regenerating the draft will:
+              </p>
+              <ul className="text-sm text-slate-400 list-disc list-inside space-y-1 mb-4">
+                <li>Create a new visual opportunity plan</li>
+                <li>Clear all current visual assignments</li>
+                <li>Your uploaded images will remain in the library</li>
+              </ul>
+              <p className="text-sm text-slate-500">
+                You'll need to reassign images to the new opportunities after regeneration.
+              </p>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-700 flex justify-end gap-3">
+              <button
+                onClick={handleCancelRegeneration}
+                className="px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleGenerateDraftConfirmed}
+                className="px-4 py-2 text-sm bg-yellow-500 text-slate-900 hover:bg-yellow-400 rounded-lg transition-colors font-medium"
+              >
+                Regenerate Anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

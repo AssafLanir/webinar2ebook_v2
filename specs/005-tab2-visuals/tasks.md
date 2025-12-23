@@ -22,9 +22,9 @@
 
 **Purpose**: Backend dependencies and GridFS configuration
 
-- [ ] T001 Add Pillow to backend dependencies in `backend/pyproject.toml`
-- [ ] T002 [P] Create GridFS service module in `backend/src/services/gridfs_service.py`
-- [ ] T003 [P] Add GridFS connection helper to `backend/src/db/mongo.py`
+- [x] T001 Add Pillow to backend dependencies in `backend/pyproject.toml`
+- [x] T002 [P] Create GridFS service module in `backend/src/services/gridfs_service.py`
+- [x] T003 [P] Add GridFS connection helper to `backend/src/db/mongo.py`
 
 ---
 
@@ -34,14 +34,14 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Extend VisualAsset model with new fields (original_filename, size_bytes, caption, sha256, created_at) in `backend/src/models/visuals.py`
-- [ ] T005 [P] Create VisualAssignment model in `backend/src/models/visuals.py`
-- [ ] T006 Add assignments field to VisualPlan model in `backend/src/models/visuals.py`
-- [ ] T007 [P] Update VisualPlan default handling in project load (treat missing assignments as []) in `backend/src/services/project_service.py`
-- [ ] T008 [P] Create frontend types for VisualAsset extensions in `frontend/src/types/visuals.ts`
-- [ ] T009 [P] Create frontend VisualAssignment type in `frontend/src/types/visuals.ts`
-- [ ] T010 Update frontend VisualPlan type with assignments array in `frontend/src/types/visuals.ts`
-- [ ] T011 [P] Add legacy project.visuals → visualPlan.assets migration helper in `frontend/src/utils/visualMigration.ts`
+- [x] T004 Extend VisualAsset model with new fields (original_filename, size_bytes, caption, sha256, created_at) in `backend/src/models/visuals.py`
+- [x] T005 [P] Create VisualAssignment model in `backend/src/models/visuals.py`
+- [x] T006 Add assignments field to VisualPlan model in `backend/src/models/visuals.py`
+- [x] T007 [P] Update VisualPlan default handling in project load (treat missing assignments as []) in `backend/src/services/project_service.py`
+- [x] T008 [P] Create frontend types for VisualAsset extensions in `frontend/src/types/visuals.ts`
+- [x] T009 [P] Create frontend VisualAssignment type in `frontend/src/types/visuals.ts`
+- [x] T010 Update frontend VisualPlan type with assignments array in `frontend/src/types/visuals.ts`
+- [x] T011 [P] Add legacy project.visuals → visualPlan.assets migration helper in `frontend/src/utils/visualMigration.ts`
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
@@ -55,24 +55,24 @@
 
 ### Implementation for User Story 1
 
-- [ ] T012 [P] [US1] Implement thumbnail generation utility (Pillow, max 512px, PNG/JPEG) in `backend/src/services/image_utils.py`
-- [ ] T013 [P] [US1] Implement sha256 hash computation utility in `backend/src/services/image_utils.py`
-- [ ] T014 [US1] Create upload endpoint POST `/api/projects/{project_id}/visuals/assets/upload` in `backend/src/api/routes/visuals.py`
-- [ ] T014a [US1] Enforce backend validation in upload endpoint: file type (PNG/JPG/WebP), size (≤10MB), count (≤10 per project) - return `{data:null, error:{code:"UPLOAD_TOO_LARGE"|"UNSUPPORTED_MEDIA_TYPE"|"TOO_MANY_ASSETS"}}` in `backend/src/api/routes/visuals.py`
-- [ ] T015 [US1] Store original + thumbnail in GridFS via gridfs_service; set default caption (filename without extension) if none provided in `backend/src/services/visual_asset_service.py`
-- [ ] T016 [US1] Create serve endpoint GET `/api/projects/{project_id}/visuals/assets/{asset_id}/content` with project ownership check in `backend/src/api/routes/visuals.py`
-- [ ] T017 [US1] Register visuals router in `backend/src/api/main.py`
-- [ ] T017a [US1] Create backend integration tests for upload/serve in `backend/tests/integration/test_visuals_endpoints.py`:
+- [x] T012 [P] [US1] Implement thumbnail generation utility (Pillow, max 512px, PNG/JPEG) in `backend/src/services/image_utils.py`
+- [x] T013 [P] [US1] Implement sha256 hash computation utility in `backend/src/services/image_utils.py`
+- [x] T014 [US1] Create upload endpoint POST `/api/projects/{project_id}/visuals/assets/upload` in `backend/src/api/routes/visuals.py`
+- [x] T014a [US1] Enforce backend validation in upload endpoint: file type (PNG/JPG/WebP), size (≤10MB), count (≤10 per project) - return `{data:null, error:{code:"UPLOAD_TOO_LARGE"|"UNSUPPORTED_MEDIA_TYPE"|"TOO_MANY_ASSETS"}}` in `backend/src/api/routes/visuals.py`
+- [x] T015 [US1] Store original + thumbnail in GridFS via gridfs_service; set default caption (filename without extension) if none provided in `backend/src/services/visual_asset_service.py`
+- [x] T016 [US1] Create serve endpoint GET `/api/projects/{project_id}/visuals/assets/{asset_id}/content` with project ownership check in `backend/src/api/routes/visuals.py`
+- [x] T017 [US1] Register visuals router in `backend/src/api/main.py`
+- [x] T017a [US1] Create backend integration tests for upload/serve in `backend/tests/integration/test_visuals_endpoints.py`:
   - Upload validation (rejects wrong type/size/count with proper error envelope)
   - Upload sets default caption (filename without extension) if none provided
   - Project-scoped serving (404 if asset not referenced by project's visualPlan.assets)
-- [ ] T018 [P] [US1] Create FileUploadDropzone component in `frontend/src/components/tab2/FileUploadDropzone.tsx`
-- [ ] T019 [P] [US1] Create AssetCard component (thumbnail, filename, dimensions) in `frontend/src/components/tab2/AssetCard.tsx`
-- [ ] T020 [US1] Create AssetGrid component in `frontend/src/components/tab2/AssetGrid.tsx`
-- [ ] T021 [US1] Create visualsApi service (upload, getContentUrl) in `frontend/src/services/visualsApi.ts`
-- [ ] T022 [US1] Integrate upload + grid into Tab2Content with visualPlan.assets state in `frontend/src/components/tab2/Tab2Content.tsx`
-- [ ] T023 [US1] Add ProjectContext actions for ADD_VISUAL_ASSET in `frontend/src/context/ProjectContext.tsx`
-- [ ] T024 [US1] Wire up debounced saveProject after upload completes in `frontend/src/components/tab2/Tab2Content.tsx`
+- [x] T018 [P] [US1] Create FileUploadDropzone component in `frontend/src/components/tab2/FileUploadDropzone.tsx`
+- [x] T019 [P] [US1] Create AssetCard component (thumbnail, filename, dimensions) in `frontend/src/components/tab2/AssetCard.tsx`
+- [x] T020 [US1] Create AssetGrid component in `frontend/src/components/tab2/AssetGrid.tsx`
+- [x] T021 [US1] Create visualsApi service (upload, getContentUrl) in `frontend/src/services/visualsApi.ts`
+- [x] T022 [US1] Integrate upload + grid into Tab2Content with visualPlan.assets state in `frontend/src/components/tab2/Tab2Content.tsx`
+- [x] T023 [US1] Add ProjectContext actions for ADD_VISUAL_ASSET in `frontend/src/context/ProjectContext.tsx`
+- [x] T024 [US1] Wire up debounced saveProject after upload completes in `frontend/src/components/tab2/Tab2Content.tsx`
 
 **Checkpoint**: User can upload images, see thumbnails, and data persists on refresh
 
@@ -88,13 +88,13 @@
 
 ### Implementation for User Story 2
 
-- [ ] T025 [P] [US2] Create OpportunityCard component (title, type, rationale, assignment state) in `frontend/src/components/tab2/OpportunityCard.tsx`
-- [ ] T026 [P] [US2] Create OpportunityList component (grouped by chapter) in `frontend/src/components/tab2/OpportunityList.tsx`
-- [ ] T027 [US2] Create AssetPickerModal component (select asset for opportunity) in `frontend/src/components/tab2/AssetPickerModal.tsx`
-- [ ] T028 [US2] Add empty state for no opportunities in OpportunityList in `frontend/src/components/tab2/OpportunityList.tsx`
-- [ ] T029 [US2] Add ProjectContext actions for SET_VISUAL_ASSIGNMENT, REMOVE_VISUAL_ASSIGNMENT in `frontend/src/context/ProjectContext.tsx`
-- [ ] T030 [US2] Implement assign/unassign/skip handlers in Tab2Content in `frontend/src/components/tab2/Tab2Content.tsx`
-- [ ] T031 [US2] Wire up debounced saveProject after assignment changes in `frontend/src/components/tab2/Tab2Content.tsx`
+- [x] T025 [P] [US2] Create OpportunityCard component (title, type, rationale, assignment state) in `frontend/src/components/tab2/OpportunityCard.tsx`
+- [x] T026 [P] [US2] Create OpportunityList component (grouped by chapter) in `frontend/src/components/tab2/OpportunityList.tsx`
+- [x] T027 [US2] Create AssetPickerModal component (select asset for opportunity) in `frontend/src/components/tab2/AssetPickerModal.tsx`
+- [x] T028 [US2] Add empty state for no opportunities in OpportunityList in `frontend/src/components/tab2/OpportunityList.tsx`
+- [x] T029 [US2] Add ProjectContext actions for SET_VISUAL_ASSIGNMENT, REMOVE_VISUAL_ASSIGNMENT in `frontend/src/context/ProjectContext.tsx`
+- [x] T030 [US2] Implement assign/unassign/skip handlers in Tab2Content in `frontend/src/components/tab2/Tab2Content.tsx`
+- [x] T031 [US2] Wire up debounced saveProject after assignment changes in `frontend/src/components/tab2/Tab2Content.tsx`
 
 **Checkpoint**: User can assign assets to opportunities, skip opportunities, and assignments persist
 
@@ -108,14 +108,14 @@
 
 ### Implementation for User Story 3
 
-- [ ] T032 [US3] Ensure visualPlan.assets and visualPlan.assignments are included in project save payload in `frontend/src/services/api.ts`
-- [ ] T033 [US3] Add delete asset endpoint DELETE `/api/projects/{project_id}/visuals/assets/{asset_id}` in `backend/src/api/routes/visuals.py`
-- [ ] T034 [US3] Implement delete handler that removes GridFS bytes in `backend/src/services/visual_asset_service.py`
-- [ ] T034a [US3] Add delete integration test (removes GridFS bytes, returns success envelope) in `backend/tests/integration/test_visuals_endpoints.py`
-- [ ] T035 [US3] Add delete button to AssetCard with confirmation in `frontend/src/components/tab2/AssetCard.tsx`
-- [ ] T036 [US3] Add ProjectContext action for REMOVE_VISUAL_ASSET in `frontend/src/context/ProjectContext.tsx`
-- [ ] T037 [US3] Remove assignment records referencing deleted asset (delete the VisualAssignment entry, not set status) in `frontend/src/context/ProjectContext.tsx`
-- [ ] T038 [US3] Wire up delete + saveProject in Tab2Content in `frontend/src/components/tab2/Tab2Content.tsx`
+- [x] T032 [US3] Ensure visualPlan.assets and visualPlan.assignments are included in project save payload in `frontend/src/services/api.ts`
+- [x] T033 [US3] Add delete asset endpoint DELETE `/api/projects/{project_id}/visuals/assets/{asset_id}` in `backend/src/api/routes/visuals.py`
+- [x] T034 [US3] Implement delete handler that removes GridFS bytes in `backend/src/services/visual_asset_service.py`
+- [x] T034a [US3] Add delete integration test (removes GridFS bytes, returns success envelope) in `backend/tests/integration/test_visuals_endpoints.py`
+- [x] T035 [US3] Add delete button to AssetCard with confirmation in `frontend/src/components/tab2/AssetCard.tsx`
+- [x] T036 [US3] Add ProjectContext action for REMOVE_VISUAL_ASSET in `frontend/src/context/ProjectContext.tsx`
+- [x] T037 [US3] Remove assignment records referencing deleted asset (delete the VisualAssignment entry, not set status) in `frontend/src/context/ProjectContext.tsx`
+- [x] T038 [US3] Wire up delete + saveProject in Tab2Content in `frontend/src/components/tab2/Tab2Content.tsx`
 
 **Checkpoint**: Full CRUD for assets, assignments auto-cleared on delete, persistence complete
 
@@ -133,10 +133,10 @@
 
 ### Implementation for User Story 4
 
-- [ ] T039 [US4] Add download button to AssetCard in `frontend/src/components/tab2/AssetCard.tsx`
-- [ ] T040 [US4] Implement download handler (fetch full size, trigger browser download) in `frontend/src/components/tab2/AssetCard.tsx`
-- [ ] T041 [US4] Add "Copy URL" button to AssetCard (copies content endpoint URL to clipboard) in `frontend/src/components/tab2/AssetCard.tsx`
-- [ ] T042 [US4] Add "Copy Markdown" button to AssetCard (copies `![caption](url)` to clipboard) in `frontend/src/components/tab2/AssetCard.tsx`
+- [x] T039 [US4] Add download button to AssetCard in `frontend/src/components/tab2/AssetCard.tsx`
+- [x] T040 [US4] Implement download handler (fetch full size, trigger browser download) in `frontend/src/components/tab2/AssetCard.tsx`
+- [x] T041 [US4] Add "Copy URL" button to AssetCard (copies content endpoint URL to clipboard) in `frontend/src/components/tab2/AssetCard.tsx`
+- [x] T042 [US4] ~~Add "Copy Markdown" button to AssetCard~~ REMOVED - not useful in workflow
 
 **Checkpoint**: User can download any uploaded asset and copy URL/markdown to clipboard
 
@@ -150,10 +150,10 @@
 
 ### Implementation for User Story 5
 
-- [ ] T043 [P] [US5] Create AssetMetadataModal component (edit caption, alt_text) in `frontend/src/components/tab2/AssetMetadataModal.tsx`
-- [ ] T044 [US5] Add "Edit metadata" button to AssetCard in `frontend/src/components/tab2/AssetCard.tsx`
-- [ ] T045 [US5] Add ProjectContext action for UPDATE_VISUAL_ASSET_METADATA in `frontend/src/context/ProjectContext.tsx`
-- [ ] T046 [US5] Wire up metadata edit + saveProject in Tab2Content in `frontend/src/components/tab2/Tab2Content.tsx`
+- [x] T043 [P] [US5] Create AssetMetadataModal component (edit caption, alt_text) in `frontend/src/components/tab2/AssetMetadataModal.tsx`
+- [x] T044 [US5] Add "Edit metadata" button to AssetCard in `frontend/src/components/tab2/AssetCard.tsx`
+- [x] T045 [US5] Add ProjectContext action for UPDATE_VISUAL_ASSET_METADATA in `frontend/src/context/ProjectContext.tsx`
+- [x] T046 [US5] Wire up metadata edit + saveProject in Tab2Content in `frontend/src/components/tab2/Tab2Content.tsx`
 
 **Checkpoint**: User can edit and persist asset metadata
 
@@ -163,10 +163,10 @@
 
 **Purpose**: Error handling, regeneration warning, cleanup
 
-- [ ] T047 Add upload validation error handling (file type, size) with toast notifications in `frontend/src/components/tab2/FileUploadDropzone.tsx`
-- [ ] T048 Add regeneration warning modal (clear assignments on confirm) in `frontend/src/components/tab3/Tab3Content.tsx`
-- [ ] T049 [P] Add error codes (UNSUPPORTED_MEDIA_TYPE, UPLOAD_TOO_LARGE, etc.) to backend in `backend/src/api/exceptions.py`
-- [ ] T050 [P] Clean up legacy Tab2Content components (VisualGallery, AddCustomVisual) in `frontend/src/components/tab2/`
+- [x] T047 Add upload validation error handling (file type, size) with toast notifications in `frontend/src/components/tab2/FileUploadDropzone.tsx`
+- [x] T048 Add regeneration warning modal (clear assignments on confirm) in `frontend/src/components/tab3/Tab3Content.tsx`
+- [x] T049 [P] Add error codes (UNSUPPORTED_MEDIA_TYPE, UPLOAD_TOO_LARGE, etc.) to backend in `backend/src/api/exceptions.py` - ALREADY DONE
+- [x] T050 [P] Clean up legacy Tab2Content components (VisualGallery, AddCustomVisual) in `frontend/src/components/tab2/`
 - [ ] T051 Run manual acceptance scenarios AS-001 through AS-007 from spec
 
 ---

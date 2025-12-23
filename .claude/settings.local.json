@@ -133,7 +133,14 @@
       "Bash(kill:*)",
       "Bash(pkill:*)",
       "Bash(git reset:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(source .venv/bin/activate)",
+      "Skill(speckit.tasks)",
+      "Bash(mongosh --quiet --eval:*)",
+      "Bash(mongosh:*)",
+      "Bash(PROJECT_ID=\"693c25566e6bf1d180694f6a\":*)",
+      "Skill(speckit.plan)",
+      "Bash(git merge:*)"
     ],
     "deny": [],
     "ask": []

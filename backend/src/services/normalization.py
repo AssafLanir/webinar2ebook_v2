@@ -13,6 +13,35 @@ from src.models import (
 )
 
 
+def _sanitize_style_fields(style: dict) -> dict:
+    """Sanitize style fields by mapping invalid enum values to valid ones.
+
+    Handles legacy/invalid values that don't match current enum definitions.
+    """
+    result = style.copy()
+
+    # Formality mapping (old values → new)
+    formality_map = {
+        "conversational": "low",
+        "formal": "high",
+        "informal": "low",
+    }
+    if result.get("formality") in formality_map:
+        result["formality"] = formality_map[result["formality"]]
+
+    # Reading level mapping (old values → new)
+    reading_level_map = {
+        "college": "standard",
+        "graduate": "technical",
+        "elementary": "simple",
+        "high_school": "simple",
+    }
+    if result.get("reading_level") in reading_level_map:
+        result["reading_level"] = reading_level_map[result["reading_level"]]
+
+    return result
+
+
 def normalize_style_config(data: dict | None) -> StyleConfigEnvelope | None:
     """Normalize styleConfig to canonical StyleConfigEnvelope.
 
@@ -33,8 +62,23 @@ def normalize_style_config(data: dict | None) -> StyleConfigEnvelope | None:
 
     # Check if already in envelope format (has 'style' key)
     if "style" in data and isinstance(data.get("style"), dict):
-        # Already an envelope - validate and return
-        return StyleConfigEnvelope.model_validate(data)
+        # Already an envelope - try validation first
+        try:
+            return StyleConfigEnvelope.model_validate(data)
+        except Exception:
+            # Validation failed - try sanitizing enum values
+            sanitized_style = _sanitize_style_fields(data["style"])
+            sanitized_data = {**data, "style": sanitized_style}
+            # Ensure version and preset_id exist
+            if "version" not in sanitized_data:
+                sanitized_data["version"] = STYLE_CONFIG_VERSION
+            if "preset_id" not in sanitized_data:
+                sanitized_data["preset_id"] = "sanitized_migrated"
+            try:
+                return StyleConfigEnvelope.model_validate(sanitized_data)
+            except Exception:
+                # Still can't parse - return None
+                return None
 
     # Check for legacy format (has old keys like 'audience', 'tone', 'depth', 'targetPages')
     legacy_keys = {"audience", "tone", "depth", "targetPages"}
@@ -108,6 +152,7 @@ def normalize_visual_plan(data: dict | None) -> VisualPlan:
     - None/missing → returns empty VisualPlan
     - Valid VisualPlan shape → validates and returns
     - Partial data → fills missing fields with defaults
+    - Missing assignments field → treated as [] (Spec 005 compatibility)
 
     Args:
         data: Raw visualPlan from database
@@ -116,13 +161,17 @@ def normalize_visual_plan(data: dict | None) -> VisualPlan:
         VisualPlan (never None)
     """
     if data is None:
-        return VisualPlan(opportunities=[], assets=[])
+        return VisualPlan(opportunities=[], assets=[], assignments=[])
+
+    # Ensure assignments field exists (legacy projects won't have it)
+    if isinstance(data, dict) and "assignments" not in data:
+        data = {**data, "assignments": []}
 
     try:
         return VisualPlan.model_validate(data)
     except Exception:
         # Can't parse - return empty
-        return VisualPlan(opportunities=[], assets=[])
+        return VisualPlan(opportunities=[], assets=[], assignments=[])
 
 
 def normalize_project_data(doc: dict) -> dict:
