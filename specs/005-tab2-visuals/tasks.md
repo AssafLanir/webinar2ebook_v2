@@ -59,13 +59,13 @@
 - [ ] T013 [P] [US1] Implement sha256 hash computation utility in `backend/src/services/image_utils.py`
 - [ ] T014 [US1] Create upload endpoint POST `/api/projects/{project_id}/visuals/assets/upload` in `backend/src/api/routes/visuals.py`
 - [ ] T014a [US1] Enforce backend validation in upload endpoint: file type (PNG/JPG/WebP), size (≤10MB), count (≤10 per project) - return `{data:null, error:{code:"UPLOAD_TOO_LARGE"|"UNSUPPORTED_MEDIA_TYPE"|"TOO_MANY_ASSETS"}}` in `backend/src/api/routes/visuals.py`
-- [ ] T015 [US1] Store original + thumbnail in GridFS via gridfs_service in `backend/src/services/visual_asset_service.py`
+- [ ] T015 [US1] Store original + thumbnail in GridFS via gridfs_service; set default caption (filename without extension) if none provided in `backend/src/services/visual_asset_service.py`
 - [ ] T016 [US1] Create serve endpoint GET `/api/projects/{project_id}/visuals/assets/{asset_id}/content` with project ownership check in `backend/src/api/routes/visuals.py`
 - [ ] T017 [US1] Register visuals router in `backend/src/api/main.py`
-- [ ] T017a [US1] Create backend integration tests for visuals endpoints in `backend/tests/integration/test_visuals_endpoints.py`:
+- [ ] T017a [US1] Create backend integration tests for upload/serve in `backend/tests/integration/test_visuals_endpoints.py`:
   - Upload validation (rejects wrong type/size/count with proper error envelope)
+  - Upload sets default caption (filename without extension) if none provided
   - Project-scoped serving (404 if asset not referenced by project's visualPlan.assets)
-  - Delete removes GridFS bytes and returns success envelope
 - [ ] T018 [P] [US1] Create FileUploadDropzone component in `frontend/src/components/tab2/FileUploadDropzone.tsx`
 - [ ] T019 [P] [US1] Create AssetCard component (thumbnail, filename, dimensions) in `frontend/src/components/tab2/AssetCard.tsx`
 - [ ] T020 [US1] Create AssetGrid component in `frontend/src/components/tab2/AssetGrid.tsx`
@@ -111,6 +111,7 @@
 - [ ] T032 [US3] Ensure visualPlan.assets and visualPlan.assignments are included in project save payload in `frontend/src/services/api.ts`
 - [ ] T033 [US3] Add delete asset endpoint DELETE `/api/projects/{project_id}/visuals/assets/{asset_id}` in `backend/src/api/routes/visuals.py`
 - [ ] T034 [US3] Implement delete handler that removes GridFS bytes in `backend/src/services/visual_asset_service.py`
+- [ ] T034a [US3] Add delete integration test (removes GridFS bytes, returns success envelope) in `backend/tests/integration/test_visuals_endpoints.py`
 - [ ] T035 [US3] Add delete button to AssetCard with confirmation in `frontend/src/components/tab2/AssetCard.tsx`
 - [ ] T036 [US3] Add ProjectContext action for REMOVE_VISUAL_ASSET in `frontend/src/context/ProjectContext.tsx`
 - [ ] T037 [US3] Remove assignment records referencing deleted asset (delete the VisualAssignment entry, not set status) in `frontend/src/context/ProjectContext.tsx`
@@ -252,3 +253,4 @@ Task: "Create AssetCard component in frontend/src/components/tab2/AssetCard.tsx"
 - **Assignments are records; "unassigned" = no record exists** - when unassigning or deleting an asset, DELETE the VisualAssignment document (do NOT set `status: "unassigned"`)
 - Legacy project.visuals migrated in-memory, not mutated
 - Backend is the enforcement layer for validations (type/size/count) - frontend shows errors but curl must also be blocked
+- **Default caption on upload**: Server sets `caption = filename (without extension)` if none provided, so UI never shows blank captions
