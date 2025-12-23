@@ -375,6 +375,29 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
       }
     }
 
+    case 'UPDATE_VISUAL_ASSET_METADATA': {
+      if (!state.project) return state
+      const { assetId, updates } = action.payload
+      const currentAssets = state.project.visualPlan?.assets ?? []
+      const updatedAssets = currentAssets.map((a: VisualAsset) =>
+        a.id === assetId
+          ? { ...a, caption: updates.caption ?? a.caption, alt_text: updates.alt_text ?? a.alt_text }
+          : a
+      )
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: updatedAssets,
+            assignments: state.project.visualPlan?.assignments ?? [],
+          },
+        },
+      }
+    }
+
     // Tab 2: Visual Assignments (Spec 005 - US2)
     case 'SET_VISUAL_ASSIGNMENT': {
       if (!state.project) return state

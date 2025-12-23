@@ -150,10 +150,10 @@
 
 ### Implementation for User Story 5
 
-- [ ] T043 [P] [US5] Create AssetMetadataModal component (edit caption, alt_text) in `frontend/src/components/tab2/AssetMetadataModal.tsx`
-- [ ] T044 [US5] Add "Edit metadata" button to AssetCard in `frontend/src/components/tab2/AssetCard.tsx`
-- [ ] T045 [US5] Add ProjectContext action for UPDATE_VISUAL_ASSET_METADATA in `frontend/src/context/ProjectContext.tsx`
-- [ ] T046 [US5] Wire up metadata edit + saveProject in Tab2Content in `frontend/src/components/tab2/Tab2Content.tsx`
+- [x] T043 [P] [US5] Create AssetMetadataModal component (edit caption, alt_text) in `frontend/src/components/tab2/AssetMetadataModal.tsx`
+- [x] T044 [US5] Add "Edit metadata" button to AssetCard in `frontend/src/components/tab2/AssetCard.tsx`
+- [x] T045 [US5] Add ProjectContext action for UPDATE_VISUAL_ASSET_METADATA in `frontend/src/context/ProjectContext.tsx`
+- [x] T046 [US5] Wire up metadata edit + saveProject in Tab2Content in `frontend/src/components/tab2/Tab2Content.tsx`
 
 **Checkpoint**: User can edit and persist asset metadata
 

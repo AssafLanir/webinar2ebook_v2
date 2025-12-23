@@ -5,7 +5,7 @@
  * - Thumbnail image
  * - Filename and caption
  * - Dimensions and size
- * - Action buttons: Download, Copy URL, Copy Markdown, Delete
+ * - Action buttons: Download, Copy URL, Edit Metadata, Delete
  */
 
 import { useState } from "react";
@@ -17,9 +17,10 @@ interface AssetCardProps {
   projectId: string;
   asset: VisualAsset;
   onDelete?: (assetId: string) => void;
+  onEditMetadata?: (assetId: string) => void;
 }
 
-export function AssetCard({ projectId, asset, onDelete }: AssetCardProps) {
+export function AssetCard({ projectId, asset, onDelete, onEditMetadata }: AssetCardProps) {
   const thumbnailUrl = getAssetContentUrl(projectId, asset.id, "thumb");
   const fullUrl = getAssetContentUrl(projectId, asset.id, "full");
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
@@ -134,6 +135,20 @@ export function AssetCard({ projectId, asset, onDelete }: AssetCardProps) {
             </svg>
             URL
           </button>
+
+          {/* Edit metadata button (T044) */}
+          {onEditMetadata && (
+            <button
+              onClick={() => onEditMetadata(asset.id)}
+              className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded transition-colors"
+              title="Edit caption and alt text"
+            >
+              <svg className="w-3.5 h-3.5 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              Edit
+            </button>
+          )}
         </div>
 
         {/* Copy feedback toast */}

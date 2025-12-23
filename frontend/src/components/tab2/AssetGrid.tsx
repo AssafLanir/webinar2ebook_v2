@@ -4,7 +4,7 @@
  * Features:
  * - Responsive grid layout
  * - Empty state message
- * - Asset cards with delete capability
+ * - Asset cards with delete and edit metadata capability
  */
 
 import type { VisualAsset } from "../../types/visuals";
@@ -14,9 +14,10 @@ interface AssetGridProps {
   projectId: string;
   assets: VisualAsset[];
   onDeleteAsset?: (assetId: string) => void;
+  onEditMetadata?: (assetId: string) => void;
 }
 
-export function AssetGrid({ projectId, assets, onDeleteAsset }: AssetGridProps) {
+export function AssetGrid({ projectId, assets, onDeleteAsset, onEditMetadata }: AssetGridProps) {
   if (assets.length === 0) {
     return (
       <div className="text-center py-12">
@@ -49,6 +50,7 @@ export function AssetGrid({ projectId, assets, onDeleteAsset }: AssetGridProps) 
           projectId={projectId}
           asset={asset}
           onDelete={onDeleteAsset}
+          onEditMetadata={onEditMetadata}
         />
       ))}
     </div>

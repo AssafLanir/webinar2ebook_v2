@@ -248,6 +248,7 @@ export type ProjectAction =
   | { type: 'ADD_VISUAL_ASSET'; payload: import('./visuals').VisualAsset }
   | { type: 'ADD_VISUAL_ASSETS'; payload: import('./visuals').VisualAsset[] }
   | { type: 'REMOVE_VISUAL_ASSET'; payload: string }  // assetId
+  | { type: 'UPDATE_VISUAL_ASSET_METADATA'; payload: { assetId: string; updates: { caption?: string; alt_text?: string } } }
 
   // Tab 2: Visual Assignments (Spec 005 - US2)
   | { type: 'SET_VISUAL_ASSIGNMENT'; payload: { opportunityId: string; assetId: string } }

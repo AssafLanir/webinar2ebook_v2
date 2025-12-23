@@ -7,6 +7,7 @@
  * - Delete assets
  * - View visual opportunities grouped by chapter
  * - Assign/skip/unassign assets to opportunities
+ * - Edit asset metadata (caption, alt text)
  * - Auto-save after changes
  */
 
@@ -17,12 +18,13 @@ import { FileUploadDropzone } from "./FileUploadDropzone";
 import { AssetGrid } from "./AssetGrid";
 import { OpportunityList } from "./OpportunityList";
 import { AssetPickerModal } from "./AssetPickerModal";
+import { AssetMetadataModal } from "./AssetMetadataModal";
 import {
   uploadVisualAssets,
   deleteVisualAsset,
   VisualsApiError,
 } from "../../services/visualsApi";
-import type { VisualOpportunity } from "../../types/visuals";
+import type { VisualAsset, VisualOpportunity } from "../../types/visuals";
 
 // Debounce delay for auto-save (ms)
 const SAVE_DEBOUNCE_MS = 1500;
@@ -37,6 +39,9 @@ export function Tab2Content() {
 
   // Asset picker modal state
   const [pickerOpportunity, setPickerOpportunity] = useState<VisualOpportunity | null>(null);
+
+  // Metadata edit modal state
+  const [editingAsset, setEditingAsset] = useState<VisualAsset | null>(null);
 
   // Debounced save ref
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -161,6 +166,27 @@ export function Tab2Content() {
     setPickerOpportunity(null);
   };
 
+  // Metadata edit handlers (T046)
+  const handleEditMetadata = (assetId: string) => {
+    const asset = assets.find((a) => a.id === assetId);
+    if (asset) {
+      setEditingAsset(asset);
+    }
+  };
+
+  const handleMetadataSave = (assetId: string, updates: { caption?: string; alt_text?: string }) => {
+    dispatch({
+      type: "UPDATE_VISUAL_ASSET_METADATA",
+      payload: { assetId, updates },
+    });
+    debouncedSave();
+    setEditingAsset(null);
+  };
+
+  const handleMetadataCancel = () => {
+    setEditingAsset(null);
+  };
+
   return (
     <div className="space-y-6">
       {/* Upload Section */}
@@ -226,6 +252,7 @@ export function Tab2Content() {
             projectId={project.id}
             assets={assets}
             onDeleteAsset={handleDeleteAsset}
+            onEditMetadata={handleEditMetadata}
           />
         </div>
       </Card>
@@ -251,6 +278,15 @@ export function Tab2Content() {
           assets={assets}
           onSelect={handleAssetSelected}
           onCancel={handlePickerCancel}
+        />
+      )}
+
+      {/* Asset Metadata Edit Modal (T046) */}
+      {editingAsset && (
+        <AssetMetadataModal
+          asset={editingAsset}
+          onSave={handleMetadataSave}
+          onCancel={handleMetadataCancel}
         />
       )}
     </div>

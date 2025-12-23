@@ -13,5 +13,8 @@ export { OpportunityCard } from './OpportunityCard'
 export { OpportunityList } from './OpportunityList'
 export { AssetPickerModal } from './AssetPickerModal'
 
+// New Spec 005 components - US5 (Metadata)
+export { AssetMetadataModal } from './AssetMetadataModal'
+
 // Main tab content
 export { Tab2Content } from './Tab2Content'
