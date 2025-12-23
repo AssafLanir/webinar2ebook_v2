@@ -1,0 +1,435 @@
+openapi: 3.1.0
+info:
+  title: Tab 3 AI Draft Generation API
+  version: 1.0.0
+  description: |
+    Async job-based API for ebook draft generation.
+    All responses use the `{ data, error }` envelope pattern.
+
+servers:
+  - url: /api
+    description: Backend API
+
+paths:
+  /ai/draft/generate:
+    post:
+      summary: Start draft generation
+      description: |
+        Initiates async draft generation job.
+        Returns immediately with job_id for polling.
+      operationId: generateDraft
+      tags:
+        - Draft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DraftGenerateRequest'
+      responses:
+        '200':
+          description: Job created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DraftGenerateResponse'
+        '400':
+          description: Invalid input (transcript too short, outline too small)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /ai/draft/status/{job_id}:
+    get:
+      summary: Get generation status
+      description: |
+        Poll for generation progress and results.
+        Returns current status, progress, and results when complete.
+      operationId: getDraftStatus
+      tags:
+        - Draft
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DraftStatusResponse'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /ai/draft/cancel/{job_id}:
+    post:
+      summary: Cancel generation
+      description: |
+        Request cancellation of in-progress generation.
+        Stops after current chapter completes.
+        Returns partial results if available.
+      operationId: cancelDraft
+      tags:
+        - Draft
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Cancellation processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DraftCancelResponse'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /ai/draft/regenerate:
+    post:
+      summary: Regenerate a section
+      description: |
+        Regenerate a single chapter/section.
+        Synchronous - returns immediately with new content.
+      operationId: regenerateSection
+      tags:
+        - Draft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DraftRegenerateRequest'
+      responses:
+        '200':
+          description: Section regenerated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DraftRegenerateResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    # Request schemas
+    DraftGenerateRequest:
+      type: object
+      required:
+        - transcript
+        - outline
+        - style_config
+      properties:
+        transcript:
+          type: string
+          minLength: 500
+          maxLength: 50000
+          description: Clean transcript text (min 500 chars)
+        outline:
+          type: array
+          minItems: 3
+          items:
+            $ref: '#/components/schemas/OutlineItem'
+          description: Outline items (min 3 items)
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Resource'
+          description: Optional resources
+        style_config:
+          $ref: '#/components/schemas/StyleConfigEnvelope'
+
+    DraftRegenerateRequest:
+      type: object
+      required:
+        - section_outline_item_id
+        - draft_plan
+        - existing_draft
+        - style_config
+      properties:
+        section_outline_item_id:
+          type: string
+          description: Outline item ID for section to regenerate
+        draft_plan:
+          $ref: '#/components/schemas/DraftPlan'
+        existing_draft:
+          type: string
+          description: Full current draft markdown
+        style_config:
+          $ref: '#/components/schemas/StyleConfigEnvelope'
+
+    # Response schemas (envelope pattern)
+    DraftGenerateResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/DraftGenerateData'
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    DraftStatusResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/DraftStatusData'
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    DraftCancelResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/DraftCancelData'
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    DraftRegenerateResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/DraftRegenerateData'
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    ErrorResponse:
+      type: object
+      properties:
+        data:
+          type: 'null'
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    # Data payload schemas
+    DraftGenerateData:
+      type: object
+      required:
+        - job_id
+        - status
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        progress:
+          $ref: '#/components/schemas/GenerationProgress'
+        draft_markdown:
+          type: string
+          nullable: true
+        draft_plan:
+          $ref: '#/components/schemas/DraftPlan'
+        visual_plan:
+          $ref: '#/components/schemas/VisualPlan'
+        generation_stats:
+          $ref: '#/components/schemas/GenerationStats'
+
+    DraftStatusData:
+      type: object
+      required:
+        - job_id
+        - status
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        progress:
+          $ref: '#/components/schemas/GenerationProgress'
+        draft_markdown:
+          type: string
+          nullable: true
+        draft_plan:
+          $ref: '#/components/schemas/DraftPlan'
+        visual_plan:
+          $ref: '#/components/schemas/VisualPlan'
+        generation_stats:
+          $ref: '#/components/schemas/GenerationStats'
+        partial_draft_markdown:
+          type: string
+          nullable: true
+        chapters_available:
+          type: integer
+          nullable: true
+
+    DraftCancelData:
+      type: object
+      required:
+        - job_id
+        - status
+        - cancelled
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        cancelled:
+          type: boolean
+        message:
+          type: string
+        partial_draft_markdown:
+          type: string
+          nullable: true
+        chapters_available:
+          type: integer
+          nullable: true
+
+    DraftRegenerateData:
+      type: object
+      required:
+        - section_markdown
+        - section_start_line
+        - section_end_line
+      properties:
+        section_markdown:
+          type: string
+          description: Regenerated section content
+        section_start_line:
+          type: integer
+          description: Start line in original draft
+        section_end_line:
+          type: integer
+          description: End line in original draft
+        generation_stats:
+          $ref: '#/components/schemas/GenerationStats'
+
+    # Supporting schemas
+    JobStatus:
+      type: string
+      enum:
+        - queued
+        - planning
+        - generating
+        - completed
+        - cancelled
+        - failed
+
+    GenerationProgress:
+      type: object
+      required:
+        - current_chapter
+        - total_chapters
+      properties:
+        current_chapter:
+          type: integer
+          minimum: 1
+        total_chapters:
+          type: integer
+          minimum: 1
+        current_chapter_title:
+          type: string
+        chapters_completed:
+          type: integer
+        estimated_remaining_seconds:
+          type: integer
+
+    GenerationStats:
+      type: object
+      required:
+        - chapters_generated
+        - total_words
+        - generation_time_ms
+      properties:
+        chapters_generated:
+          type: integer
+        total_words:
+          type: integer
+        generation_time_ms:
+          type: integer
+        tokens_used:
+          $ref: '#/components/schemas/TokenUsage'
+
+    TokenUsage:
+      type: object
+      required:
+        - prompt_tokens
+        - completion_tokens
+        - total_tokens
+      properties:
+        prompt_tokens:
+          type: integer
+          minimum: 0
+        completion_tokens:
+          type: integer
+          minimum: 0
+        total_tokens:
+          type: integer
+          minimum: 0
+
+    ErrorDetail:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+        message:
+          type: string
+          description: Human-readable error message
+
+    # Input types
+    OutlineItem:
+      type: object
+      required:
+        - id
+        - title
+        - level
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        level:
+          type: integer
+          minimum: 1
+          maximum: 3
+        notes:
+          type: string
+
+    Resource:
+      type: object
+      required:
+        - label
+        - url_or_note
+      properties:
+        label:
+          type: string
+        url_or_note:
+          type: string
+
+    # Referenced complex schemas
+    StyleConfigEnvelope:
+      $ref: '../schemas/StyleConfigEnvelope.json'
+
+    DraftPlan:
+      $ref: '../schemas/DraftPlan.json'
+
+    VisualPlan:
+      $ref: '../schemas/VisualPlan.json'
+
+tags:
+  - name: Draft
+    description: Draft generation endpoints
