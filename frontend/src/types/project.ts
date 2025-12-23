@@ -240,9 +240,14 @@ export type ProjectAction =
   | { type: 'REMOVE_RESOURCE'; payload: string }
   | { type: 'FILL_SAMPLE_DATA' }
 
-  // Tab 2: Visuals
+  // Tab 2: Visuals (Legacy)
   | { type: 'TOGGLE_VISUAL_SELECTION'; payload: string }
   | { type: 'ADD_CUSTOM_VISUAL'; payload: { title: string; description: string } }
+
+  // Tab 2: Visual Assets (Spec 005)
+  | { type: 'ADD_VISUAL_ASSET'; payload: import('./visuals').VisualAsset }
+  | { type: 'ADD_VISUAL_ASSETS'; payload: import('./visuals').VisualAsset[] }
+  | { type: 'REMOVE_VISUAL_ASSET'; payload: string }  // assetId
 
   // Tab 3: Draft
   | { type: 'SET_STYLE_PRESET'; payload: string }

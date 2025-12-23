@@ -10,6 +10,7 @@ import type {
   AIPreviewData,
   StyleConfigEnvelope,
 } from '../types/project'
+import type { VisualAsset } from '../types/visuals'
 import { INITIAL_STATE, DEFAULT_STYLE_CONFIG } from '../types/project'
 import { STYLE_PRESETS } from '../constants/stylePresets'
 import { generateId } from '../utils/idGenerator'
@@ -311,6 +312,65 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
         project: {
           ...state.project,
           visuals: [...state.project.visuals, newVisual],
+        },
+      }
+    }
+
+    // Tab 2: Visual Assets (Spec 005)
+    case 'ADD_VISUAL_ASSET': {
+      if (!state.project) return state
+      const currentAssets = state.project.visualPlan?.assets ?? []
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: [...currentAssets, action.payload],
+            assignments: state.project.visualPlan?.assignments ?? [],
+          },
+        },
+      }
+    }
+
+    case 'ADD_VISUAL_ASSETS': {
+      if (!state.project) return state
+      const currentAssets = state.project.visualPlan?.assets ?? []
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: [...currentAssets, ...action.payload],
+            assignments: state.project.visualPlan?.assignments ?? [],
+          },
+        },
+      }
+    }
+
+    case 'REMOVE_VISUAL_ASSET': {
+      if (!state.project) return state
+      const assetId = action.payload
+      const filteredAssets = (state.project.visualPlan?.assets ?? []).filter(
+        (a: VisualAsset) => a.id !== assetId
+      )
+      // Also remove any assignments referencing this asset
+      const filteredAssignments = (state.project.visualPlan?.assignments ?? []).filter(
+        (a) => a.asset_id !== assetId
+      )
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          visualPlan: {
+            ...state.project.visualPlan,
+            opportunities: state.project.visualPlan?.opportunities ?? [],
+            assets: filteredAssets,
+            assignments: filteredAssignments,
+          },
         },
       }
     }
