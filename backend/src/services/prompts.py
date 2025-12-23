@@ -101,6 +101,8 @@ def build_chapter_system_prompt(
     book_title: str,
     chapter_number: int,
     style_config: dict,
+    words_per_chapter_target: int = 625,
+    detail_level: str = "balanced",
 ) -> str:
     """Build system prompt for chapter generation.
 
@@ -108,6 +110,8 @@ def build_chapter_system_prompt(
         book_title: Title of the ebook.
         chapter_number: 1-based chapter number.
         style_config: StyleConfig dict (unwrapped from envelope).
+        words_per_chapter_target: Target word count for this chapter.
+        detail_level: Detail level (concise/balanced/detailed).
 
     Returns:
         Formatted system prompt string.
@@ -124,8 +128,21 @@ def build_chapter_system_prompt(
     include_takeaways = style_config.get("include_key_takeaways", False)
     include_actions = style_config.get("include_action_steps", False)
 
+    # Detail level guidance
+    detail_guidance = {
+        "concise": "Be concise: fewer examples, tighter bullet points, avoid tangents. Focus on key points only.",
+        "balanced": "Use a balanced approach: normal explanatory tone with clear examples where helpful.",
+        "detailed": "Be detailed: include more examples, step-by-step explanations, frameworks, and checklists where relevant.",
+    }
+    detail_instruction = detail_guidance.get(detail_level, detail_guidance["balanced"])
+
     lines = [
         f'You are writing chapter {chapter_number} of an ebook titled "{book_title}".',
+        "",
+        "Length and detail:",
+        f"- Target length: approximately {words_per_chapter_target} words for this chapter",
+        f"- Detail level: {detail_level}",
+        f"- {detail_instruction}",
         "",
         "Writing style:",
         f"- Target audience: {target_audience}",

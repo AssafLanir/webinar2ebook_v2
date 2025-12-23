@@ -11,9 +11,9 @@ Notes:
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Literal
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 class TargetAudience(str, Enum):
@@ -99,6 +99,26 @@ class ChapterLengthTarget(str, Enum):
     short = "short"
     medium = "medium"
     long = "long"
+
+
+class TotalLengthPreset(str, Enum):
+    """Controls overall draft length target."""
+    brief = "brief"  # ~2,000 words
+    standard = "standard"  # ~5,000 words
+    comprehensive = "comprehensive"  # ~10,000 words
+    custom = "custom"  # user-specified total_target_words
+
+
+# Validation constants for custom word count
+MIN_CUSTOM_WORDS = 800
+MAX_CUSTOM_WORDS = 50000
+
+
+class DetailLevel(str, Enum):
+    """Controls depth/density of content."""
+    concise = "concise"  # fewer examples, tighter bullets, avoid tangents
+    balanced = "balanced"  # normal explanatory tone
+    detailed = "detailed"  # more examples, step-by-step, frameworks/checklists
 
 
 class FaithfulnessLevel(str, Enum):
@@ -210,8 +230,13 @@ class StyleConfig(BaseModel):
 
     # Structure and pacing
     book_format: BookFormat = Field(default=BookFormat.guide)
-    chapter_count_target: int = Field(default=8, ge=3, le=20)
-    chapter_length_target: ChapterLengthTarget = Field(default=ChapterLengthTarget.medium)
+    chapter_count_target: int = Field(default=8, ge=3, le=20)  # Deprecated: outline determines chapters
+    chapter_length_target: ChapterLengthTarget = Field(default=ChapterLengthTarget.medium)  # Deprecated
+
+    # Length and detail controls (new)
+    total_length_preset: TotalLengthPreset = Field(default=TotalLengthPreset.standard)
+    total_target_words: Optional[int] = Field(default=None, ge=MIN_CUSTOM_WORDS, le=MAX_CUSTOM_WORDS)
+    detail_level: DetailLevel = Field(default=DetailLevel.balanced)
 
     include_summary_per_chapter: bool = Field(default=True)
     include_key_takeaways: bool = Field(default=True)
@@ -247,6 +272,16 @@ class StyleConfig(BaseModel):
     callout_blocks: CalloutBlocks = Field(default=CalloutBlocks.tip_warning_note)
     table_preference: TablePreference = Field(default=TablePreference.markdown_tables)
 
+    @model_validator(mode="after")
+    def validate_custom_word_count(self) -> "StyleConfig":
+        """Validate total_target_words is set when preset is custom."""
+        if self.total_length_preset == TotalLengthPreset.custom:
+            if self.total_target_words is None:
+                raise ValueError(
+                    "total_target_words is required when total_length_preset is 'custom'"
+                )
+        return self
+
 
 STYLE_CONFIG_VERSION = 1
 
@@ -264,3 +299,48 @@ class StyleConfigEnvelope(BaseModel):
 def style_config_json_schema() -> dict:
     """Return JSON Schema for StyleConfig (useful for structured outputs)."""
     return StyleConfig.model_json_schema()
+
+
+# Word count targets for each preset
+TOTAL_LENGTH_WORD_TARGETS = {
+    TotalLengthPreset.brief: 2000,
+    TotalLengthPreset.standard: 5000,
+    TotalLengthPreset.comprehensive: 10000,
+}
+
+# Clamp bounds for words per chapter
+MIN_WORDS_PER_CHAPTER = 250
+MAX_WORDS_PER_CHAPTER = 2500
+
+
+def compute_words_per_chapter(
+    total_length_preset: TotalLengthPreset,
+    chapter_count: int,
+    custom_total_words: Optional[int] = None,
+) -> int:
+    """Compute target words per chapter from preset and chapter count.
+
+    Args:
+        total_length_preset: The selected length preset (brief/standard/comprehensive/custom)
+        chapter_count: Number of chapters (from outline)
+        custom_total_words: Custom word count (required when preset is 'custom')
+
+    Returns:
+        Clamped words-per-chapter target (250-2500)
+    """
+    if chapter_count <= 0:
+        return MIN_WORDS_PER_CHAPTER
+
+    # Determine total words based on preset
+    if total_length_preset == TotalLengthPreset.custom:
+        if custom_total_words is None:
+            total_words = 5000  # Fallback to standard if custom but no value
+        else:
+            total_words = custom_total_words
+    else:
+        total_words = TOTAL_LENGTH_WORD_TARGETS.get(total_length_preset, 5000)
+
+    words_per_chapter = round(total_words / chapter_count)
+
+    # Clamp to sensible bounds
+    return max(MIN_WORDS_PER_CHAPTER, min(MAX_WORDS_PER_CHAPTER, words_per_chapter))

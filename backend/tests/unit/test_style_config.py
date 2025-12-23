@@ -8,6 +8,14 @@ from src.models import (
     StyleConfigEnvelope,
     STYLE_CONFIG_VERSION,
 )
+from src.models.style_config import (
+    compute_words_per_chapter,
+    TotalLengthPreset,
+    DetailLevel,
+    TOTAL_LENGTH_WORD_TARGETS,
+    MIN_WORDS_PER_CHAPTER,
+    MAX_WORDS_PER_CHAPTER,
+)
 from src.models.style_config_migrations import migrate_style_config_envelope
 
 
@@ -178,3 +186,199 @@ class TestStyleConfigMigrations:
 
         # Future version should be capped to current
         assert result["version"] == STYLE_CONFIG_VERSION
+
+
+class TestComputeWordsPerChapter:
+    """Tests for compute_words_per_chapter function."""
+
+    def test_standard_preset_8_chapters(self):
+        """Test standard preset (~5000 words) with 8 chapters."""
+        result = compute_words_per_chapter(TotalLengthPreset.standard, 8)
+        # 5000 / 8 = 625
+        assert result == 625
+
+    def test_brief_preset_4_chapters(self):
+        """Test brief preset (~2000 words) with 4 chapters."""
+        result = compute_words_per_chapter(TotalLengthPreset.brief, 4)
+        # 2000 / 4 = 500
+        assert result == 500
+
+    def test_comprehensive_preset_10_chapters(self):
+        """Test comprehensive preset (~10000 words) with 10 chapters."""
+        result = compute_words_per_chapter(TotalLengthPreset.comprehensive, 10)
+        # 10000 / 10 = 1000
+        assert result == 1000
+
+    def test_clamps_to_minimum(self):
+        """Test that result is clamped to minimum (250)."""
+        # 2000 / 20 = 100, should clamp to 250
+        result = compute_words_per_chapter(TotalLengthPreset.brief, 20)
+        assert result == MIN_WORDS_PER_CHAPTER
+
+    def test_clamps_to_maximum(self):
+        """Test that result is clamped to maximum (2500)."""
+        # 10000 / 2 = 5000, should clamp to 2500
+        result = compute_words_per_chapter(TotalLengthPreset.comprehensive, 2)
+        assert result == MAX_WORDS_PER_CHAPTER
+
+    def test_zero_chapters_returns_minimum(self):
+        """Test that 0 chapters returns minimum."""
+        result = compute_words_per_chapter(TotalLengthPreset.standard, 0)
+        assert result == MIN_WORDS_PER_CHAPTER
+
+    def test_negative_chapters_returns_minimum(self):
+        """Test that negative chapters returns minimum."""
+        result = compute_words_per_chapter(TotalLengthPreset.standard, -5)
+        assert result == MIN_WORDS_PER_CHAPTER
+
+    def test_word_targets_constants(self):
+        """Test that word target constants are correct."""
+        assert TOTAL_LENGTH_WORD_TARGETS[TotalLengthPreset.brief] == 2000
+        assert TOTAL_LENGTH_WORD_TARGETS[TotalLengthPreset.standard] == 5000
+        assert TOTAL_LENGTH_WORD_TARGETS[TotalLengthPreset.comprehensive] == 10000
+
+
+class TestStyleConfigLengthAndDetail:
+    """Tests for new length and detail fields in StyleConfig."""
+
+    def test_default_total_length_preset(self):
+        """Test default value for total_length_preset."""
+        config = StyleConfig()
+        assert config.total_length_preset == TotalLengthPreset.standard
+
+    def test_default_detail_level(self):
+        """Test default value for detail_level."""
+        config = StyleConfig()
+        assert config.detail_level == DetailLevel.balanced
+
+    def test_create_with_brief_and_concise(self):
+        """Test creating config with brief + concise."""
+        config = StyleConfig(
+            total_length_preset="brief",
+            detail_level="concise",
+        )
+        assert config.total_length_preset == TotalLengthPreset.brief
+        assert config.detail_level == DetailLevel.concise
+
+    def test_create_with_comprehensive_and_detailed(self):
+        """Test creating config with comprehensive + detailed."""
+        config = StyleConfig(
+            total_length_preset="comprehensive",
+            detail_level="detailed",
+        )
+        assert config.total_length_preset == TotalLengthPreset.comprehensive
+        assert config.detail_level == DetailLevel.detailed
+
+    def test_invalid_total_length_preset(self):
+        """Test that invalid total_length_preset raises ValidationError."""
+        with pytest.raises(ValidationError) as exc_info:
+            StyleConfig(total_length_preset="invalid")
+        assert "total_length_preset" in str(exc_info.value)
+
+    def test_invalid_detail_level(self):
+        """Test that invalid detail_level raises ValidationError."""
+        with pytest.raises(ValidationError) as exc_info:
+            StyleConfig(detail_level="invalid")
+        assert "detail_level" in str(exc_info.value)
+
+
+class TestStyleConfigCustomWordCount:
+    """Tests for custom word count feature."""
+
+    def test_custom_preset_requires_total_target_words(self):
+        """Test that custom preset without total_target_words raises ValidationError."""
+        with pytest.raises(ValidationError) as exc_info:
+            StyleConfig(total_length_preset="custom")
+        assert "total_target_words" in str(exc_info.value)
+
+    def test_custom_preset_with_valid_word_count(self):
+        """Test creating config with custom preset and valid word count."""
+        config = StyleConfig(
+            total_length_preset="custom",
+            total_target_words=7500,
+        )
+        assert config.total_length_preset == TotalLengthPreset.custom
+        assert config.total_target_words == 7500
+
+    def test_custom_preset_at_minimum(self):
+        """Test custom preset at minimum allowed value (800)."""
+        from src.models.style_config import MIN_CUSTOM_WORDS
+        config = StyleConfig(
+            total_length_preset="custom",
+            total_target_words=MIN_CUSTOM_WORDS,
+        )
+        assert config.total_target_words == MIN_CUSTOM_WORDS
+
+    def test_custom_preset_at_maximum(self):
+        """Test custom preset at maximum allowed value (50000)."""
+        from src.models.style_config import MAX_CUSTOM_WORDS
+        config = StyleConfig(
+            total_length_preset="custom",
+            total_target_words=MAX_CUSTOM_WORDS,
+        )
+        assert config.total_target_words == MAX_CUSTOM_WORDS
+
+    def test_custom_preset_below_minimum_raises_error(self):
+        """Test that word count below minimum raises ValidationError."""
+        with pytest.raises(ValidationError):
+            StyleConfig(
+                total_length_preset="custom",
+                total_target_words=500,  # Below MIN_CUSTOM_WORDS (800)
+            )
+
+    def test_custom_preset_above_maximum_raises_error(self):
+        """Test that word count above maximum raises ValidationError."""
+        with pytest.raises(ValidationError):
+            StyleConfig(
+                total_length_preset="custom",
+                total_target_words=100000,  # Above MAX_CUSTOM_WORDS (50000)
+            )
+
+    def test_non_custom_preset_ignores_total_target_words(self):
+        """Test that total_target_words is allowed but ignored for non-custom presets."""
+        config = StyleConfig(
+            total_length_preset="standard",
+            total_target_words=None,
+        )
+        assert config.total_length_preset == TotalLengthPreset.standard
+        assert config.total_target_words is None
+
+
+class TestComputeWordsPerChapterCustom:
+    """Tests for compute_words_per_chapter with custom preset."""
+
+    def test_custom_preset_uses_custom_value(self):
+        """Test that custom preset uses custom_total_words parameter."""
+        result = compute_words_per_chapter(TotalLengthPreset.custom, 5, 7500)
+        # 7500 / 5 = 1500
+        assert result == 1500
+
+    def test_custom_preset_with_none_falls_back_to_standard(self):
+        """Test that custom preset with None falls back to 5000."""
+        result = compute_words_per_chapter(TotalLengthPreset.custom, 5, None)
+        # 5000 / 5 = 1000
+        assert result == 1000
+
+    def test_custom_preset_clamps_to_minimum(self):
+        """Test that custom result is clamped to minimum (250)."""
+        # 1000 / 20 = 50, should clamp to 250
+        result = compute_words_per_chapter(TotalLengthPreset.custom, 20, 1000)
+        assert result == MIN_WORDS_PER_CHAPTER
+
+    def test_custom_preset_clamps_to_maximum(self):
+        """Test that custom result is clamped to maximum (2500)."""
+        # 50000 / 2 = 25000, should clamp to 2500
+        result = compute_words_per_chapter(TotalLengthPreset.custom, 2, 50000)
+        assert result == MAX_WORDS_PER_CHAPTER
+
+    def test_custom_at_lower_bound(self):
+        """Test custom preset at minimum (800 words, 3 chapters)."""
+        result = compute_words_per_chapter(TotalLengthPreset.custom, 3, 800)
+        # 800 / 3 = 267 (within range)
+        assert result == 267
+
+    def test_custom_typical_value(self):
+        """Test custom preset with typical value."""
+        result = compute_words_per_chapter(TotalLengthPreset.custom, 8, 15000)
+        # 15000 / 8 = 1875
+        assert result == 1875
