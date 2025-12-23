@@ -105,15 +105,23 @@ export function Tab3Content() {
     if (chapterCount <= 0) return null
 
     const preset = (styleEnvelope.style.total_length_preset ?? 'standard') as TotalLengthPreset
-    const totalWords = TOTAL_LENGTH_WORD_TARGETS[preset]
-    const wordsPerChapter = computeWordsPerChapter(preset, chapterCount)
+    const customWords = styleEnvelope.style.total_target_words
+
+    let totalWords: number
+    if (preset === 'custom') {
+      totalWords = customWords ?? 5000
+    } else {
+      totalWords = TOTAL_LENGTH_WORD_TARGETS[preset as Exclude<TotalLengthPreset, 'custom'>]
+    }
+
+    const wordsPerChapter = computeWordsPerChapter(preset, chapterCount, customWords)
 
     return {
       chapterCount,
       totalWords,
       wordsPerChapter,
     }
-  }, [validation.outlineCount, styleEnvelope.style.total_length_preset])
+  }, [validation.outlineCount, styleEnvelope.style.total_length_preset, styleEnvelope.style.total_target_words])
 
   const handlePresetChange = useCallback((presetId: string) => {
     dispatch({ type: 'SET_STYLE_PRESET', payload: presetId })

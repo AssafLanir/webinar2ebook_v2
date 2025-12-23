@@ -285,7 +285,13 @@ async def _generate_draft_task(
             total_length_preset = TotalLengthPreset(total_length_preset_str)
         except ValueError:
             total_length_preset = TotalLengthPreset.standard
-        words_per_chapter = compute_words_per_chapter(total_length_preset, len(draft_plan.chapters))
+        # Get custom word count if preset is 'custom'
+        custom_total_words = style_dict.get("total_target_words")
+        words_per_chapter = compute_words_per_chapter(
+            total_length_preset,
+            len(draft_plan.chapters),
+            custom_total_words,
+        )
         detail_level_str = style_dict.get("detail_level", "balanced")
         logger.info(f"Job {job_id}: Target ~{words_per_chapter} words/chapter, detail_level={detail_level_str}")
 
