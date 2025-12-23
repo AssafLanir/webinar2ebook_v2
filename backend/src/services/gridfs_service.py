@@ -154,22 +154,20 @@ async def delete_files_by_metadata(
         Number of files deleted.
     """
     bucket = await get_gridfs_bucket(bucket_name)
-    db = bucket._collection.database
 
-    # Find all matching files
-    files_collection = db[f"{bucket_name}.files"]
-    cursor = files_collection.find(
-        {f"metadata.{k}": v for k, v in metadata_filter.items()},
-        {"_id": 1},
-    )
+    # Build metadata query - bucket.find() queries against GridFS file documents
+    query = {f"metadata.{k}": v for k, v in metadata_filter.items()}
+
+    # Find all matching files using the bucket's find method
+    cursor = bucket.find(query)
 
     deleted_count = 0
-    async for doc in cursor:
+    async for grid_out in cursor:
         try:
-            await bucket.delete(doc["_id"])
+            await bucket.delete(grid_out._id)
             deleted_count += 1
         except Exception as e:
-            logger.error(f"Error deleting file {doc['_id']}: {e}")
+            logger.error(f"Error deleting file {grid_out._id}: {e}")
 
     logger.info(f"Deleted {deleted_count} files matching {metadata_filter}")
     return deleted_count
@@ -189,11 +187,12 @@ async def file_exists(
         True if file exists, False otherwise.
     """
     bucket = await get_gridfs_bucket(bucket_name)
-    db = bucket._collection.database
 
-    files_collection = db[f"{bucket_name}.files"]
     try:
-        count = await files_collection.count_documents({"_id": ObjectId(file_id)})
-        return count > 0
+        # Use bucket.find() to check if file exists
+        cursor = bucket.find({"_id": ObjectId(file_id)})
+        async for _ in cursor:
+            return True
+        return False
     except Exception:
         return False

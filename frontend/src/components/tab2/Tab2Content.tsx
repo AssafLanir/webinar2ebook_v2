@@ -33,15 +33,21 @@ export function Tab2Content() {
   // Debounced save ref
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Trigger debounced save
+  // Keep a ref to the latest saveProject to avoid stale closure issues
+  const saveProjectRef = useRef(saveProject);
+  useEffect(() => {
+    saveProjectRef.current = saveProject;
+  }, [saveProject]);
+
+  // Trigger debounced save - uses ref to always call latest saveProject
   const debouncedSave = useCallback(() => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
     saveTimeoutRef.current = setTimeout(() => {
-      saveProject();
+      saveProjectRef.current();
     }, SAVE_DEBOUNCE_MS);
-  }, [saveProject]);
+  }, []); // No dependencies - uses ref
 
   // Cleanup on unmount
   useEffect(() => {

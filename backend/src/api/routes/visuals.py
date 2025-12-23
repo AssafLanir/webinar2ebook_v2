@@ -120,8 +120,12 @@ async def serve_asset_content(
 ) -> Response:
     """Serve the binary content of an asset.
 
-    - Verifies asset belongs to the project
+    - Verifies asset belongs to the project via GridFS metadata
     - Returns thumbnail by default, full size if size=full
+
+    Note: We check project ownership via GridFS metadata (set during upload)
+    rather than visualPlan.assets to allow serving immediately after upload,
+    before the frontend saves the project state.
 
     Args:
         project_id: Project ID
@@ -131,38 +135,14 @@ async def serve_asset_content(
     Returns:
         Image binary with appropriate Content-Type header
     """
-    # Verify project exists (will raise ProjectNotFoundError if not)
-    project = await project_service.get_project(project_id)
-
-    # Verify asset belongs to project
-    visual_plan = project.visualPlan
-    if visual_plan and visual_plan.assets:
-        asset_ids = {a.id for a in visual_plan.assets}
-        if asset_id not in asset_ids:
-            return JSONResponse(
-                status_code=404,
-                content=error_response(
-                    "ASSET_NOT_FOUND",
-                    f"Asset '{asset_id}' not found in project",
-                ),
-            )
-    else:
-        return JSONResponse(
-            status_code=404,
-            content=error_response(
-                "ASSET_NOT_FOUND",
-                f"Asset '{asset_id}' not found in project",
-            ),
-        )
-
-    # Get content from GridFS
+    # Get content from GridFS - this also verifies project ownership via metadata
     result = await get_asset_content(project_id, asset_id, variant=size)
     if result is None:
         return JSONResponse(
             status_code=404,
             content=error_response(
-                "ASSET_CONTENT_NOT_FOUND",
-                f"Content for asset '{asset_id}' not found in storage",
+                "ASSET_NOT_FOUND",
+                f"Asset '{asset_id}' not found for project",
             ),
         )
 
