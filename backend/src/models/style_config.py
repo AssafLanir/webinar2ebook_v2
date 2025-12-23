@@ -101,6 +101,20 @@ class ChapterLengthTarget(str, Enum):
     long = "long"
 
 
+class TotalLengthPreset(str, Enum):
+    """Controls overall draft length target."""
+    brief = "brief"  # ~2,000 words
+    standard = "standard"  # ~5,000 words
+    comprehensive = "comprehensive"  # ~10,000 words
+
+
+class DetailLevel(str, Enum):
+    """Controls depth/density of content."""
+    concise = "concise"  # fewer examples, tighter bullets, avoid tangents
+    balanced = "balanced"  # normal explanatory tone
+    detailed = "detailed"  # more examples, step-by-step, frameworks/checklists
+
+
 class FaithfulnessLevel(str, Enum):
     strict = "strict"
     balanced = "balanced"
@@ -210,8 +224,12 @@ class StyleConfig(BaseModel):
 
     # Structure and pacing
     book_format: BookFormat = Field(default=BookFormat.guide)
-    chapter_count_target: int = Field(default=8, ge=3, le=20)
-    chapter_length_target: ChapterLengthTarget = Field(default=ChapterLengthTarget.medium)
+    chapter_count_target: int = Field(default=8, ge=3, le=20)  # Deprecated: outline determines chapters
+    chapter_length_target: ChapterLengthTarget = Field(default=ChapterLengthTarget.medium)  # Deprecated
+
+    # Length and detail controls (new)
+    total_length_preset: TotalLengthPreset = Field(default=TotalLengthPreset.standard)
+    detail_level: DetailLevel = Field(default=DetailLevel.balanced)
 
     include_summary_per_chapter: bool = Field(default=True)
     include_key_takeaways: bool = Field(default=True)
@@ -264,3 +282,38 @@ class StyleConfigEnvelope(BaseModel):
 def style_config_json_schema() -> dict:
     """Return JSON Schema for StyleConfig (useful for structured outputs)."""
     return StyleConfig.model_json_schema()
+
+
+# Word count targets for each preset
+TOTAL_LENGTH_WORD_TARGETS = {
+    TotalLengthPreset.brief: 2000,
+    TotalLengthPreset.standard: 5000,
+    TotalLengthPreset.comprehensive: 10000,
+}
+
+# Clamp bounds for words per chapter
+MIN_WORDS_PER_CHAPTER = 250
+MAX_WORDS_PER_CHAPTER = 2500
+
+
+def compute_words_per_chapter(
+    total_length_preset: TotalLengthPreset,
+    chapter_count: int,
+) -> int:
+    """Compute target words per chapter from preset and chapter count.
+
+    Args:
+        total_length_preset: The selected length preset (brief/standard/comprehensive)
+        chapter_count: Number of chapters (from outline)
+
+    Returns:
+        Clamped words-per-chapter target (250-2500)
+    """
+    if chapter_count <= 0:
+        return MIN_WORDS_PER_CHAPTER
+
+    total_words = TOTAL_LENGTH_WORD_TARGETS.get(total_length_preset, 5000)
+    words_per_chapter = round(total_words / chapter_count)
+
+    # Clamp to sensible bounds
+    return max(MIN_WORDS_PER_CHAPTER, min(MAX_WORDS_PER_CHAPTER, words_per_chapter))

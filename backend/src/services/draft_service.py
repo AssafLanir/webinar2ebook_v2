@@ -29,6 +29,11 @@ from src.models import (
     DraftRegenerateData,
     GenerationProgress,
 )
+from src.models.style_config import (
+    compute_words_per_chapter,
+    TotalLengthPreset,
+    DetailLevel,
+)
 
 from .job_store import get_job_store, get_job, update_job
 from .prompts import (
@@ -273,6 +278,17 @@ async def _generate_draft_task(
         await update_job(job_id, status=JobStatus.generating)
         logger.info(f"Job {job_id}: Starting generation phase ({len(draft_plan.chapters)} chapters)")
 
+        # Compute words per chapter based on style config and chapter count
+        style_dict = request.style_config.get("style", request.style_config) if isinstance(request.style_config, dict) else {}
+        total_length_preset_str = style_dict.get("total_length_preset", "standard")
+        try:
+            total_length_preset = TotalLengthPreset(total_length_preset_str)
+        except ValueError:
+            total_length_preset = TotalLengthPreset.standard
+        words_per_chapter = compute_words_per_chapter(total_length_preset, len(draft_plan.chapters))
+        detail_level_str = style_dict.get("detail_level", "balanced")
+        logger.info(f"Job {job_id}: Target ~{words_per_chapter} words/chapter, detail_level={detail_level_str}")
+
         chapters_completed: list[str] = []
 
         for i, chapter_plan in enumerate(draft_plan.chapters):
@@ -297,6 +313,8 @@ async def _generate_draft_task(
                 style_config=request.style_config,
                 chapters_completed=chapters_completed,
                 all_chapters=draft_plan.chapters,
+                words_per_chapter_target=words_per_chapter,
+                detail_level=detail_level_str,
             )
 
             chapters_completed.append(chapter_md)
@@ -446,6 +464,8 @@ async def generate_chapter(
     style_config: dict,
     chapters_completed: list[str],
     all_chapters: list[ChapterPlan],
+    words_per_chapter_target: int = 625,
+    detail_level: str = "balanced",
 ) -> str:
     """Generate a single chapter using LLM.
 
@@ -456,6 +476,8 @@ async def generate_chapter(
         style_config: StyleConfig dict.
         chapters_completed: Previously completed chapters (for context).
         all_chapters: All chapter plans (for next chapter preview).
+        words_per_chapter_target: Target word count for this chapter.
+        detail_level: Detail level (concise/balanced/detailed).
 
     Returns:
         Generated chapter markdown.
@@ -481,6 +503,8 @@ async def generate_chapter(
         book_title=book_title,
         chapter_number=chapter_plan.chapter_number,
         style_config=style_dict,
+        words_per_chapter_target=words_per_chapter_target,
+        detail_level=detail_level,
     )
     user_prompt = build_chapter_user_prompt(
         chapter_plan=chapter_plan,

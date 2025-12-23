@@ -10,7 +10,8 @@ import { DraftPreviewModal } from './DraftPreviewModal'
 import { useDraftGeneration } from '../../hooks/useDraftGeneration'
 import { STYLE_PRESETS } from '../../constants/stylePresets'
 import { downloadAsMarkdown, downloadAsText } from '../../utils/draftExport'
-import type { StyleConfig, StyleConfigEnvelope } from '../../types/style'
+import type { StyleConfig, StyleConfigEnvelope, TotalLengthPreset } from '../../types/style'
+import { computeWordsPerChapter, TOTAL_LENGTH_WORD_TARGETS } from '../../types/style'
 import type { DraftGenerateRequest } from '../../types/draft'
 import { DEFAULT_STYLE_CONFIG } from '../../types/project'
 
@@ -97,6 +98,22 @@ export function Tab3Content() {
       outlineCount,
     }
   }, [project?.transcriptText, project?.outlineItems])
+
+  // Compute words per chapter hint
+  const lengthHint = useMemo(() => {
+    const chapterCount = validation.outlineCount
+    if (chapterCount <= 0) return null
+
+    const preset = (styleEnvelope.style.total_length_preset ?? 'standard') as TotalLengthPreset
+    const totalWords = TOTAL_LENGTH_WORD_TARGETS[preset]
+    const wordsPerChapter = computeWordsPerChapter(preset, chapterCount)
+
+    return {
+      chapterCount,
+      totalWords,
+      wordsPerChapter,
+    }
+  }, [validation.outlineCount, styleEnvelope.style.total_length_preset])
 
   const handlePresetChange = useCallback((presetId: string) => {
     dispatch({ type: 'SET_STYLE_PRESET', payload: presetId })
@@ -290,6 +307,12 @@ export function Tab3Content() {
                 config={styleEnvelope.style}
                 onChange={handleStyleChange}
               />
+              {/* Words per chapter hint */}
+              {lengthHint && (
+                <p className="mt-4 text-xs text-slate-500">
+                  Outline has {lengthHint.chapterCount} chapters → targeting ~{lengthHint.wordsPerChapter.toLocaleString()} words/chapter (approx.)
+                </p>
+              )}
             </div>
           )}
         </div>

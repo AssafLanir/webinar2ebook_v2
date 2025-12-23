@@ -1,4 +1,4 @@
-import type { StyleConfig } from '../../types/style'
+import type { StyleConfig, TotalLengthPreset, DetailLevel } from '../../types/style'
 import { Select } from '../common/Select'
 
 export interface StyleControlsProps {
@@ -31,15 +31,35 @@ const bookFormatOptions = [
   { value: 'whitepaper', label: 'Whitepaper' },
 ]
 
-const chapterLengthOptions = [
-  { value: 'short', label: 'Short' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'long', label: 'Long' },
+const totalLengthOptions = [
+  { value: 'brief', label: 'Brief (~2,000 words)' },
+  { value: 'standard', label: 'Standard (~5,000 words)' },
+  { value: 'comprehensive', label: 'Comprehensive (~10,000 words)' },
+]
+
+const detailLevelOptions = [
+  { value: 'concise', label: 'Concise' },
+  { value: 'balanced', label: 'Balanced' },
+  { value: 'detailed', label: 'Detailed' },
 ]
 
 export function StyleControls({ config, onChange }: StyleControlsProps) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <Select
+        label="Total Draft Length"
+        value={config.total_length_preset ?? 'standard'}
+        onChange={value => onChange({ total_length_preset: value as TotalLengthPreset })}
+        options={totalLengthOptions}
+      />
+
+      <Select
+        label="Detail Level"
+        value={config.detail_level ?? 'balanced'}
+        onChange={value => onChange({ detail_level: value as DetailLevel })}
+        options={detailLevelOptions}
+      />
+
       <Select
         label="Target Audience"
         value={config.target_audience ?? 'mixed'}
@@ -60,28 +80,6 @@ export function StyleControls({ config, onChange }: StyleControlsProps) {
         onChange={value => onChange({ book_format: value as StyleConfig['book_format'] })}
         options={bookFormatOptions}
       />
-
-      <Select
-        label="Chapter Length"
-        value={config.chapter_length_target ?? 'medium'}
-        onChange={value => onChange({ chapter_length_target: value as StyleConfig['chapter_length_target'] })}
-        options={chapterLengthOptions}
-      />
-
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Target Chapters
-        </label>
-        <input
-          type="number"
-          min={1}
-          max={30}
-          value={config.chapter_count_target ?? 8}
-          onChange={e => onChange({ chapter_count_target: parseInt(e.target.value) || 8 })}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm
-            focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-        />
-      </div>
     </div>
   )
 }

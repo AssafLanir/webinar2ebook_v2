@@ -33,6 +33,29 @@ export type BookFormat =
 
 export type ChapterLengthTarget = "short" | "medium" | "long";
 
+// Length and detail controls (new)
+export type TotalLengthPreset = "brief" | "standard" | "comprehensive";
+export type DetailLevel = "concise" | "balanced" | "detailed";
+
+// Word count targets for each preset
+export const TOTAL_LENGTH_WORD_TARGETS: Record<TotalLengthPreset, number> = {
+  brief: 2000,
+  standard: 5000,
+  comprehensive: 10000,
+};
+
+// Helper to compute words per chapter
+export function computeWordsPerChapter(
+  totalLengthPreset: TotalLengthPreset,
+  chapterCount: number
+): number {
+  if (chapterCount <= 0) return 250;
+  const totalWords = TOTAL_LENGTH_WORD_TARGETS[totalLengthPreset] ?? 5000;
+  const wordsPerChapter = Math.round(totalWords / chapterCount);
+  // Clamp to [250, 2500]
+  return Math.max(250, Math.min(2500, wordsPerChapter));
+}
+
 export type FaithfulnessLevel = "strict" | "balanced" | "creative";
 export type AllowedExtrapolation = "none" | "light" | "moderate";
 export type SourcePolicy = "transcript_only" | "transcript_plus_provided_resources";
@@ -65,8 +88,12 @@ export interface StyleConfig {
   reading_level?: ReadingLevel;
 
   book_format: BookFormat;
-  chapter_count_target?: number; // 3..20
-  chapter_length_target?: ChapterLengthTarget;
+  chapter_count_target?: number; // 3..20 (deprecated: outline determines chapters)
+  chapter_length_target?: ChapterLengthTarget; // deprecated
+
+  // Length and detail controls (new)
+  total_length_preset?: TotalLengthPreset;
+  detail_level?: DetailLevel;
 
   include_summary_per_chapter?: boolean;
   include_key_takeaways?: boolean;
