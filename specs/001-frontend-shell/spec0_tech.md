@@ -35,6 +35,20 @@ This document is a repo-wide tech reference used across specs (including Spec 3)
   - Local MongoDB container, or
   - Simple JSON/SQLite-based storage for Projects
 
+### Binary Asset Storage (Spec 005+)
+- Store uploaded image binaries in **MongoDB GridFS** (original + thumbnail variants)
+- Use **Pillow** for image processing:
+  - Thumbnail generation (max 512px, preserve aspect ratio)
+  - Format: PNG if alpha channel present, else JPEG (~85 quality)
+  - Compute `sha256` hash on upload (optional dedupe, P2)
+- Serve assets via **project-scoped endpoint** (security precedent):
+  ```
+  GET /api/projects/{project_id}/visuals/assets/{asset_id}/content?size=thumb|full
+  ```
+  - Backend must verify `asset_id` is referenced by that project's `visualPlan.assets`
+  - 404 if not found or not owned by the project
+- Visuals data model: see `specs/005-tab2-visuals/spec.md` Section 5 (Data Model)
+
 ### Background Jobs (Spec 3+ recommended)
 - Redis + RQ (simple) or Celery (heavier) for long-running steps (transcribe/outline/ebook), retries, and status polling.
 
