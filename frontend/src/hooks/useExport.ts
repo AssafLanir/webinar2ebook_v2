@@ -11,7 +11,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import type { ExportState, ExportStatusData } from '../types/export'
+import type { ExportState } from '../types/export'
 import { initialExportState } from '../types/export'
 import {
   startExport as apiStartExport,

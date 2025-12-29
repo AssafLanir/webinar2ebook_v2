@@ -49,8 +49,24 @@ This document is a repo-wide tech reference used across specs (including Spec 3)
   - 404 if not found or not owned by the project
 - Visuals data model: see `specs/005-tab2-visuals/spec.md` Section 5 (Data Model)
 
-### Background Jobs (Spec 3+ recommended)
-- Redis + RQ (simple) or Celery (heavier) for long-running steps (transcribe/outline/ebook), retries, and status polling.
+### PDF Generation (Spec 006+)
+- **WeasyPrint** for HTML-to-PDF conversion
+  - Requires system dependencies: `cairo`, `pango` (install via Homebrew/apt)
+  - Images embedded as base64 data URIs (avoids HTTP fetching issues)
+  - CSS-based page layout (cover, TOC, chapters, figures)
+
+### Async Job Store (Spec 004+)
+- In-app async job pattern for long-running operations (draft generation, PDF export)
+- **MongoDB-based job store** with TTL indexes for automatic cleanup:
+  - Jobs have states: `pending`, `processing`, `completed`, `failed`, `cancelled`
+  - Progress tracking via polling (1-2s interval)
+  - Cancel support via `cancel_requested` flag checked at operation checkpoints
+  - TTL: 1 hour after completion for cleanup
+- Pattern: `asyncio.create_task()` for background work, job store for state persistence
+- Alternative (not yet used): Redis + RQ or Celery for heavier workloads
+
+### Background Jobs (Future)
+- Redis + RQ (simple) or Celery (heavier) for distributed long-running steps, retries, and worker scaling.
 
 ### Logging & Observability
 - Loguru for structured, ergonomic logging

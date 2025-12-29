@@ -1,0 +1,33 @@
+# IDE and editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Temporary files
+/tmp/
+*.tmp
+*.temp
+
+# Export outputs
+/exports/

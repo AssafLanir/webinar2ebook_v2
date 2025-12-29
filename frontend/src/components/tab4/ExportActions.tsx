@@ -10,7 +10,6 @@
 
 import { useCallback } from 'react'
 import { useExport } from '../../hooks/useExport'
-import type { ExportPhase } from '../../types/export'
 
 interface ExportActionsProps {
   projectId: string

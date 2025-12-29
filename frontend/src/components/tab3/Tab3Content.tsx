@@ -533,7 +533,7 @@ export function Tab3Content() {
           <DraftEditor
             value={project.draftText}
             onChange={handleDraftChange}
-            onGenerate={handleGenerateDraft}
+            onGenerate={handleGenerateClick}
           />
         </Card>
       </div>
