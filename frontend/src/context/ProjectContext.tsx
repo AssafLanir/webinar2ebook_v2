@@ -629,12 +629,26 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
       const preview = state.aiPreview.preview
 
       if (preview.type === 'clean-transcript') {
+        // Validate cleaned transcript is not empty to prevent data loss
+        const cleanedText = preview.cleanedTranscript?.trim()
+        if (!cleanedText) {
+          // Don't apply empty/whitespace-only result - keep existing transcript
+          // Close the modal and return unchanged project state
+          return {
+            ...state,
+            aiPreview: {
+              isOpen: false,
+              preview: null,
+            },
+          }
+        }
+
         // Apply cleaned transcript
         return {
           ...state,
           project: {
             ...state.project,
-            transcriptText: preview.cleanedTranscript,
+            transcriptText: cleanedText,
           },
           aiPreview: {
             isOpen: false,
