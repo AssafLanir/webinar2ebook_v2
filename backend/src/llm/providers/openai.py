@@ -97,7 +97,7 @@ class OpenAIProvider(LLMProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        timeout: float = 60.0,
+        timeout: float = 120.0,
         default_model: str = "gpt-4o",
     ):
         """Initialize OpenAI provider.

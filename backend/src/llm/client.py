@@ -39,13 +39,13 @@ class LLMClient:
 
     Configuration (env vars):
     - LLM_DEFAULT_PROVIDER: Default provider (default: "openai")
-    - LLM_TIMEOUT_SECONDS: Request timeout (default: 60)
+    - LLM_TIMEOUT_SECONDS: Request timeout (default: 120)
     - LLM_MAX_RETRIES: Max retries per provider (default: 2)
     """
 
     # Default configuration
     DEFAULT_PROVIDER = "openai"
-    DEFAULT_TIMEOUT = 60.0
+    DEFAULT_TIMEOUT = 120.0  # Increased from 60s to handle longer transcripts
     DEFAULT_MAX_RETRIES = 2
     DEFAULT_BASE_DELAY = 1.0  # Base delay for exponential backoff
     DEFAULT_MAX_DELAY = 30.0  # Maximum delay between retries

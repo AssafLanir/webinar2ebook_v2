@@ -55,7 +55,7 @@ class AnthropicProvider(LLMProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        timeout: float = 60.0,
+        timeout: float = 120.0,
         default_model: str = "claude-sonnet-4-5-20250929",
     ):
         """Initialize Anthropic provider.
