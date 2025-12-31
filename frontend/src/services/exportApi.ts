@@ -119,18 +119,21 @@ export async function getPreview(
 // ============================================================================
 
 /**
- * Start PDF export.
+ * Start PDF or EPUB export.
  *
  * Creates an async job and returns immediately with job ID.
  * Poll /export/status/{job_id} for progress updates.
  *
  * @param projectId - Project ID
+ * @param format - Export format: 'pdf' (default) or 'epub'
  * @returns Job ID and initial status
  */
-export async function startExport(projectId: string): Promise<ExportStartData> {
-  return exportApiRequest<ExportStartData>(`/${projectId}/ebook/export`, {
+export async function startExport(
+  projectId: string,
+  format: 'pdf' | 'epub' = 'pdf'
+): Promise<ExportStartData> {
+  return exportApiRequest<ExportStartData>(`/${projectId}/ebook/export?format=${format}`, {
     method: 'POST',
-    body: JSON.stringify({ format: 'pdf' }),
   })
 }
 
@@ -180,11 +183,11 @@ export function getExportDownloadUrl(projectId: string, jobId: string): string {
 /**
  * Download a completed export.
  *
- * Triggers browser download of the PDF file.
+ * Triggers browser download of the PDF or EPUB file.
  *
  * @param projectId - Project ID
  * @param jobId - Completed job ID
- * @param filename - Suggested filename for download
+ * @param filename - Suggested filename for download (auto-detected from response if not provided)
  */
 export async function downloadExport(
   projectId: string,
@@ -199,8 +202,25 @@ export async function downloadExport(
   if (!response.ok) {
     throw new ApiException(
       'DOWNLOAD_FAILED',
-      `Failed to download PDF: ${response.statusText}`
+      `Failed to download export: ${response.statusText}`
     )
+  }
+
+  // Detect filename from Content-Disposition header if not provided
+  let downloadFilename = filename
+  if (!downloadFilename) {
+    const contentDisposition = response.headers.get('Content-Disposition')
+    if (contentDisposition) {
+      const match = contentDisposition.match(/filename="?([^"]+)"?/)
+      if (match) {
+        downloadFilename = match[1]
+      }
+    }
+    // Fallback based on content type
+    if (!downloadFilename) {
+      const contentType = response.headers.get('Content-Type')
+      downloadFilename = contentType?.includes('epub') ? 'ebook.epub' : 'ebook.pdf'
+    }
   }
 
   const blob = await response.blob()
@@ -209,7 +229,7 @@ export async function downloadExport(
   // Create and click a temporary link to trigger download
   const link = document.createElement('a')
   link.href = downloadUrl
-  link.download = filename || 'ebook.pdf'
+  link.download = downloadFilename
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)

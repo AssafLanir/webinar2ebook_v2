@@ -26,8 +26,8 @@ const POLL_INTERVAL_MS = 1000
 interface UseExportResult {
   /** Current export state */
   state: ExportState
-  /** Start PDF export for a project */
-  startExport: (projectId: string) => Promise<void>
+  /** Start PDF or EPUB export for a project */
+  startExport: (projectId: string, format?: 'pdf' | 'epub') => Promise<void>
   /** Cancel the current export */
   cancelExport: () => Promise<void>
   /** Trigger download for a completed export */
@@ -36,10 +36,13 @@ interface UseExportResult {
   reset: () => void
   /** Whether an export is currently in progress */
   isExporting: boolean
+  /** Current export format (if any) */
+  format: 'pdf' | 'epub' | null
 }
 
 export function useExport(): UseExportResult {
   const [state, setState] = useState<ExportState>(initialExportState)
+  const [format, setFormat] = useState<'pdf' | 'epub' | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const projectIdRef = useRef<string | null>(null)
   const pollingRef = useRef<boolean>(false)
@@ -52,7 +55,7 @@ export function useExport(): UseExportResult {
     }
   }, [])
 
-  const startExport = useCallback(async (projectId: string) => {
+  const startExport = useCallback(async (projectId: string, exportFormat: 'pdf' | 'epub' = 'pdf') => {
     // Cancel any existing export
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
@@ -60,6 +63,7 @@ export function useExport(): UseExportResult {
 
     projectIdRef.current = projectId
     abortControllerRef.current = new AbortController()
+    setFormat(exportFormat)
 
     setState({
       phase: 'starting',
@@ -71,7 +75,7 @@ export function useExport(): UseExportResult {
 
     try {
       // Start the export job
-      const result = await apiStartExport(projectId)
+      const result = await apiStartExport(projectId, exportFormat)
       const jobId = result.job_id
 
       setState({
@@ -223,6 +227,7 @@ export function useExport(): UseExportResult {
     pollingRef.current = false
     abortControllerRef.current?.abort()
     projectIdRef.current = null
+    setFormat(null)
     setState(initialExportState)
   }, [])
 
@@ -235,5 +240,6 @@ export function useExport(): UseExportResult {
     download,
     reset,
     isExporting,
+    format,
   }
 }
