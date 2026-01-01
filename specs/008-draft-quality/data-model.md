@@ -16,10 +16,15 @@ The main quality assessment report for a draft.
 | draft_hash | string | Yes | Hash of draft text for cache invalidation |
 | overall_score | integer | Yes | Overall quality score (1-100) |
 | rubric_scores | RubricScores | Yes | Breakdown by category |
-| issues | QAIssue[] | Yes | List of detected issues |
+| issues | QAIssue[] | Yes | List of detected issues (max 300, see truncation) |
+| issue_counts | IssueCounts | Yes | Counts by severity (always accurate, even if truncated) |
+| truncated | boolean | Yes | True if issues list was capped at max |
+| total_issue_count | integer | Yes | Actual total count (may exceed issues array length) |
 | generated_at | datetime | Yes | When report was generated |
 | analysis_duration_ms | integer | Yes | How long analysis took |
 | version | string | Yes | Schema version for migrations |
+
+**Issue Truncation**: To prevent MongoDB document size issues, the `issues` array is capped at 300 items. When truncated, `truncated=true` and `total_issue_count` shows the real total. The UI should display "Showing 300 of X issues" when truncated. The `issue_counts` object always reflects the true counts regardless of truncation.
 
 ### RubricScores
 
@@ -38,6 +43,16 @@ Breakdown of quality scores by category.
 - 70-89: Good
 - 50-69: Needs improvement
 - 1-49: Poor
+
+### IssueCounts
+
+Aggregated issue counts by severity (always accurate, even when issues list is truncated).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| critical | integer | Yes | Count of critical issues |
+| warning | integer | Yes | Count of warning issues |
+| info | integer | Yes | Count of info issues |
 
 ### QAIssue
 

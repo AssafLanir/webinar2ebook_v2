@@ -4,7 +4,7 @@
   "title": "QA Report",
   "description": "Quality assessment report for an ebook draft",
   "type": "object",
-  "required": ["id", "project_id", "draft_hash", "overall_score", "rubric_scores", "issues", "generated_at", "analysis_duration_ms", "version"],
+  "required": ["id", "project_id", "draft_hash", "overall_score", "rubric_scores", "issues", "issue_counts", "truncated", "total_issue_count", "generated_at", "analysis_duration_ms", "version"],
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -35,7 +35,20 @@
       "items": {
         "$ref": "#/$defs/QAIssue"
       },
-      "description": "List of detected quality issues"
+      "maxItems": 300,
+      "description": "List of detected quality issues (capped at 300)"
+    },
+    "issue_counts": {
+      "$ref": "#/$defs/IssueCounts"
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "True if issues list was capped at max"
+    },
+    "total_issue_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Actual total count (may exceed issues array length)"
     },
     "generated_at": {
       "type": "string",
@@ -53,6 +66,28 @@
     }
   },
   "$defs": {
+    "IssueCounts": {
+      "type": "object",
+      "required": ["critical", "warning", "info"],
+      "additionalProperties": false,
+      "properties": {
+        "critical": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of critical issues"
+        },
+        "warning": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of warning issues"
+        },
+        "info": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of info issues"
+        }
+      }
+    },
     "RubricScores": {
       "type": "object",
       "required": ["structure", "clarity", "faithfulness", "repetition", "completeness"],

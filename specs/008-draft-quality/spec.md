@@ -118,8 +118,8 @@ As a developer, I want a regression suite with golden projects that can regenera
 **Issue Detection**
 - **FR-006**: System MUST detect repeated phrases/sentences across chapters (3+ word sequences appearing 3+ times)
 - **FR-007**: System MUST detect structural issues: improper heading hierarchy, unbalanced chapters (>3x length variance), paragraphs over 300 words
-- **FR-008**: System MUST detect potential hallucinations by comparing claims against source transcript/resources
-- **FR-009**: System MUST detect clarity issues: sentences over 50 words, excessive passive voice (>30% of sentences)
+- **FR-008**: System MUST flag potentially unsupported claims by comparing against source transcript/resources, labeling them as "needs review"
+- **FR-009**: System MUST detect clarity issues: sentences over 50 words, flag sections with heavy passive voice usage
 
 **UI Display**
 - **FR-010**: System MUST display QA summary badge in Tab3 showing issue count

@@ -8,7 +8,7 @@ paths:
   /api/projects/{project_id}/qa/analyze:
     post:
       summary: Trigger QA analysis
-      description: Analyzes the draft and generates a QA report
+      description: Starts async QA analysis and returns a job_id for polling
       operationId: analyzeQuality
       parameters:
         - name: project_id
@@ -18,13 +18,43 @@ paths:
             type: string
       responses:
         '200':
-          description: Analysis completed or started
+          description: Analysis job started
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AnalyzeResponse'
         '404':
           description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/projects/{project_id}/qa/status/{job_id}:
+    get:
+      summary: Get QA job status
+      description: Returns the status of a QA analysis job
+      operationId: getQAJobStatus
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QAJobStatusResponse'
+        '404':
+          description: Job not found
           content:
             application/json:
               schema:
@@ -87,13 +117,40 @@ components:
       required: [data, error]
       properties:
         data:
-          oneOf:
-            - $ref: '#/components/schemas/QAReport'
-            - type: object
-              properties:
-                job_id:
-                  type: string
-                  description: Job ID for async analysis
+          type: object
+          required: [job_id]
+          properties:
+            job_id:
+              type: string
+              description: Job ID for polling status
+          nullable: true
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    QAJobStatusResponse:
+      type: object
+      required: [data, error]
+      properties:
+        data:
+          type: object
+          required: [job_id, status]
+          properties:
+            job_id:
+              type: string
+            status:
+              type: string
+              enum: [pending, running, completed, failed]
+            progress:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: Progress percentage (0-100)
+            report:
+              $ref: '#/components/schemas/QAReport'
+              description: Present when status is completed
+            error_message:
+              type: string
+              description: Present when status is failed
           nullable: true
         error:
           $ref: '#/components/schemas/ErrorDetail'
@@ -141,7 +198,7 @@ components:
 
     QAReport:
       type: object
-      required: [id, project_id, draft_hash, overall_score, rubric_scores, issues, generated_at, analysis_duration_ms, version]
+      required: [id, project_id, draft_hash, overall_score, rubric_scores, issues, issue_counts, truncated, total_issue_count, generated_at, analysis_duration_ms, version]
       properties:
         id:
           type: string
@@ -157,8 +214,18 @@ components:
           $ref: '#/components/schemas/RubricScores'
         issues:
           type: array
+          maxItems: 300
           items:
             $ref: '#/components/schemas/QAIssue'
+        issue_counts:
+          $ref: '#/components/schemas/IssueCounts'
+        truncated:
+          type: boolean
+          description: True if issues list was capped at max
+        total_issue_count:
+          type: integer
+          minimum: 0
+          description: Actual total count (may exceed issues array length)
         generated_at:
           type: string
           format: date-time
@@ -166,6 +233,20 @@ components:
           type: integer
         version:
           type: string
+
+    IssueCounts:
+      type: object
+      required: [critical, warning, info]
+      properties:
+        critical:
+          type: integer
+          minimum: 0
+        warning:
+          type: integer
+          minimum: 0
+        info:
+          type: integer
+          minimum: 0
 
     RubricScores:
       type: object

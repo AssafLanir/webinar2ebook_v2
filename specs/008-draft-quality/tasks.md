@@ -29,7 +29,7 @@
 
 **⚠️ CRITICAL**: Both QA Report and UI stories depend on these models
 
-- [ ] T003 Create QAReport, QAIssue, RubricScores models in backend/src/models/qa_report.py
+- [ ] T003 Create QAReport, QAIssue, RubricScores, IssueCounts models in backend/src/models/qa_report.py (include truncated, total_issue_count fields)
 - [ ] T004 [P] Add qaReport field to Project model in backend/src/models/project.py
 - [ ] T005 [P] Create schema contract tests in backend/tests/unit/test_qa_models.py
 
@@ -59,12 +59,13 @@
 - [ ] T012 [P] [US1] Implement chapter balance analysis in backend/src/services/qa_structural.py
 - [ ] T013 [US1] Implement faithfulness scoring (LLM-based) in backend/src/services/qa_semantic.py
 - [ ] T014 [US1] Implement clarity assessment (LLM-based) in backend/src/services/qa_semantic.py
-- [ ] T015 [US1] Create QA evaluator service combining structural + semantic in backend/src/services/qa_evaluator.py
-- [ ] T016 [US1] Create QA API routes (analyze, get report) in backend/src/api/routes/qa.py
-- [ ] T017 [US1] Register QA routes in backend/src/api/main.py
-- [ ] T018 [US1] Integrate QA auto-trigger after draft completion in backend/src/services/draft_service.py
-- [ ] T019 [US1] Implement unit tests (make tests pass) in backend/tests/unit/test_qa_structural.py
-- [ ] T020 [US1] Implement integration tests (make tests pass) in backend/tests/integration/test_qa_api.py
+- [ ] T015 [US1] Create QA evaluator service combining structural + semantic in backend/src/services/qa_evaluator.py (cap issues at 300, compute issue_counts, set truncated flag)
+- [ ] T016 [US1] Create QA job store for async job tracking in backend/src/services/qa_job_store.py (reuse pattern from draft_service)
+- [ ] T017 [US1] Create QA API routes (analyze → job_id, status/{job_id}, report) in backend/src/api/routes/qa.py
+- [ ] T018 [US1] Register QA routes in backend/src/api/main.py
+- [ ] T019 [US1] Integrate QA auto-trigger after draft completion in backend/src/services/draft_service.py
+- [ ] T020 [US1] Implement unit tests (make tests pass) in backend/tests/unit/test_qa_structural.py
+- [ ] T021 [US1] Implement integration tests (make tests pass) in backend/tests/integration/test_qa_api.py
 
 **Checkpoint**: QA reports generate automatically after draft completion. Can test via API.
 
@@ -78,13 +79,13 @@
 
 ### Implementation for User Story 2
 
-- [ ] T021 [P] [US2] Create QA API client in frontend/src/services/qaApi.ts
-- [ ] T022 [P] [US2] Create useQA hook for state management in frontend/src/hooks/useQA.ts
-- [ ] T023 [US2] Create QAIssueList component in frontend/src/components/tab3/QAIssueList.tsx
-- [ ] T024 [US2] Create QAPanel component with badge and expandable list in frontend/src/components/tab3/QAPanel.tsx
-- [ ] T025 [US2] Integrate QAPanel into Tab3Content in frontend/src/components/tab3/Tab3Content.tsx
-- [ ] T026 [US2] Add severity icons and color coding to issue display
-- [ ] T027 [US2] Test QA panel displays correctly after draft generation
+- [ ] T022 [P] [US2] Create QA API client in frontend/src/services/qaApi.ts (include polling for job status)
+- [ ] T023 [P] [US2] Create useQA hook for state management in frontend/src/hooks/useQA.ts
+- [ ] T024 [US2] Create QAIssueList component in frontend/src/components/tab3/QAIssueList.tsx (handle truncated display)
+- [ ] T025 [US2] Create QAPanel component with badge and expandable list in frontend/src/components/tab3/QAPanel.tsx
+- [ ] T026 [US2] Integrate QAPanel into Tab3Content in frontend/src/components/tab3/Tab3Content.tsx
+- [ ] T027 [US2] Add severity icons and color coding to issue display
+- [ ] T028 [US2] Test QA panel displays correctly after draft generation
 
 **Checkpoint**: QA results visible in Tab3 UI. MVP complete (US1 + US2).
 
@@ -98,18 +99,18 @@
 
 ### Tests for User Story 3
 
-- [ ] T028 [P] [US3] Create unit tests for editor pass in backend/tests/unit/test_editor_pass.py
-- [ ] T029 [P] [US3] Create integration tests for improve endpoint in backend/tests/integration/test_editor_pass_api.py
+- [ ] T029 [P] [US3] Create unit tests for editor pass in backend/tests/unit/test_editor_pass.py
+- [ ] T030 [P] [US3] Create integration tests for improve endpoint in backend/tests/integration/test_editor_pass_api.py
 
 ### Implementation for User Story 3
 
-- [ ] T030 [US3] Create EditorPassResult model in backend/src/models/qa_report.py
-- [ ] T031 [US3] Implement editor pass service in backend/src/services/editor_pass.py
-- [ ] T032 [US3] Add improve endpoint to QA routes in backend/src/api/routes/qa.py
-- [ ] T033 [US3] Add faithfulness verification after edit in backend/src/services/editor_pass.py
-- [ ] T034 [US3] Add "Run Improve Pass" button to QAPanel in frontend/src/components/tab3/QAPanel.tsx
-- [ ] T035 [US3] Create before/after diff view component in frontend/src/components/tab3/DraftDiffView.tsx
-- [ ] T036 [US3] Implement editor pass tests (make tests pass)
+- [ ] T031 [US3] Create EditorPassResult model in backend/src/models/qa_report.py
+- [ ] T032 [US3] Implement editor pass service in backend/src/services/editor_pass.py
+- [ ] T033 [US3] Add improve endpoint to QA routes in backend/src/api/routes/qa.py
+- [ ] T034 [US3] Add faithfulness verification after edit in backend/src/services/editor_pass.py
+- [ ] T035 [US3] Add "Run Improve Pass" button to QAPanel in frontend/src/components/tab3/QAPanel.tsx
+- [ ] T036 [US3] Create before/after diff view component in frontend/src/components/tab3/DraftDiffView.tsx
+- [ ] T037 [US3] Implement editor pass tests (make tests pass)
 
 **Checkpoint**: Editor pass available and reduces issues without breaking faithfulness.
 
@@ -123,11 +124,11 @@
 
 ### Implementation for User Story 4
 
-- [ ] T037 [P] [US4] Create golden projects fixture at specs/008-draft-quality/fixtures/golden_projects.json
-- [ ] T038 [US4] Create regression test runner in backend/tests/fixtures/test_qa_regression.py
-- [ ] T039 [US4] Implement score comparison with tolerance in regression runner
-- [ ] T040 [US4] Add CI-compatible output (pass/fail status)
-- [ ] T041 [US4] Document regression suite usage in specs/008-draft-quality/quickstart.md
+- [ ] T038 [P] [US4] Create golden projects fixture at specs/008-draft-quality/fixtures/golden_projects.json
+- [ ] T039 [US4] Create regression test runner in backend/tests/fixtures/test_qa_regression.py
+- [ ] T040 [US4] Implement score comparison with tolerance in regression runner
+- [ ] T041 [US4] Add CI-compatible output (pass/fail status)
+- [ ] T042 [US4] Document regression suite usage in specs/008-draft-quality/quickstart.md
 
 **Checkpoint**: Regression suite runnable in CI, catches quality regressions.
 
@@ -137,10 +138,10 @@
 
 **Purpose**: Validation and cleanup
 
-- [ ] T042 Run all backend tests: `python -m pytest backend/tests/ -v`
-- [ ] T043 Run frontend build: `npm run build`
-- [ ] T044 Run quickstart.md validation (manual QA test in browser)
-- [ ] T045 [P] Code review and cleanup
+- [ ] T043 Run all backend tests: `python -m pytest backend/tests/ -v`
+- [ ] T044 Run frontend build: `npm run build`
+- [ ] T045 Run quickstart.md validation (manual QA test in browser)
+- [ ] T046 [P] Code review and cleanup
 
 ---
 
@@ -168,10 +169,12 @@
 1. Tests first (T006-T008) - should fail initially
 2. Parallel structural analysis (T009-T012) - no dependencies on each other
 3. Sequential semantic analysis (T013-T014) - depends on LLM patterns
-4. Evaluator service (T015) - combines T009-T014
-5. API routes (T016-T017) - depends on T015
-6. Draft integration (T018) - depends on T016
-7. Make tests pass (T019-T020)
+4. Evaluator service (T015) - combines T009-T014, caps issues at 300
+5. Job store (T016) - async job tracking pattern
+6. API routes (T017) - depends on T015, T016
+7. Route registration (T018) - depends on T017
+8. Draft integration (T019) - depends on T017
+9. Make tests pass (T020-T021)
 
 ### Parallel Opportunities
 
@@ -186,7 +189,7 @@ T009 (repetition) || T010 (headings) || T011 (paragraphs) || T012 (balance)
 T006 (structural tests) || T007 (semantic tests) || T008 (API tests)
 
 # US2 frontend parallel:
-T021 (API client) || T022 (hook)
+T022 (API client) || T023 (hook)
 ```
 
 ---
@@ -197,17 +200,17 @@ T021 (API client) || T022 (hook)
 
 1. Complete Phase 1: Setup (T001-T002)
 2. Complete Phase 2: Foundational (T003-T005)
-3. Complete Phase 3: US1 QA Report (T006-T020)
-4. Complete Phase 4: US2 QA UI (T021-T027)
+3. Complete Phase 3: US1 QA Report (T006-T021)
+4. Complete Phase 4: US2 QA UI (T022-T028)
 5. **STOP and VALIDATE**: Test QA in browser
 6. MVP complete - users can see quality reports!
 
 ### Full Feature (US1 + US2 + US3 + US4)
 
 1. Complete MVP (Phases 1-4)
-2. Complete Phase 5: US3 Editor Pass (T028-T036)
-3. Complete Phase 6: US4 Regression Suite (T037-T041)
-4. Complete Phase 7: Polish (T042-T045)
+2. Complete Phase 5: US3 Editor Pass (T029-T037)
+3. Complete Phase 6: US4 Regression Suite (T038-T042)
+4. Complete Phase 7: Polish (T043-T046)
 5. Full feature ready for deployment
 
 ---
@@ -224,6 +227,7 @@ T021 (API client) || T022 (hook)
 | backend/src/services/qa_structural.py | NEW | US1 |
 | backend/src/services/qa_semantic.py | NEW | US1 |
 | backend/src/services/qa_evaluator.py | NEW | US1 |
+| backend/src/services/qa_job_store.py | NEW | US1 |
 | backend/src/api/routes/qa.py | NEW | US1 |
 | backend/src/api/main.py | UPDATE | US1 |
 | backend/src/services/draft_service.py | UPDATE | US1 |
@@ -244,5 +248,7 @@ T021 (API client) || T022 (hook)
 - [US1/US2/US3/US4] label maps task to user story for traceability
 - Hybrid approach: regex for structural (fast), LLM for semantic (accurate)
 - QA report stored in project.qaReport field (no new collection)
+- Issue list capped at 300 items to prevent MongoDB document bloat; issue_counts always accurate
+- Always-async: analyze returns job_id, poll status/{job_id} for completion
 - Editor pass bounded to single pass to prevent content drift
 - Regression suite uses tolerance ranges for natural variation
