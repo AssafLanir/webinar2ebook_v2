@@ -214,9 +214,13 @@ class EpubGenerator:
             self._set_spine()
 
             # Write EPUB file (sync operation, run in thread pool)
+            # Disable epub3_pages to avoid lxml parsing issues with nav item
             await update_export_job(self.job_id, progress=95)
+            write_options = {
+                'epub3_pages': False,  # Avoid page list generation errors
+            }
             await asyncio.to_thread(
-                epub.write_epub, str(epub_path), self.book
+                epub.write_epub, str(epub_path), self.book, write_options
             )
 
             await update_export_job(self.job_id, progress=100)
@@ -295,7 +299,7 @@ class EpubGenerator:
             file_name="cover.xhtml",
             lang="en",
         )
-        cover.content = cover_content
+        cover.content = cover_content.encode("utf-8")
         self.book.add_item(cover)
         self.chapters.insert(0, cover)  # Cover is first
 
@@ -362,7 +366,7 @@ class EpubGenerator:
                 file_name=f"chapter_{i+1:02d}.xhtml",
                 lang="en",
             )
-            chapter.content = chapter_content
+            chapter.content = chapter_content.encode("utf-8")
             self.book.add_item(chapter)
             self.chapters.append(chapter)
 
