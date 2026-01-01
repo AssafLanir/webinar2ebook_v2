@@ -4,6 +4,8 @@ Provides:
 - Thumbnail generation (max 512px)
 - SHA-256 hash computation
 - Image dimension extraction
+- EPUB image conversion (WebP → JPEG/PNG)
+- EPUB image optimization (downscale large images)
 """
 
 from __future__ import annotations
@@ -155,3 +157,145 @@ def normalize_media_type(media_type: str) -> str:
     if media_type.lower() == "image/jpg":
         return "image/jpeg"
     return media_type.lower()
+
+
+# =============================================================================
+# EPUB Image Conversion (Spec 007)
+# =============================================================================
+
+# Maximum dimension (width or height) for EPUB images
+# Keeps file size reasonable while maintaining quality
+MAX_EPUB_DIMENSION = 1600
+
+# JPEG quality for EPUB images
+EPUB_JPEG_QUALITY = 85
+
+
+def convert_for_epub(image_bytes: bytes, mime_type: str) -> Tuple[bytes, str]:
+    """Convert image to EPUB-compatible format if needed.
+
+    EPUB 3.0 supports: JPEG, PNG, GIF, SVG
+    WebP is not universally supported by e-readers.
+
+    Args:
+        image_bytes: Raw image bytes
+        mime_type: Original MIME type (e.g., "image/webp")
+
+    Returns:
+        Tuple of (converted_bytes, new_mime_type)
+    """
+    # Pass through already-compatible formats
+    if mime_type in ("image/jpeg", "image/png", "image/gif"):
+        return image_bytes, mime_type
+
+    # Convert WebP or other formats
+    with Image.open(io.BytesIO(image_bytes)) as img:
+        # Optimize size first
+        img = optimize_epub_image_size(img)
+
+        output = io.BytesIO()
+
+        # Use PNG if image has alpha channel, otherwise JPEG
+        if _has_alpha(img):
+            # Convert to RGBA if needed for PNG with alpha
+            if img.mode not in ("RGBA", "LA"):
+                img = img.convert("RGBA")
+            img.save(output, format="PNG", optimize=True)
+            return output.getvalue(), "image/png"
+        else:
+            # Convert to RGB for JPEG (handles RGBA, P, L, etc.)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(output, format="JPEG", quality=EPUB_JPEG_QUALITY, optimize=True)
+            return output.getvalue(), "image/jpeg"
+
+
+def optimize_epub_image_size(img: Image.Image) -> Image.Image:
+    """Downscale large images for reasonable EPUB file size.
+
+    Images larger than MAX_EPUB_DIMENSION in either dimension are
+    scaled down while preserving aspect ratio.
+
+    Args:
+        img: PIL Image object
+
+    Returns:
+        Optimized PIL Image object (may be the same object if no resize needed)
+    """
+    if max(img.size) > MAX_EPUB_DIMENSION:
+        # thumbnail() modifies in place and preserves aspect ratio
+        img.thumbnail((MAX_EPUB_DIMENSION, MAX_EPUB_DIMENSION), Image.Resampling.LANCZOS)
+    return img
+
+
+def optimize_and_convert_for_epub(image_bytes: bytes, mime_type: str) -> Tuple[bytes, str]:
+    """Optimize and convert image for EPUB in one step.
+
+    Combines size optimization and format conversion.
+
+    Args:
+        image_bytes: Raw image bytes
+        mime_type: Original MIME type
+
+    Returns:
+        Tuple of (optimized_bytes, new_mime_type)
+    """
+    # If already compatible, just optimize size if needed
+    if mime_type in ("image/jpeg", "image/png", "image/gif"):
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            # Check if optimization is needed
+            if max(img.size) <= MAX_EPUB_DIMENSION:
+                return image_bytes, mime_type
+
+            # Optimize size
+            img = optimize_epub_image_size(img)
+            output = io.BytesIO()
+
+            if mime_type == "image/jpeg":
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                img.save(output, format="JPEG", quality=EPUB_JPEG_QUALITY, optimize=True)
+            elif mime_type == "image/png":
+                img.save(output, format="PNG", optimize=True)
+            else:  # GIF
+                img.save(output, format="GIF")
+
+            return output.getvalue(), mime_type
+
+    # Convert and optimize WebP/other formats
+    return convert_for_epub(image_bytes, mime_type)
+
+
+def get_epub_image_extension(mime_type: str) -> str:
+    """Get file extension for a MIME type (EPUB context).
+
+    Args:
+        mime_type: Image MIME type
+
+    Returns:
+        File extension without dot (e.g., "jpg", "png")
+    """
+    extensions = {
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/gif": "gif",
+        "image/webp": "webp",
+        "image/svg+xml": "svg",
+    }
+    return extensions.get(mime_type, "jpg")
+
+
+def _has_alpha(img: Image.Image) -> bool:
+    """Check if image has an alpha channel.
+
+    Args:
+        img: PIL Image object
+
+    Returns:
+        True if image has alpha channel
+    """
+    if img.mode in ("RGBA", "LA"):
+        return True
+    if img.mode == "P" and "transparency" in img.info:
+        return True
+    return False

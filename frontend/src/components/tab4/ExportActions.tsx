@@ -1,8 +1,9 @@
 /**
  * ExportActions Component
  *
- * Provides the PDF export UI including:
+ * Provides the PDF and EPUB export UI including:
  * - Download PDF button
+ * - Download EPUB button
  * - Progress bar during generation
  * - Cancel button when generating
  * - Error display with retry
@@ -20,11 +21,17 @@ interface ExportActionsProps {
 }
 
 export function ExportActions({ projectId, canExport, disabledMessage }: ExportActionsProps) {
-  const { state, startExport, cancelExport, download, reset, isExporting } = useExport()
+  const { state, startExport, cancelExport, download, reset, isExporting, format } = useExport()
 
-  const handleExport = useCallback(() => {
+  const handleExportPdf = useCallback(() => {
     if (canExport && !isExporting) {
-      startExport(projectId)
+      startExport(projectId, 'pdf')
+    }
+  }, [canExport, isExporting, startExport, projectId])
+
+  const handleExportEpub = useCallback(() => {
+    if (canExport && !isExporting) {
+      startExport(projectId, 'epub')
     }
   }, [canExport, isExporting, startExport, projectId])
 
@@ -33,13 +40,17 @@ export function ExportActions({ projectId, canExport, disabledMessage }: ExportA
   }, [cancelExport])
 
   const handleRetry = useCallback(() => {
+    const currentFormat = format || 'pdf'
     reset()
-    startExport(projectId)
-  }, [reset, startExport, projectId])
+    startExport(projectId, currentFormat)
+  }, [reset, startExport, projectId, format])
 
   const handleDownload = useCallback(() => {
     download()
   }, [download])
+
+  // Format display name
+  const formatName = format === 'epub' ? 'EPUB' : 'PDF'
 
   // Determine what to render based on export phase
   const renderContent = () => {
@@ -63,32 +74,54 @@ export function ExportActions({ projectId, canExport, disabledMessage }: ExportA
   const renderIdleState = () => (
     <div className="flex items-center justify-between">
       <div>
-        <p className="text-slate-300">Export your ebook as a PDF file.</p>
+        <p className="text-slate-300">Export your ebook as PDF or EPUB.</p>
         <p className="text-sm text-slate-500 mt-1">
-          The PDF will include the cover page, table of contents, all chapters, and assigned
+          Both formats include the cover page, table of contents, all chapters, and assigned
           images.
         </p>
       </div>
-      <button
-        onClick={handleExport}
-        disabled={!canExport}
-        className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-          canExport
-            ? 'bg-cyan-500 text-white hover:bg-cyan-400'
-            : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-        }`}
-        title={canExport ? 'Download PDF' : disabledMessage || 'Export not available'}
-      >
-        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-          />
-        </svg>
-        Download PDF
-      </button>
+      <div className="flex gap-2">
+        <button
+          onClick={handleExportPdf}
+          disabled={!canExport}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+            canExport
+              ? 'bg-cyan-500 text-white hover:bg-cyan-400'
+              : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+          }`}
+          title={canExport ? 'Download PDF' : disabledMessage || 'Export not available'}
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+            />
+          </svg>
+          PDF
+        </button>
+        <button
+          onClick={handleExportEpub}
+          disabled={!canExport}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+            canExport
+              ? 'bg-emerald-500 text-white hover:bg-emerald-400'
+              : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+          }`}
+          title={canExport ? 'Download EPUB' : disabledMessage || 'Export not available'}
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+            />
+          </svg>
+          EPUB
+        </button>
+      </div>
     </div>
   )
 
@@ -97,7 +130,7 @@ export function ExportActions({ projectId, canExport, disabledMessage }: ExportA
       <div className="flex items-center justify-between">
         <div>
           <p className="text-slate-300">
-            {state.phase === 'starting' ? 'Starting export...' : 'Generating PDF...'}
+            {state.phase === 'starting' ? `Starting ${formatName} export...` : `Generating ${formatName}...`}
           </p>
           <p className="text-sm text-slate-500 mt-1">This may take a moment.</p>
         </div>
@@ -120,7 +153,9 @@ export function ExportActions({ projectId, canExport, disabledMessage }: ExportA
       {/* Progress bar */}
       <div className="w-full bg-slate-700 rounded-full h-2.5 overflow-hidden">
         <div
-          className="bg-cyan-500 h-full rounded-full transition-all duration-300 ease-out"
+          className={`h-full rounded-full transition-all duration-300 ease-out ${
+            format === 'epub' ? 'bg-emerald-500' : 'bg-cyan-500'
+          }`}
           style={{ width: `${state.progress}%` }}
         />
       </div>
@@ -147,14 +182,16 @@ export function ExportActions({ projectId, canExport, disabledMessage }: ExportA
           </svg>
         </div>
         <div>
-          <p className="text-slate-300">PDF generated successfully!</p>
+          <p className="text-slate-300">{formatName} generated successfully!</p>
           <p className="text-sm text-slate-500">Your download should start automatically.</p>
         </div>
       </div>
       <div className="flex gap-2">
         <button
           onClick={handleDownload}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium bg-cyan-500 text-white hover:bg-cyan-400 transition-colors"
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-white transition-colors ${
+            format === 'epub' ? 'bg-emerald-500 hover:bg-emerald-400' : 'bg-cyan-500 hover:bg-cyan-400'
+          }`}
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
@@ -195,14 +232,16 @@ export function ExportActions({ projectId, canExport, disabledMessage }: ExportA
           </svg>
         </div>
         <div>
-          <p className="text-slate-300">Export failed</p>
+          <p className="text-slate-300">{formatName} export failed</p>
           <p className="text-sm text-red-400">{state.error || 'An error occurred'}</p>
         </div>
       </div>
       <div className="flex gap-2">
         <button
           onClick={handleRetry}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium bg-cyan-500 text-white hover:bg-cyan-400 transition-colors"
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-white transition-colors ${
+            format === 'epub' ? 'bg-emerald-500 hover:bg-emerald-400' : 'bg-cyan-500 hover:bg-cyan-400'
+          }`}
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
@@ -243,7 +282,7 @@ export function ExportActions({ projectId, canExport, disabledMessage }: ExportA
           </svg>
         </div>
         <div>
-          <p className="text-slate-300">Export cancelled</p>
+          <p className="text-slate-300">{formatName} export cancelled</p>
           <p className="text-sm text-slate-500">You can start a new export when ready.</p>
         </div>
       </div>

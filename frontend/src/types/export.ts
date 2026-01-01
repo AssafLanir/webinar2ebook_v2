@@ -1,7 +1,7 @@
 /**
- * Export Types (Spec 006)
+ * Export Types (Spec 006/007)
  *
- * Types for Tab 4 Final Assembly + Preview + PDF Export.
+ * Types for Tab 4 Final Assembly + Preview + PDF/EPUB Export.
  * Matches backend models from backend/src/models/export_job.py and api_responses.py
  */
 
@@ -9,8 +9,7 @@
 // Export Format and Job Status
 // ============================================================================
 
-export type ExportFormat = 'pdf'
-// Future: | 'epub' | 'docx'
+export type ExportFormat = 'pdf' | 'epub'
 
 export type ExportJobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
 

@@ -1,6 +1,6 @@
-"""Export job model for async PDF export.
+"""Export job model for async PDF/EPUB export.
 
-This model tracks the state of an export job (PDF generation).
+This model tracks the state of an export job (PDF or EPUB generation).
 Used by the export job store for job management with TTL cleanup.
 
 Pydantic v2. Extra fields are forbidden to prevent drift.
@@ -23,7 +23,7 @@ def _utcnow() -> datetime:
 class ExportFormat(str, Enum):
     """Supported export formats."""
     pdf = "pdf"
-    # Future: epub = "epub", docx = "docx"
+    epub = "epub"
 
 
 class ExportJobStatus(str, Enum):
