@@ -55,51 +55,18 @@ export function useExport(): UseExportResult {
     }
   }, [])
 
-  const startExport = useCallback(async (projectId: string, exportFormat: 'pdf' | 'epub' = 'pdf') => {
-    // Cancel any existing export
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-    }
-
-    projectIdRef.current = projectId
-    abortControllerRef.current = new AbortController()
-    setFormat(exportFormat)
-
-    setState({
-      phase: 'starting',
-      jobId: null,
-      progress: 0,
-      downloadUrl: null,
-      error: null,
-    })
-
+  // Helper function to trigger download (not a hook, just a helper)
+  const triggerDownload = async (projectId: string, jobId: string) => {
     try {
-      // Start the export job
-      const result = await apiStartExport(projectId, exportFormat)
-      const jobId = result.job_id
-
-      setState({
-        phase: 'processing',
-        jobId,
-        progress: 0,
-        downloadUrl: null,
-        error: null,
-      })
-
-      // Start polling for status
-      pollingRef.current = true
-      await pollForCompletion(projectId, jobId)
+      await downloadExport(projectId, jobId)
     } catch (err) {
-      console.error('[useExport] Start export failed:', err)
-      const errorMessage = err instanceof ApiException ? err.message : 'Failed to start export'
-      setState(prev => ({
-        ...prev,
-        phase: 'failed',
-        error: errorMessage,
-      }))
+      console.error('[useExport] Download failed:', err)
+      // Don't fail the export state - it completed successfully, just download failed
+      // User can retry via the download button
     }
-  }, [])
+  }
 
+  // Helper function to poll for completion (not a hook, just a helper)
   const pollForCompletion = async (projectId: string, jobId: string) => {
     while (pollingRef.current) {
       try {
@@ -166,15 +133,50 @@ export function useExport(): UseExportResult {
     }
   }
 
-  const triggerDownload = async (projectId: string, jobId: string) => {
-    try {
-      await downloadExport(projectId, jobId)
-    } catch (err) {
-      console.error('[useExport] Download failed:', err)
-      // Don't fail the export state - it completed successfully, just download failed
-      // User can retry via the download button
+  const startExport = useCallback(async (projectId: string, exportFormat: 'pdf' | 'epub' = 'pdf') => {
+    // Cancel any existing export
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
     }
-  }
+
+    projectIdRef.current = projectId
+    abortControllerRef.current = new AbortController()
+    setFormat(exportFormat)
+
+    setState({
+      phase: 'starting',
+      jobId: null,
+      progress: 0,
+      downloadUrl: null,
+      error: null,
+    })
+
+    try {
+      // Start the export job
+      const result = await apiStartExport(projectId, exportFormat)
+      const jobId = result.job_id
+
+      setState({
+        phase: 'processing',
+        jobId,
+        progress: 0,
+        downloadUrl: null,
+        error: null,
+      })
+
+      // Start polling for status
+      pollingRef.current = true
+      await pollForCompletion(projectId, jobId)
+    } catch (err) {
+      console.error('[useExport] Start export failed:', err)
+      const errorMessage = err instanceof ApiException ? err.message : 'Failed to start export'
+      setState(prev => ({
+        ...prev,
+        phase: 'failed',
+        error: errorMessage,
+      }))
+    }
+  }, [])
 
   const cancelExport = useCallback(async () => {
     const projectId = projectIdRef.current
