@@ -1,0 +1,223 @@
+openapi: 3.0.3
+info:
+  title: QA API
+  description: Quality Assessment endpoints for ebook drafts
+  version: 1.0.0
+
+paths:
+  /api/projects/{project_id}/qa/analyze:
+    post:
+      summary: Trigger QA analysis
+      description: Analyzes the draft and generates a QA report
+      operationId: analyzeQuality
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Analysis completed or started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyzeResponse'
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/projects/{project_id}/qa/report:
+    get:
+      summary: Get QA report
+      description: Returns the latest QA report for the project
+      operationId: getQAReport
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: QA report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QAReportResponse'
+        '404':
+          description: Project or report not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/projects/{project_id}/qa/improve:
+    post:
+      summary: Run editor improvement pass (P2)
+      description: Rewrites draft to fix identified issues
+      operationId: runImprovePass
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Improvement job started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImproveResponse'
+        '400':
+          description: No issues to fix or draft missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    AnalyzeResponse:
+      type: object
+      required: [data, error]
+      properties:
+        data:
+          oneOf:
+            - $ref: '#/components/schemas/QAReport'
+            - type: object
+              properties:
+                job_id:
+                  type: string
+                  description: Job ID for async analysis
+          nullable: true
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    QAReportResponse:
+      type: object
+      required: [data, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/QAReport'
+          nullable: true
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    ImproveResponse:
+      type: object
+      required: [data, error]
+      properties:
+        data:
+          type: object
+          properties:
+            job_id:
+              type: string
+          nullable: true
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    ErrorResponse:
+      type: object
+      required: [data, error]
+      properties:
+        data:
+          nullable: true
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    ErrorDetail:
+      type: object
+      nullable: true
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    QAReport:
+      type: object
+      required: [id, project_id, draft_hash, overall_score, rubric_scores, issues, generated_at, analysis_duration_ms, version]
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        draft_hash:
+          type: string
+        overall_score:
+          type: integer
+          minimum: 1
+          maximum: 100
+        rubric_scores:
+          $ref: '#/components/schemas/RubricScores'
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/QAIssue'
+        generated_at:
+          type: string
+          format: date-time
+        analysis_duration_ms:
+          type: integer
+        version:
+          type: string
+
+    RubricScores:
+      type: object
+      required: [structure, clarity, faithfulness, repetition, completeness]
+      properties:
+        structure:
+          type: integer
+          minimum: 1
+          maximum: 100
+        clarity:
+          type: integer
+          minimum: 1
+          maximum: 100
+        faithfulness:
+          type: integer
+          minimum: 1
+          maximum: 100
+        repetition:
+          type: integer
+          minimum: 1
+          maximum: 100
+        completeness:
+          type: integer
+          minimum: 1
+          maximum: 100
+
+    QAIssue:
+      type: object
+      required: [id, severity, issue_type, message]
+      properties:
+        id:
+          type: string
+        severity:
+          type: string
+          enum: [critical, warning, info]
+        issue_type:
+          type: string
+          enum: [repetition, structure, clarity, faithfulness, completeness]
+        chapter_index:
+          type: integer
+          nullable: true
+        heading:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        message:
+          type: string
+        suggestion:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          nullable: true
