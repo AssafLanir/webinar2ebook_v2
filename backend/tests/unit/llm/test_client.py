@@ -46,7 +46,7 @@ class TestLLMClientInit:
         """Test default configuration values."""
         client = LLMClient()
         assert client._default_provider == "openai"
-        assert client._timeout == 60.0
+        assert client._timeout == 120.0  # Increased from 60s to handle longer transcripts
         assert client._max_retries == 2
 
     def test_custom_configuration(self):
