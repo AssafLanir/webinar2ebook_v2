@@ -36,6 +36,8 @@ function statusToPhase(status: JobStatus): DraftGenerationPhase {
       return 'starting'
     case 'planning':
       return 'planning'
+    case 'evidence_map':
+      return 'evidence_map'
     case 'generating':
       return 'generating'
     case 'completed':
@@ -74,6 +76,8 @@ export function useDraftGeneration(): UseDraftGenerationResult {
     draftPlan: null,
     visualPlan: null,
     stats: null,
+    evidenceMapSummary: null,
+    constraintWarnings: [],
   })
 
   // State to trigger polling effect (refs don't cause re-renders)
@@ -125,6 +129,9 @@ export function useDraftGeneration(): UseDraftGenerationResult {
           draftPlan: status.draft_plan ?? prev.draftPlan,
           visualPlan: status.visual_plan ?? prev.visualPlan,
           stats: status.generation_stats ?? prev.stats,
+          // Spec 009: Evidence Map info
+          evidenceMapSummary: status.evidence_map_summary ?? prev.evidenceMapSummary,
+          constraintWarnings: status.constraint_warnings ?? prev.constraintWarnings,
         }))
 
         // Check for terminal state
@@ -206,6 +213,8 @@ export function useDraftGeneration(): UseDraftGenerationResult {
       draftPlan: null,
       visualPlan: null,
       stats: null,
+      evidenceMapSummary: null,
+      constraintWarnings: [],
     })
 
     try {
@@ -279,11 +288,13 @@ export function useDraftGeneration(): UseDraftGenerationResult {
       draftPlan: null,
       visualPlan: null,
       stats: null,
+      evidenceMapSummary: null,
+      constraintWarnings: [],
     })
   }, [stopPolling])
 
   // Computed properties
-  const isGenerating = ['starting', 'planning', 'generating'].includes(state.phase)
+  const isGenerating = ['starting', 'planning', 'evidence_map', 'generating'].includes(state.phase)
   const canCancel = isGenerating && state.jobId !== null
 
   return {

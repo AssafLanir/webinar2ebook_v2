@@ -30,6 +30,7 @@ const phaseLabels: Record<DraftGenerationState['phase'], string> = {
   idle: 'Ready',
   starting: 'Starting...',
   planning: 'Planning chapters...',
+  evidence_map: 'Building evidence map...',
   generating: 'Generating content...',
   completed: 'Generation complete',
   cancelled: 'Generation cancelled',
@@ -40,6 +41,7 @@ const phaseColors: Record<DraftGenerationState['phase'], string> = {
   idle: 'text-slate-400',
   starting: 'text-cyan-400',
   planning: 'text-cyan-400',
+  evidence_map: 'text-cyan-400',
   generating: 'text-cyan-400',
   completed: 'text-green-400',
   cancelled: 'text-yellow-400',
@@ -53,8 +55,8 @@ export function GenerateProgress({
   onRetry,
   onViewPartial,
 }: GenerateProgressProps) {
-  const { phase, progress, error, draftMarkdown } = state
-  const isInProgress = ['starting', 'planning', 'generating'].includes(phase)
+  const { phase, progress, error, draftMarkdown, evidenceMapSummary, constraintWarnings } = state
+  const isInProgress = ['starting', 'planning', 'evidence_map', 'generating'].includes(phase)
   const hasPartialResults = draftMarkdown !== null
 
   // Calculate progress percentage - 100% when completed
@@ -131,6 +133,35 @@ export function GenerateProgress({
               </span>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Evidence Map summary (Spec 009) */}
+      {evidenceMapSummary && (
+        <div className="mt-4 p-3 bg-slate-700/50 rounded-lg">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-slate-300">
+              Evidence Map: {evidenceMapSummary.total_claims} claims
+            </span>
+            <span className="text-slate-500">
+              Mode: {evidenceMapSummary.content_mode}
+              {evidenceMapSummary.strict_grounded && ' (strict)'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Constraint warnings (Spec 009) */}
+      {constraintWarnings && constraintWarnings.length > 0 && (
+        <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+          <p className="text-sm font-medium text-amber-400 mb-2">Content Warnings</p>
+          <ul className="space-y-1">
+            {constraintWarnings.map((warning, idx) => (
+              <li key={idx} className="text-sm text-amber-300/80">
+                {warning}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

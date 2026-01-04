@@ -186,6 +186,16 @@ class DraftStatusData(BaseModel):
         description="Human-readable error message (only when failed)"
     )
 
+    # Evidence Map info (Spec 009)
+    evidence_map_summary: Optional[dict] = Field(
+        default=None,
+        description="Summary of Evidence Map (claims per chapter, content mode)"
+    )
+    constraint_warnings: Optional[List[str]] = Field(
+        default=None,
+        description="Warnings about content mode constraints"
+    )
+
 
 class DraftCancelData(BaseModel):
     """Data payload for POST /api/ai/draft/cancel/:job_id response."""

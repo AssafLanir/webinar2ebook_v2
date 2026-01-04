@@ -204,3 +204,59 @@ export function getScoreColor(score: number): string {
   if (score >= 50) return 'text-yellow-600'
   return 'text-red-600'
 }
+
+// ============================================================================
+// Rewrite Types (Spec 009 US3)
+// ============================================================================
+
+export type RewriteJobStatus = 'queued' | 'running' | 'completed' | 'failed'
+
+export interface SectionDiff {
+  section_id: string
+  heading: string | null
+  original: string
+  rewritten: string
+  changes_summary: string
+}
+
+export interface RewriteStartData {
+  job_id: string
+  status: RewriteJobStatus
+  message: string
+  warning: string | null
+}
+
+export interface RewriteStatusData {
+  job_id: string
+  status: RewriteJobStatus
+  progress_pct: number
+  sections_rewritten: number | null
+  issues_addressed: number | null
+  diffs: SectionDiff[] | null
+  error: string | null
+  warnings: string[] | null
+}
+
+export type RewritePhase = 'idle' | 'running' | 'completed' | 'failed'
+
+export interface RewriteState {
+  phase: RewritePhase
+  jobId: string | null
+  progress: number
+  error: string | null
+  warning: string | null
+  sectionsRewritten: number
+  issuesAddressed: number
+  diffs: SectionDiff[]
+}
+
+export const initialRewriteState: RewriteState = {
+  phase: 'idle',
+  jobId: null,
+  progress: 0,
+  error: null,
+  warning: null,
+  sectionsRewritten: 0,
+  issuesAddressed: 0,
+  diffs: [],
+}

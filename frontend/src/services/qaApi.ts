@@ -11,6 +11,9 @@
 import type {
   QAReport,
   QAJobStatus,
+  RewriteStartData,
+  RewriteStatusData,
+  IssueType,
 } from '../types/qa'
 import { ApiException } from './api'
 
@@ -212,4 +215,46 @@ export async function pollQAAnalysis(
 
     await new Promise(resolve => setTimeout(resolve, intervalMs))
   }
+}
+
+// ============================================================================
+// Rewrite API Functions (Spec 009 US3)
+// ============================================================================
+
+/**
+ * Start a targeted rewrite to fix QA issues.
+ *
+ * Creates an async job that rewrites sections flagged by QA
+ * without adding new claims beyond the Evidence Map.
+ *
+ * @param projectId - Project ID to rewrite
+ * @param issueTypes - Only fix these issue types (default: all)
+ * @param passNumber - Which rewrite pass (1-3, default 1)
+ * @returns Job ID and initial status
+ */
+export async function startRewrite(
+  projectId: string,
+  issueTypes?: IssueType[],
+  passNumber: number = 1
+): Promise<RewriteStartData> {
+  return qaApiRequest<RewriteStartData>('/rewrite', {
+    method: 'POST',
+    body: JSON.stringify({
+      project_id: projectId,
+      issue_types: issueTypes,
+      pass_number: passNumber,
+    }),
+  })
+}
+
+/**
+ * Get rewrite job status.
+ *
+ * Poll this endpoint to track progress and get diffs.
+ *
+ * @param jobId - Job ID from startRewrite
+ * @returns Current status, progress, and diffs when complete
+ */
+export async function getRewriteStatus(jobId: string): Promise<RewriteStatusData> {
+  return qaApiRequest<RewriteStatusData>(`/rewrite/${jobId}`)
 }

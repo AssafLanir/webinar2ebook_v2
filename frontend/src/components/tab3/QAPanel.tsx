@@ -8,11 +8,14 @@
  * - Rerun button for manual analysis
  */
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Card } from '../common/Card'
 import { Button } from '../common/Button'
 import { QAIssueList } from './QAIssueList'
+// TODO: Phase 4 (US3) - Rewrite UI
+// import { RewriteDiffView } from './RewriteDiffView'
 import { useQA } from '../../hooks/useQA'
+import { useRewrite } from '../../hooks/useRewrite'
 import { getScoreColor, getScoreLabel } from '../../types/qa'
 
 interface QAPanelProps {
@@ -82,6 +85,17 @@ export function QAPanel({ projectId, hasDraft }: QAPanelProps) {
     hasReport,
   } = useQA()
 
+  // TODO: Phase 4 (US3) - Rewrite functionality
+  const {
+    state: rewriteState,
+    startRewriteJob: _startRewriteJob,
+    reset: _resetRewrite,
+    isRewriting: _isRewriting,
+    hasDiffs,
+  } = useRewrite()
+
+  const [_showDiffs, _setShowDiffs] = useState(false)
+
   // Load existing report when projectId changes
   useEffect(() => {
     if (projectId && hasDraft) {
@@ -89,9 +103,18 @@ export function QAPanel({ projectId, hasDraft }: QAPanelProps) {
     }
   }, [projectId, hasDraft, loadReport])
 
+  // TODO: Phase 4 (US3) - Show diffs when rewrite completes
+  useEffect(() => {
+    if (rewriteState.phase === 'completed' && hasDiffs) {
+      _setShowDiffs(true)
+    }
+  }, [rewriteState.phase, hasDiffs])
+
   const handleRunAnalysis = () => {
     startAnalysis(projectId, true) // Force rerun
   }
+
+  // TODO: Phase 4 (US3) - Add handleFixIssues and handleCloseDiffs handlers here
 
   // Don't show panel if no draft
   if (!hasDraft) {

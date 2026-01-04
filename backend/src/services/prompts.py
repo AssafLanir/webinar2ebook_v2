@@ -547,3 +547,427 @@ Transcript segment:
 ```
 
 Respond with JSON: {{"goals": ["goal1", ...], "additional_key_points": ["point1", ...]}}"""
+
+
+# ==============================================================================
+# Evidence Map Prompts (Spec 009)
+# ==============================================================================
+
+EVIDENCE_EXTRACTION_SYSTEM_PROMPT = """You are an expert at extracting factual claims and supporting evidence from transcripts.
+
+Your task is to analyze transcript text and extract:
+1. **Claims**: Specific statements that can be made based on the transcript
+2. **Support**: Exact quotes from the transcript that support each claim
+3. **Claim types**: factual, opinion, recommendation, anecdote, or definition
+
+Rules:
+- ONLY extract claims that are directly supported by transcript text
+- Include EXACT quotes as support - no paraphrasing
+- Provide character offsets (start_char, end_char) for each quote when possible
+- Include speaker attribution when identifiable
+- Assign confidence scores (0.0-1.0) based on how clearly the claim is supported
+- Claims should be specific and verifiable, not vague generalizations
+
+For each claim, ensure there is at least one supporting quote that directly backs it up.
+Do NOT generate claims that require external knowledge or inference beyond the transcript."""
+
+
+def build_claim_extraction_prompt(
+    chapter_title: str,
+    transcript_segment: str,
+    content_mode: str = "interview",
+) -> str:
+    """Build user prompt for claim extraction from transcript.
+
+    Args:
+        chapter_title: Title of the chapter being processed.
+        transcript_segment: The transcript text to extract claims from.
+        content_mode: Content mode (interview/essay/tutorial).
+
+    Returns:
+        Formatted user prompt string.
+    """
+    mode_guidance = {
+        "interview": """Focus on:
+- Speaker insights and perspectives
+- Anecdotes and experiences shared
+- Recommendations made by speakers
+- Key definitions or explanations given
+- Avoid: action steps, how-to instructions, biographical details not mentioned""",
+        "essay": """Focus on:
+- Main arguments and thesis statements
+- Supporting evidence and examples
+- Logical connections between ideas
+- Conclusions and implications""",
+        "tutorial": """Focus on:
+- Step-by-step instructions
+- Best practices and recommendations
+- Warnings and common mistakes
+- Technical explanations and definitions""",
+    }
+
+    guidance = mode_guidance.get(content_mode, mode_guidance["interview"])
+
+    return f"""## Chapter: {chapter_title}
+
+## Content Mode: {content_mode}
+{guidance}
+
+## Transcript Segment
+```
+{transcript_segment}
+```
+
+## Instructions
+Extract all supportable claims from this transcript segment. For each claim:
+1. Identify the specific claim that can be made
+2. Find the exact quote(s) that support it
+3. Classify the claim type
+4. Assign a confidence score
+
+Return a JSON object with:
+{{
+    "claims": [
+        {{
+            "id": "claim_001",
+            "claim": "The specific claim text",
+            "support": [
+                {{
+                    "quote": "Exact quote from transcript",
+                    "start_char": 0,
+                    "end_char": 50,
+                    "speaker": "Speaker name if known"
+                }}
+            ],
+            "confidence": 0.85,
+            "claim_type": "factual|opinion|recommendation|anecdote|definition"
+        }}
+    ],
+    "must_include": [
+        {{
+            "point": "Key point that must appear in the chapter",
+            "priority": "critical|important|optional",
+            "evidence_ids": ["claim_001"]
+        }}
+    ]
+}}"""
+
+
+# ==============================================================================
+# Interview Mode Constraints (Spec 009)
+# ==============================================================================
+
+# Patterns that are FORBIDDEN in interview mode drafts
+INTERVIEW_FORBIDDEN_PATTERNS = [
+    r"(?i)key\s+action\s+steps?",
+    r"(?i)action\s+items?",
+    r"(?i)(?:here\s+are\s+)?(?:the\s+)?(?:\d+\s+)?steps?\s+(?:to|you\s+can)",
+    r"(?i)how\s+to\s+(?:get\s+started|begin|implement)",
+    r"(?i)(?:first|second|third|next|finally),?\s+(?:you\s+(?:should|need\s+to|can|must))",
+    r"(?i)biography|background|early\s+life|education|career\s+history",
+    r"(?i)(?:was|is)\s+born\s+(?:in|on)",
+    r"(?i)graduated\s+from|attended\s+(?:\w+\s+)*(?:university|college|school)",
+    r"(?i)believe\s+in\s+yourself|never\s+give\s+up|follow\s+your\s+(?:dreams?|passion)",
+    r"(?i)the\s+(?:key|secret)\s+to\s+success\s+is",
+    r"(?i)(?:anyone|you)\s+can\s+(?:do|achieve)\s+(?:it|this|anything)",
+    r"(?i)(?:just|simply)\s+(?:remember|keep\s+in\s+mind)\s+that",
+]
+
+# System prompt additions for interview mode
+INTERVIEW_MODE_CONSTRAINTS = """
+INTERVIEW MODE CONSTRAINTS:
+You are writing based on an interview/webinar transcript. Follow these rules strictly:
+
+DO NOT include:
+- "Key Action Steps" or "Action Items" sections
+- Step-by-step how-to instructions
+- Biographical information not explicitly mentioned in the transcript
+- Motivational platitudes or generic advice not from the source
+- Topics or claims not present in the provided Evidence Map
+
+DO include:
+- Direct quotes from speakers (attributed when possible)
+- Speaker insights, opinions, and perspectives
+- Anecdotes and stories shared during the interview
+- Key definitions and explanations from the transcript
+- The narrative flow of the conversation
+
+Write in a narrative style that reflects the conversational nature of the source material.
+Ground every claim in evidence from the transcript."""
+
+
+# Mode-specific prompt templates
+ESSAY_MODE_PROMPT = """
+ESSAY MODE:
+Structure the content as a coherent argument or thesis:
+- Present the main argument clearly
+- Provide supporting evidence and examples
+- Build logical connections between ideas
+- Draw conclusions based on the evidence
+
+Maintain academic rigor while being accessible to the target audience."""
+
+
+TUTORIAL_MODE_PROMPT = """
+TUTORIAL MODE:
+Structure the content as an instructional guide:
+- Include step-by-step instructions where appropriate
+- Highlight best practices and common pitfalls
+- Use clear, actionable language
+- Include practical examples and exercises
+
+Focus on helping readers implement what they learn."""
+
+
+def get_content_mode_prompt(content_mode: str) -> str:
+    """Get the mode-specific prompt additions.
+
+    Args:
+        content_mode: Content mode (interview/essay/tutorial).
+
+    Returns:
+        Mode-specific prompt text to append to system prompt.
+    """
+    mode_prompts = {
+        "interview": INTERVIEW_MODE_CONSTRAINTS,
+        "essay": ESSAY_MODE_PROMPT,
+        "tutorial": TUTORIAL_MODE_PROMPT,
+    }
+    return mode_prompts.get(content_mode, INTERVIEW_MODE_CONSTRAINTS)
+
+
+# ==============================================================================
+# Evidence-Grounded Chapter Generation (Spec 009)
+# ==============================================================================
+
+def build_grounded_chapter_system_prompt(
+    book_title: str,
+    chapter_number: int,
+    style_config: dict,
+    words_per_chapter_target: int = 625,
+    detail_level: str = "balanced",
+    content_mode: str = "interview",
+    strict_grounded: bool = True,
+) -> str:
+    """Build system prompt for evidence-grounded chapter generation.
+
+    This extends build_chapter_system_prompt with Evidence Map constraints.
+
+    Args:
+        book_title: Title of the ebook.
+        chapter_number: 1-based chapter number.
+        style_config: StyleConfig dict (unwrapped from envelope).
+        words_per_chapter_target: Target word count for this chapter.
+        detail_level: Detail level (concise/balanced/detailed).
+        content_mode: Content mode (interview/essay/tutorial).
+        strict_grounded: If True, only use claims from Evidence Map.
+
+    Returns:
+        Formatted system prompt string.
+    """
+    # Start with base chapter prompt
+    base_prompt = build_chapter_system_prompt(
+        book_title=book_title,
+        chapter_number=chapter_number,
+        style_config=style_config,
+        words_per_chapter_target=words_per_chapter_target,
+        detail_level=detail_level,
+    )
+
+    # Add Evidence Map grounding rules
+    grounding_rules = """
+
+EVIDENCE-GROUNDED GENERATION:
+You have been provided with an Evidence Map containing claims and supporting quotes from the transcript.
+
+"""
+    if strict_grounded:
+        grounding_rules += """STRICT GROUNDING MODE:
+- ONLY include claims that appear in the Evidence Map
+- Use the provided supporting quotes as the basis for content
+- Do NOT add information, examples, or claims not in the Evidence Map
+- If the Evidence Map is sparse, write a shorter chapter rather than adding filler
+"""
+    else:
+        grounding_rules += """GROUNDED MODE:
+- Prioritize claims from the Evidence Map
+- You may add light connective tissue between claims
+- Avoid adding substantial new information not in the transcript
+"""
+
+    # Add content mode specific constraints
+    mode_prompt = get_content_mode_prompt(content_mode)
+
+    return base_prompt + grounding_rules + mode_prompt
+
+
+def build_grounded_chapter_user_prompt(
+    chapter_plan: "ChapterPlan",
+    evidence_claims: list[dict],
+    must_include: list[dict],
+    transcript_segment: str,
+    previous_chapter_ending: Optional[str] = None,
+    next_chapter_preview: Optional[tuple[str, list[str]]] = None,
+) -> str:
+    """Build user prompt for evidence-grounded chapter generation.
+
+    Args:
+        chapter_plan: The ChapterPlan for this chapter.
+        evidence_claims: List of EvidenceEntry dicts for this chapter.
+        must_include: List of MustIncludeItem dicts.
+        transcript_segment: The mapped transcript text.
+        previous_chapter_ending: Last paragraphs of previous chapter.
+        next_chapter_preview: Tuple of (title, first_points) for next chapter.
+
+    Returns:
+        Formatted user prompt string.
+    """
+    parts = [
+        "## Evidence Map for This Chapter",
+        "",
+        "### Claims You Can Make (with supporting evidence):",
+    ]
+
+    for claim in evidence_claims:
+        parts.append(f"\n**Claim**: {claim.get('claim', 'Unknown claim')}")
+        parts.append(f"**Type**: {claim.get('claim_type', 'factual')}")
+        parts.append(f"**Confidence**: {claim.get('confidence', 0.8)}")
+        parts.append("**Supporting quotes**:")
+        for quote in claim.get('support', []):
+            speaker = quote.get('speaker', 'Speaker')
+            parts.append(f'  - "{quote.get("quote", "")}" — {speaker}')
+
+    if must_include:
+        parts.extend([
+            "",
+            "### Must Include (priority items):",
+        ])
+        for item in must_include:
+            priority = item.get('priority', 'important')
+            parts.append(f"- [{priority.upper()}] {item.get('point', '')}")
+
+    parts.extend([
+        "",
+        "## Raw Transcript Segment (for reference)",
+        f"```\n{transcript_segment[:5000]}\n```",  # Truncate if very long
+    ])
+
+    if previous_chapter_ending:
+        parts.extend([
+            "",
+            "## Context: Previous Chapter Ending",
+            "Ensure continuity with how the previous chapter concluded:",
+            f"```\n{previous_chapter_ending}\n```",
+        ])
+
+    if next_chapter_preview:
+        next_title, next_points = next_chapter_preview
+        parts.extend([
+            "",
+            "## Context: Next Chapter Preview",
+            f'Next chapter: "{next_title}"',
+        ])
+        if next_points:
+            parts.append(f"Topics: {', '.join(next_points[:3])}")
+
+    parts.extend([
+        "",
+        "## Instructions",
+        f"Write Chapter {chapter_plan.chapter_number}: {chapter_plan.title}",
+        "",
+        "Use ONLY the claims and quotes from the Evidence Map above.",
+        "Transform the evidence into flowing prose that reads naturally.",
+        "Attribute quotes to speakers when possible.",
+    ])
+
+    return "\n".join(parts)
+
+
+# ==============================================================================
+# Rewrite Prompts (Spec 009 US3)
+# ==============================================================================
+
+REWRITE_SYSTEM_PROMPT = """You are an expert editor specializing in targeted text revisions.
+
+Your task is to rewrite specific sections of an ebook draft to fix identified issues
+WITHOUT adding new information or changing the overall meaning.
+
+Rules:
+1. ONLY modify the specific section provided
+2. Do NOT add claims or facts not in the original or Evidence Map
+3. Preserve all markdown formatting (headings, lists, code blocks)
+4. Maintain the same approximate length (±20%)
+5. Fix the specific issues identified while preserving good content
+6. Keep the same voice and tone as the original
+
+You will be given:
+- The original section text
+- The issues to fix
+- Allowed evidence (claims you can use)
+- Preservation requirements"""
+
+
+def build_rewrite_section_prompt(
+    original_text: str,
+    issues: list[dict],
+    allowed_claims: list[dict],
+    preserve: list[str],
+    rewrite_instructions: Optional[str] = None,
+) -> str:
+    """Build prompt for rewriting a specific section.
+
+    Args:
+        original_text: The original section to rewrite.
+        issues: List of IssueReference dicts describing problems.
+        allowed_claims: Claims from Evidence Map that can be used.
+        preserve: List of elements to preserve (e.g., "heading", "bullet_structure").
+        rewrite_instructions: Optional specific instructions.
+
+    Returns:
+        Formatted prompt for section rewrite.
+    """
+    parts = [
+        "## Original Section",
+        f"```markdown\n{original_text}\n```",
+        "",
+        "## Issues to Fix",
+    ]
+
+    for issue in issues:
+        issue_type = issue.get('issue_type', 'unknown')
+        message = issue.get('issue_message', 'No details')
+        parts.append(f"- **{issue_type}**: {message}")
+
+    parts.extend([
+        "",
+        "## Allowed Evidence (claims you can use)",
+    ])
+
+    if allowed_claims:
+        for claim in allowed_claims:
+            parts.append(f"- {claim.get('claim', 'Unknown claim')}")
+    else:
+        parts.append("- Use only information from the original text")
+
+    parts.extend([
+        "",
+        "## Preserve",
+    ])
+    for item in preserve:
+        parts.append(f"- {item}")
+
+    if rewrite_instructions:
+        parts.extend([
+            "",
+            "## Specific Instructions",
+            rewrite_instructions,
+        ])
+
+    parts.extend([
+        "",
+        "## Task",
+        "Rewrite the section to fix the issues while following all rules.",
+        "Return ONLY the rewritten markdown, no explanations.",
+    ])
+
+    return "\n".join(parts)

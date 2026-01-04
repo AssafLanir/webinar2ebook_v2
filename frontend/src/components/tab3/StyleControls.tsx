@@ -1,4 +1,4 @@
-import type { StyleConfig, TotalLengthPreset, DetailLevel } from '../../types/style'
+import type { StyleConfig, TotalLengthPreset, DetailLevel, ContentMode } from '../../types/style'
 import { MIN_CUSTOM_WORDS, MAX_CUSTOM_WORDS } from '../../types/style'
 import { Select } from '../common/Select'
 
@@ -6,6 +6,13 @@ export interface StyleControlsProps {
   config: StyleConfig
   onChange: (updates: Partial<StyleConfig>) => void
 }
+
+// Content mode options (Spec 009)
+const contentModeOptions = [
+  { value: 'interview', label: 'Interview/Webinar' },
+  { value: 'essay', label: 'Essay/Article' },
+  { value: 'tutorial', label: 'Tutorial/Guide' },
+]
 
 // Options based on the new comprehensive StyleConfig enums
 const toneOptions = [
@@ -135,6 +142,36 @@ export function StyleControls({ config, onChange }: StyleControlsProps) {
         onChange={value => onChange({ book_format: value as StyleConfig['book_format'] })}
         options={bookFormatOptions}
       />
+
+      {/* Content Mode and Grounding (Spec 009) */}
+      <Select
+        label="Content Mode"
+        value={config.content_mode ?? 'interview'}
+        onChange={value => onChange({ content_mode: value as ContentMode })}
+        options={contentModeOptions}
+      />
+
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-slate-300">
+          Strict Grounding
+        </label>
+        <label className="flex items-center space-x-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={config.strict_grounded ?? true}
+            onChange={e => onChange({ strict_grounded: e.target.checked })}
+            className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-800"
+          />
+          <span className="text-sm text-slate-400">
+            Only use claims from transcript
+          </span>
+        </label>
+        {config.content_mode === 'interview' && (
+          <p className="text-xs text-slate-500 mt-1">
+            Interview mode prevents action steps and invented biographies
+          </p>
+        )}
+      </div>
     </div>
   )
 }
