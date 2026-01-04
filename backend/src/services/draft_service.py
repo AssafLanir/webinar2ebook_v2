@@ -379,6 +379,9 @@ async def generate_draft_plan(
     Chapters are derived from the outline (level=1 items = chapters).
     LLM is used only for visual plan generation, not chapter structure.
 
+    Special case: For interview_qa format with no outline, creates a single
+    flowing Q&A document with topics emerging naturally from the content.
+
     Args:
         transcript: Full transcript text.
         outline: List of outline items.
@@ -388,30 +391,66 @@ async def generate_draft_plan(
     Returns:
         Generated DraftPlan with outline-driven chapters.
     """
+    # Extract style dict
+    if "style" in style_config:
+        style_dict = style_config.get("style", {})
+    else:
+        style_dict = style_config
+
+    book_format = style_dict.get("book_format", "guide")
+
     # Step 1: Derive chapter structure from outline
     chapters = parse_outline_to_chapters(outline, transcript)
 
     if not chapters:
-        # Fallback: create a single chapter if no outline structure
         from src.models import TranscriptSegment
-        chapters = [
-            ChapterPlan(
-                chapter_number=1,
-                title="Content",
-                outline_item_id="fallback-1",
-                goals=["Cover the main content from the transcript"],
-                key_points=["Key points from the source material"],
-                transcript_segments=[
-                    TranscriptSegment(start_char=0, end_char=len(transcript), relevance="primary")
-                ],
-                estimated_words=max(500, len(transcript) // 5),
-            )
-        ]
+
+        # Special handling for interview_qa without outline:
+        # Create a single "document" that will generate flowing Q&A
+        if book_format == "interview_qa":
+            # Extract speaker name for title
+            speaker_name = _extract_speaker_name(transcript)
+            title = f"A Conversation with {speaker_name}" if speaker_name != "The speaker" else "Interview"
+
+            chapters = [
+                ChapterPlan(
+                    chapter_number=1,
+                    title=title,
+                    outline_item_id="interview-qa-1",
+                    goals=["Preserve the natural Q&A flow of the interview"],
+                    key_points=["Questions and answers organized by topic"],
+                    transcript_segments=[
+                        TranscriptSegment(start_char=0, end_char=len(transcript), relevance="primary")
+                    ],
+                    estimated_words=max(500, len(transcript) // 5),
+                )
+            ]
+            logger.info(f"Interview Q&A mode: creating single flowing document")
+        else:
+            # Standard fallback: create a single chapter
+            chapters = [
+                ChapterPlan(
+                    chapter_number=1,
+                    title="Content",
+                    outline_item_id="fallback-1",
+                    goals=["Cover the main content from the transcript"],
+                    key_points=["Key points from the source material"],
+                    transcript_segments=[
+                        TranscriptSegment(start_char=0, end_char=len(transcript), relevance="primary")
+                    ],
+                    estimated_words=max(500, len(transcript) // 5),
+                )
+            ]
 
     logger.info(f"Derived {len(chapters)} chapters from outline")
 
     # Step 2: Generate visual plan using LLM (optional enhancement)
-    visual_plan = await _generate_visual_plan(transcript, chapters, style_config)
+    # Skip visual generation for interview_qa (usually minimal visuals)
+    if book_format == "interview_qa":
+        from src.models.visuals import VisualPlan
+        visual_plan = VisualPlan(opportunities=[], assets=[])
+    else:
+        visual_plan = await _generate_visual_plan(transcript, chapters, style_config)
 
     # Step 3: Calculate metadata
     total_words = sum(ch.estimated_words for ch in chapters)
@@ -427,10 +466,14 @@ async def generate_draft_plan(
 
     # Step 4: Build book title from first outline item or default
     book_title = "Untitled Ebook"
-    for item in outline:
-        if item.get("level", 1) == 1:
-            book_title = item.get("title", book_title)
-            break
+    if outline:
+        for item in outline:
+            if item.get("level", 1) == 1:
+                book_title = item.get("title", book_title)
+                break
+    elif book_format == "interview_qa":
+        # For interview_qa without outline, use the chapter title
+        book_title = chapters[0].title if chapters else "Interview"
 
     draft_plan = DraftPlan(
         version=1,

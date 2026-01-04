@@ -5,10 +5,10 @@ import { Tab2Content } from '../components/tab2/Tab2Content'
 import { Tab3Content } from '../components/tab3/Tab3Content'
 import { Tab4Content } from '../components/tab4/Tab4Content'
 import { Toast } from '../components/common/Toast'
-import type { TabIndex } from '../types/project'
+import type { TabIndex, WebinarType } from '../types/project'
 
 export function WorkspacePage() {
-  const { state, setActiveTab, saveProject, clearSaveError } = useProject()
+  const { state, dispatch, setActiveTab, saveProject, clearSaveError } = useProject()
   const { project, activeTab, isSaving, saveError } = state
 
   if (!project) {
@@ -38,6 +38,17 @@ export function WorkspacePage() {
     }
   }
 
+  const handleWebinarTypeChange = async (newType: WebinarType) => {
+    if (newType === project.webinarType) return
+    // Update project with new webinarType
+    dispatch({
+      type: 'UPDATE_PROJECT_DATA',
+      payload: { ...project, webinarType: newType },
+    })
+    // Auto-save the change
+    await saveProject()
+  }
+
   const renderTabContent = () => {
     switch (activeTab) {
       case 1:
@@ -56,7 +67,11 @@ export function WorkspacePage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       {/* Header */}
-      <ProjectHeader title={project.name} webinarType={project.webinarType} />
+      <ProjectHeader
+        title={project.name}
+        webinarType={project.webinarType}
+        onWebinarTypeChange={handleWebinarTypeChange}
+      />
 
       {/* Main content - centered with generous padding */}
       <div className="max-w-6xl mx-auto px-6 sm:px-10 lg:px-16 py-8">
