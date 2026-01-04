@@ -2,8 +2,19 @@
 
 **Feature Branch**: `008-draft-quality`
 **Created**: 2026-01-01
-**Status**: Draft
+**Status**: Partial (US1+US2 Complete, US3+US4 Superseded)
 **Input**: Systematic quality assessment for AI-generated ebook drafts with QA reports, editor pass, and regression suite
+
+---
+
+## ⚠️ Superseded User Stories
+
+- **US3 (Editor Pass)**: **SUPERSEDED** by Spec 009 US3 (Targeted Rewrite Pass with Evidence Map grounding)
+- **US4 (Regression Suite)**: **DEFERRED** to post-Spec 009
+
+See `/specs/009-evidence-grounded/` for the replacement implementation.
+
+---
 
 ## 1. Overview
 

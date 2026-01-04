@@ -6,6 +6,19 @@
 
 **Organization**: Tasks grouped by user story (US1: QA Report, US2: QA UI, US3: Editor Pass, US4: Regression Suite)
 
+---
+
+## ⚠️ SUPERSEDED NOTICE
+
+**US3 (Editor Pass)** and **US4 (Regression Suite)** are **SUPERSEDED** by Spec 009: Evidence-Grounded Drafting.
+
+- **US3 → Spec 009 US3**: Targeted Rewrite Pass (uses Evidence Map + QA issues)
+- **US4**: Deferred - can be implemented after Spec 009 if needed
+
+**Do not implement Phase 5 or Phase 6 from this spec.** Use `/specs/009-evidence-grounded/tasks.md` instead.
+
+---
+
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
@@ -18,8 +31,8 @@
 
 **Purpose**: Project structure and shared dependencies
 
-- [ ] T001 Create QA report JSON schema at specs/008-draft-quality/schemas/qa_report.schema.json
-- [ ] T002 [P] Create TypeScript types for QA at frontend/src/types/qa.ts
+- [x] T001 Create QA report JSON schema at specs/008-draft-quality/schemas/qa_report.schema.json
+- [x] T002 [P] Create TypeScript types for QA at frontend/src/types/qa.ts
 
 ---
 
@@ -29,9 +42,9 @@
 
 **⚠️ CRITICAL**: Both QA Report and UI stories depend on these models
 
-- [ ] T003 Create QAReport, QAIssue, RubricScores, IssueCounts models in backend/src/models/qa_report.py (include truncated, total_issue_count fields)
-- [ ] T004 [P] Add qaReport field to Project model in backend/src/models/project.py
-- [ ] T005 [P] Create schema contract tests in backend/tests/unit/test_qa_models.py
+- [x] T003 Create QAReport, QAIssue, RubricScores, IssueCounts models in backend/src/models/qa_report.py (include truncated, total_issue_count fields)
+- [x] T004 [P] Add qaReport field to Project model in backend/src/models/project.py
+- [x] T005 [P] Create schema contract tests in backend/tests/unit/test_qa_models.py
 
 **Checkpoint**: Foundation ready - QA models available for all stories
 
@@ -47,25 +60,25 @@
 
 > **NOTE: Write tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T006 [P] [US1] Create unit tests for structural analysis in backend/tests/unit/test_qa_structural.py
-- [ ] T007 [P] [US1] Create unit tests for semantic analysis in backend/tests/unit/test_qa_semantic.py
-- [ ] T008 [P] [US1] Create integration tests for QA API in backend/tests/integration/test_qa_api.py
+- [x] T006 [P] [US1] Create unit tests for structural analysis in backend/tests/unit/test_qa_structural.py
+- [x] T007 [P] [US1] Create unit tests for semantic analysis in backend/tests/unit/test_qa_semantic.py
+- [x] T008 [P] [US1] Create integration tests for QA API in backend/tests/integration/test_qa_api.py
 
 ### Implementation for User Story 1
 
-- [ ] T009 [P] [US1] Implement n-gram repetition detection in backend/src/services/qa_structural.py
-- [ ] T010 [P] [US1] Implement heading hierarchy validation in backend/src/services/qa_structural.py
-- [ ] T011 [P] [US1] Implement paragraph length analysis in backend/src/services/qa_structural.py
-- [ ] T012 [P] [US1] Implement chapter balance analysis in backend/src/services/qa_structural.py
-- [ ] T013 [US1] Implement faithfulness scoring (LLM-based) in backend/src/services/qa_semantic.py
-- [ ] T014 [US1] Implement clarity assessment (LLM-based) in backend/src/services/qa_semantic.py
-- [ ] T015 [US1] Create QA evaluator service combining structural + semantic in backend/src/services/qa_evaluator.py (cap issues at 300, compute issue_counts, set truncated flag)
-- [ ] T016 [US1] Create QA job store for async job tracking in backend/src/services/qa_job_store.py (reuse pattern from draft_service)
-- [ ] T017 [US1] Create QA API routes (analyze → job_id, status/{job_id}, report) in backend/src/api/routes/qa.py
-- [ ] T018 [US1] Register QA routes in backend/src/api/main.py
-- [ ] T019 [US1] Integrate QA auto-trigger after draft completion in backend/src/services/draft_service.py
-- [ ] T020 [US1] Implement unit tests (make tests pass) in backend/tests/unit/test_qa_structural.py
-- [ ] T021 [US1] Implement integration tests (make tests pass) in backend/tests/integration/test_qa_api.py
+- [x] T009 [P] [US1] Implement n-gram repetition detection in backend/src/services/qa_structural.py
+- [x] T010 [P] [US1] Implement heading hierarchy validation in backend/src/services/qa_structural.py
+- [x] T011 [P] [US1] Implement paragraph length analysis in backend/src/services/qa_structural.py
+- [x] T012 [P] [US1] Implement chapter balance analysis in backend/src/services/qa_structural.py
+- [x] T013 [US1] Implement faithfulness scoring (LLM-based) in backend/src/services/qa_semantic.py
+- [x] T014 [US1] Implement clarity assessment (LLM-based) in backend/src/services/qa_semantic.py
+- [x] T015 [US1] Create QA evaluator service combining structural + semantic in backend/src/services/qa_evaluator.py (cap issues at 300, compute issue_counts, set truncated flag)
+- [x] T016 [US1] Create QA job store for async job tracking in backend/src/services/qa_job_store.py (reuse pattern from draft_service)
+- [x] T017 [US1] Create QA API routes (analyze → job_id, status/{job_id}, report) in backend/src/api/routes/qa.py
+- [x] T018 [US1] Register QA routes in backend/src/api/main.py
+- [x] T019 [US1] Integrate QA auto-trigger after draft completion in backend/src/services/draft_service.py
+- [x] T020 [US1] Implement unit tests (make tests pass) in backend/tests/unit/test_qa_structural.py
+- [x] T021 [US1] Implement integration tests (make tests pass) in backend/tests/integration/test_qa_api.py
 
 **Checkpoint**: QA reports generate automatically after draft completion. Can test via API.
 
@@ -79,50 +92,56 @@
 
 ### Implementation for User Story 2
 
-- [ ] T022 [P] [US2] Create QA API client in frontend/src/services/qaApi.ts (include polling for job status)
-- [ ] T023 [P] [US2] Create useQA hook for state management in frontend/src/hooks/useQA.ts
-- [ ] T024 [US2] Create QAIssueList component in frontend/src/components/tab3/QAIssueList.tsx (handle truncated display)
-- [ ] T025 [US2] Create QAPanel component with badge and expandable list in frontend/src/components/tab3/QAPanel.tsx
-- [ ] T026 [US2] Integrate QAPanel into Tab3Content in frontend/src/components/tab3/Tab3Content.tsx
-- [ ] T027 [US2] Add severity icons and color coding to issue display
-- [ ] T028 [US2] Test QA panel displays correctly after draft generation
+- [x] T022 [P] [US2] Create QA API client in frontend/src/services/qaApi.ts (include polling for job status)
+- [x] T023 [P] [US2] Create useQA hook for state management in frontend/src/hooks/useQA.ts
+- [x] T024 [US2] Create QAIssueList component in frontend/src/components/tab3/QAIssueList.tsx (handle truncated display)
+- [x] T025 [US2] Create QAPanel component with badge and expandable list in frontend/src/components/tab3/QAPanel.tsx
+- [x] T026 [US2] Integrate QAPanel into Tab3Content in frontend/src/components/tab3/Tab3Content.tsx
+- [x] T027 [US2] Add severity icons and color coding to issue display
+- [x] T028 [US2] Test QA panel displays correctly after draft generation
 
 **Checkpoint**: QA results visible in Tab3 UI. MVP complete (US1 + US2).
 
 ---
 
-## Phase 5: User Story 3 - Editor Pass (Priority: P2)
+## Phase 5: User Story 3 - Editor Pass (Priority: P2) ❌ SUPERSEDED
 
-**Goal**: Optional improvement pass that rewrites text to fix issues without adding facts
+> **⚠️ SUPERSEDED BY SPEC 009**: Do not implement this phase.
+> See `/specs/009-evidence-grounded/tasks.md` Phase 4: US3 - Targeted Rewrite Pass
 
-**Independent Test**: Click "Run Improve Pass" → See progress → View before/after → Verify repetition reduced
+~~**Goal**: Optional improvement pass that rewrites text to fix issues without adding facts~~
 
-### Tests for User Story 3
+~~**Independent Test**: Click "Run Improve Pass" → See progress → View before/after → Verify repetition reduced~~
 
-- [ ] T029 [P] [US3] Create unit tests for editor pass in backend/tests/unit/test_editor_pass.py
-- [ ] T030 [P] [US3] Create integration tests for improve endpoint in backend/tests/integration/test_editor_pass_api.py
+### ~~Tests for User Story 3~~
 
-### Implementation for User Story 3
+- [x] ~~T029 [P] [US3] Create unit tests for editor pass~~ → SUPERSEDED
+- [x] ~~T030 [P] [US3] Create integration tests for improve endpoint~~ → SUPERSEDED
 
-- [ ] T031 [US3] Create EditorPassResult model in backend/src/models/qa_report.py
-- [ ] T032 [US3] Implement editor pass service in backend/src/services/editor_pass.py
-- [ ] T033 [US3] Add improve endpoint to QA routes in backend/src/api/routes/qa.py
-- [ ] T034 [US3] Add faithfulness verification after edit in backend/src/services/editor_pass.py
-- [ ] T035 [US3] Add "Run Improve Pass" button to QAPanel in frontend/src/components/tab3/QAPanel.tsx
-- [ ] T036 [US3] Create before/after diff view component in frontend/src/components/tab3/DraftDiffView.tsx
-- [ ] T037 [US3] Implement editor pass tests (make tests pass)
+### ~~Implementation for User Story 3~~
 
-**Checkpoint**: Editor pass available and reduces issues without breaking faithfulness.
+- [x] ~~T031 [US3] Create EditorPassResult model~~ → SUPERSEDED
+- [x] ~~T032 [US3] Implement editor pass service~~ → SUPERSEDED
+- [x] ~~T033 [US3] Add improve endpoint to QA routes~~ → SUPERSEDED
+- [x] ~~T034 [US3] Add faithfulness verification after edit~~ → SUPERSEDED
+- [x] ~~T035 [US3] Add "Run Improve Pass" button to QAPanel~~ → SUPERSEDED
+- [x] ~~T036 [US3] Create before/after diff view component~~ → SUPERSEDED
+- [x] ~~T037 [US3] Implement editor pass tests~~ → SUPERSEDED
+
+**Checkpoint**: ~~Editor pass available~~ → See Spec 009 for Targeted Rewrite Pass
 
 ---
 
-## Phase 6: User Story 4 - Regression Suite (Priority: P2)
+## Phase 6: User Story 4 - Regression Suite (Priority: P2) ⏸️ DEFERRED
+
+> **⏸️ DEFERRED**: This phase is deferred until after Spec 009 is complete.
+> Can be implemented later if regression testing is needed.
 
 **Goal**: Regression suite with golden projects to track quality over time
 
 **Independent Test**: Run regression suite in CI → See score comparison → Flag if below baseline
 
-### Implementation for User Story 4
+### Implementation for User Story 4 (DEFERRED)
 
 - [ ] T038 [P] [US4] Create golden projects fixture at specs/008-draft-quality/fixtures/golden_projects.json
 - [ ] T039 [US4] Create regression test runner in backend/tests/fixtures/test_qa_regression.py
@@ -130,7 +149,7 @@
 - [ ] T041 [US4] Add CI-compatible output (pass/fail status)
 - [ ] T042 [US4] Document regression suite usage in specs/008-draft-quality/quickstart.md
 
-**Checkpoint**: Regression suite runnable in CI, catches quality regressions.
+**Checkpoint**: ~~Regression suite runnable in CI~~ → Deferred to post-Spec 009
 
 ---
 

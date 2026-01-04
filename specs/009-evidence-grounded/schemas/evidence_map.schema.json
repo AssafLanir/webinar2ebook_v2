@@ -1,0 +1,211 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "evidence_map.schema.json",
+  "title": "EvidenceMap",
+  "description": "Per-chapter grounding data that maps claims to transcript evidence. Generated before chapter content to ensure all claims are source-grounded.",
+  "type": "object",
+  "required": ["version", "project_id", "content_mode", "chapters"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "Schema version for forward compatibility",
+      "const": 1
+    },
+    "project_id": {
+      "type": "string",
+      "description": "Associated project ID"
+    },
+    "content_mode": {
+      "type": "string",
+      "enum": ["interview", "essay", "tutorial"],
+      "description": "Content mode that determines structure and constraints"
+    },
+    "strict_grounded": {
+      "type": "boolean",
+      "description": "Whether strict grounding is enforced (no claims without evidence)",
+      "default": true
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of generation"
+    },
+    "transcript_hash": {
+      "type": "string",
+      "description": "Hash of transcript used for cache invalidation"
+    },
+    "chapters": {
+      "type": "array",
+      "description": "Evidence entries organized by chapter",
+      "items": {
+        "$ref": "#/$defs/ChapterEvidence"
+      }
+    },
+    "global_context": {
+      "type": "object",
+      "description": "Cross-chapter context extracted from transcript",
+      "additionalProperties": false,
+      "properties": {
+        "speakers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "role": { "type": ["string", "null"] },
+              "mentioned_credentials": { "type": ["string", "null"] }
+            }
+          },
+          "description": "Speakers identified in transcript with only explicitly mentioned info"
+        },
+        "main_topics": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Primary topics covered across the transcript"
+        },
+        "key_terms": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Domain-specific terms that should be used consistently"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "ChapterEvidence": {
+      "type": "object",
+      "description": "Evidence grounding for a single chapter",
+      "required": ["chapter_index", "chapter_title", "claims", "must_include"],
+      "additionalProperties": false,
+      "properties": {
+        "chapter_index": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based chapter index"
+        },
+        "chapter_title": {
+          "type": "string",
+          "description": "Chapter title from outline"
+        },
+        "outline_item_id": {
+          "type": ["string", "null"],
+          "description": "Reference to outline item ID"
+        },
+        "claims": {
+          "type": "array",
+          "description": "Claims that can be made in this chapter, each with supporting evidence",
+          "items": {
+            "$ref": "#/$defs/EvidenceEntry"
+          }
+        },
+        "must_include": {
+          "type": "array",
+          "description": "Key points that MUST appear in this chapter",
+          "items": {
+            "type": "object",
+            "required": ["point", "priority"],
+            "additionalProperties": false,
+            "properties": {
+              "point": {
+                "type": "string",
+                "description": "The key point to include"
+              },
+              "priority": {
+                "type": "string",
+                "enum": ["critical", "important", "optional"],
+                "description": "How important is including this point"
+              },
+              "evidence_ids": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "References to EvidenceEntry IDs that support this point"
+              }
+            }
+          }
+        },
+        "forbidden": {
+          "type": "array",
+          "description": "Content types forbidden in this chapter based on content mode",
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            "action_steps",
+            "invented_biography",
+            "motivational_platitudes",
+            "unsourced_statistics"
+          ]
+        },
+        "transcript_range": {
+          "type": "object",
+          "description": "Approximate range in transcript this chapter covers",
+          "additionalProperties": false,
+          "properties": {
+            "start_char": { "type": "integer", "minimum": 0 },
+            "end_char": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "EvidenceEntry": {
+      "type": "object",
+      "description": "A single claim with its supporting transcript evidence",
+      "required": ["id", "claim", "support"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for this evidence entry"
+        },
+        "claim": {
+          "type": "string",
+          "description": "The claim that can be made based on this evidence"
+        },
+        "support": {
+          "type": "array",
+          "description": "Transcript quotes that support this claim",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["quote"],
+            "additionalProperties": false,
+            "properties": {
+              "quote": {
+                "type": "string",
+                "description": "Exact quote from transcript"
+              },
+              "start_char": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Character offset in transcript"
+              },
+              "end_char": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Character offset in transcript"
+              },
+              "speaker": {
+                "type": ["string", "null"],
+                "description": "Speaker name if identifiable"
+              }
+            }
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Confidence that the claim is well-supported (0-1)"
+        },
+        "claim_type": {
+          "type": "string",
+          "enum": ["factual", "opinion", "recommendation", "anecdote", "definition"],
+          "description": "Type of claim for appropriate handling"
+        }
+      }
+    }
+  }
+}
