@@ -195,5 +195,49 @@ export const STYLE_PRESETS: StylePreset[] = [
         output_format: "markdown"
       }
     }
+  },
+  {
+    id: "interview_qa_v1",
+    label: "Interview Q&A",
+    description: "Preserves interview structure with questions as headers. No artificial takeaways.",
+    value: {
+      version: 1,
+      preset_id: "interview_qa_v1",
+      style: {
+        book_format: "interview_qa",
+        primary_goal: "inform",
+        reader_role: "general",
+        target_audience: "mixed",
+        tone: "conversational",
+        formality: "medium",
+        brand_voice: "neutral",
+        perspective: "third_person",
+        reading_level: "standard",
+        chapter_count_target: 6,
+        chapter_length_target: "medium",
+        total_length_preset: "standard",
+        detail_level: "balanced",
+        include_summary_per_chapter: false,
+        include_key_takeaways: false,
+        include_action_steps: false,
+        include_checklists: false,
+        include_templates: false,
+        include_examples: false,
+        faithfulness_level: "strict",
+        allowed_extrapolation: "none",
+        source_policy: "transcript_only",
+        citation_style: "none",
+        avoid_hallucinations: true,
+        visual_density: "light",
+        preferred_visual_types: ["photo"],
+        visual_source_policy: "client_assets_only",
+        caption_style: "short",
+        diagram_style: "simple",
+        resolve_repetitions: "keep",
+        handle_q_and_a: "weave_into_chapters",
+        include_speaker_quotes: "often",
+        output_format: "markdown"
+      }
+    }
   }
 ];

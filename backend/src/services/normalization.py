@@ -42,6 +42,39 @@ def _sanitize_style_fields(style: dict) -> dict:
     return result
 
 
+def _enforce_interview_qa_settings(style: dict) -> dict:
+    """Enforce required settings for interview_qa book format.
+
+    When book_format is 'interview_qa', these settings are forced:
+    - faithfulness_level = 'strict' (preserve speaker's actual words)
+    - include_key_takeaways = False (no artificial summaries)
+    - include_action_steps = False (not a how-to guide)
+    - include_checklists = False (preserve interview structure)
+    - allowed_extrapolation = 'none' (only transcript content)
+
+    Args:
+        style: Style configuration dict
+
+    Returns:
+        Modified style dict with enforced settings
+    """
+    if style.get("book_format") != "interview_qa":
+        return style
+
+    result = style.copy()
+
+    # Enforce strict faithfulness settings
+    result["faithfulness_level"] = "strict"
+    result["allowed_extrapolation"] = "none"
+
+    # Disable synthetic content sections
+    result["include_key_takeaways"] = False
+    result["include_action_steps"] = False
+    result["include_checklists"] = False
+
+    return result
+
+
 def normalize_style_config(data: dict | None) -> StyleConfigEnvelope | None:
     """Normalize styleConfig to canonical StyleConfigEnvelope.
 
@@ -62,23 +95,22 @@ def normalize_style_config(data: dict | None) -> StyleConfigEnvelope | None:
 
     # Check if already in envelope format (has 'style' key)
     if "style" in data and isinstance(data.get("style"), dict):
-        # Already an envelope - try validation first
+        # Apply interview_qa enforcement and sanitization
+        processed_style = _sanitize_style_fields(data["style"])
+        processed_style = _enforce_interview_qa_settings(processed_style)
+        processed_data = {**data, "style": processed_style}
+
+        # Ensure version and preset_id exist
+        if "version" not in processed_data:
+            processed_data["version"] = STYLE_CONFIG_VERSION
+        if "preset_id" not in processed_data:
+            processed_data["preset_id"] = "default"
+
         try:
-            return StyleConfigEnvelope.model_validate(data)
+            return StyleConfigEnvelope.model_validate(processed_data)
         except Exception:
-            # Validation failed - try sanitizing enum values
-            sanitized_style = _sanitize_style_fields(data["style"])
-            sanitized_data = {**data, "style": sanitized_style}
-            # Ensure version and preset_id exist
-            if "version" not in sanitized_data:
-                sanitized_data["version"] = STYLE_CONFIG_VERSION
-            if "preset_id" not in sanitized_data:
-                sanitized_data["preset_id"] = "sanitized_migrated"
-            try:
-                return StyleConfigEnvelope.model_validate(sanitized_data)
-            except Exception:
-                # Still can't parse - return None
-                return None
+            # Still can't parse - return None
+            return None
 
     # Check for legacy format (has old keys like 'audience', 'tone', 'depth', 'targetPages')
     legacy_keys = {"audience", "tone", "depth", "targetPages"}

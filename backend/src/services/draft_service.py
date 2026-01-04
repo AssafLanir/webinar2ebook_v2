@@ -50,6 +50,9 @@ from .prompts import (
     parse_outline_to_chapters,
     VISUAL_OPPORTUNITY_SYSTEM_PROMPT,
     build_visual_opportunity_user_prompt,
+    # Interview Q&A format
+    build_interview_qa_system_prompt,
+    build_interview_qa_chapter_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -587,25 +590,41 @@ async def generate_chapter(
     # Get transcript segment for this chapter
     transcript_segment = extract_transcript_segment(transcript, chapter_plan)
 
-    # Get context from previous/next chapters
-    previous_ending = get_previous_chapter_ending(chapters_completed)
-    chapter_index = chapter_plan.chapter_number - 1
-    next_preview = get_next_chapter_preview(all_chapters, chapter_index)
+    # Check if using Interview Q&A format
+    book_format = style_dict.get("book_format", "guide")
 
-    # Build prompts
-    system_prompt = build_chapter_system_prompt(
-        book_title=book_title,
-        chapter_number=chapter_plan.chapter_number,
-        style_config=style_dict,
-        words_per_chapter_target=words_per_chapter_target,
-        detail_level=detail_level,
-    )
-    user_prompt = build_chapter_user_prompt(
-        chapter_plan=chapter_plan,
-        transcript_segment=transcript_segment,
-        previous_chapter_ending=previous_ending,
-        next_chapter_preview=next_preview,
-    )
+    if book_format == "interview_qa":
+        # Use Q&A-specific prompts
+        speaker_name = _extract_speaker_name(transcript)
+        system_prompt = build_interview_qa_system_prompt(
+            book_title=book_title,
+            speaker_name=speaker_name,
+        )
+        user_prompt = build_interview_qa_chapter_prompt(
+            chapter_plan=chapter_plan,
+            transcript_segment=transcript_segment,
+            speaker_name=speaker_name,
+        )
+    else:
+        # Use standard chapter prompts
+        # Get context from previous/next chapters
+        previous_ending = get_previous_chapter_ending(chapters_completed)
+        chapter_index = chapter_plan.chapter_number - 1
+        next_preview = get_next_chapter_preview(all_chapters, chapter_index)
+
+        system_prompt = build_chapter_system_prompt(
+            book_title=book_title,
+            chapter_number=chapter_plan.chapter_number,
+            style_config=style_dict,
+            words_per_chapter_target=words_per_chapter_target,
+            detail_level=detail_level,
+        )
+        user_prompt = build_chapter_user_prompt(
+            chapter_plan=chapter_plan,
+            transcript_segment=transcript_segment,
+            previous_chapter_ending=previous_ending,
+            next_chapter_preview=next_preview,
+        )
 
     request = LLMRequest(
         model=CHAPTER_MODEL,
@@ -621,6 +640,38 @@ async def generate_chapter(
 
     logger.debug(f"Generated chapter {chapter_plan.chapter_number}: {len(response.text)} chars")
     return response.text
+
+
+def _extract_speaker_name(transcript: str) -> str:
+    """Extract the primary speaker name from transcript.
+
+    Looks for patterns like "Name:" at the start of lines.
+    Returns "The speaker" if no clear pattern found.
+
+    Args:
+        transcript: The transcript text.
+
+    Returns:
+        Extracted speaker name or default.
+    """
+    import re
+
+    # Find speaker patterns like "Name:" at line starts (excluding "Host:")
+    pattern = r'^([A-Z][a-zA-Z\s]+):'
+    matches = re.findall(pattern, transcript, re.MULTILINE)
+
+    # Filter out common host/interviewer labels
+    host_labels = {"Host", "Interviewer", "Q", "Question", "Moderator"}
+    speakers = [m.strip() for m in matches if m.strip() not in host_labels]
+
+    if speakers:
+        # Return most common non-host speaker
+        from collections import Counter
+        counter = Counter(speakers)
+        most_common = counter.most_common(1)[0][0]
+        return most_common
+
+    return "The speaker"
 
 
 def assemble_chapters(

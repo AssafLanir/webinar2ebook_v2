@@ -547,3 +547,147 @@ Transcript segment:
 ```
 
 Respond with JSON: {{"goals": ["goal1", ...], "additional_key_points": ["point1", ...]}}"""
+
+
+# ==============================================================================
+# Interview Q&A Prompts (book_format: interview_qa)
+# ==============================================================================
+
+INTERVIEW_QA_SYSTEM_PROMPT = """You are formatting an interview transcript into a readable Q&A ebook.
+
+Your task is to preserve the interview's natural question-and-answer structure while making it
+readable and engaging. The speaker's voice, insights, and personality should shine through.
+
+## Output Structure
+
+Organize content using this hierarchy:
+- ## Topic headers (h2) - Group related questions by theme
+- ### Question headers (h3) - Each question from the host becomes a section header
+- Body text - The speaker's response, edited for readability but preserving their voice
+- > Blockquotes - Use for particularly notable or quotable statements
+
+## Formatting Guidelines
+
+1. **Question headers**: Rephrase host questions as engaging section headers at ### level
+   - Original: "Host: So how did you get started in physics?"
+   - Header: "### How did you get started in physics?"
+
+2. **Speaker voice**: Preserve the speaker's actual words and phrasing
+   - Clean up verbal tics (um, uh, you know) for readability
+   - Keep distinctive phrases and expressions
+   - Maintain the conversational, authentic feel
+
+3. **Blockquotes**: Use for memorable, quotable statements
+   - Select 1-3 standout quotes per topic section
+   - Choose statements that capture key insights or the speaker's character
+
+4. **Topic grouping**: Group related Q&A exchanges under ## topic headers
+   - Use natural themes that emerge from the conversation
+   - 2-5 questions per topic section is typical
+
+## Forbidden Patterns
+
+Do NOT include:
+- "Key Takeaways" sections - this is not a how-to guide
+- "Action Steps" or "Action Items" - this is a conversation, not a tutorial
+- "Summary" sections - let the conversation speak for itself
+- Bullet lists of "lessons learned" - avoid reducing insights to listicles
+- Invented biographical information - only use what the speaker actually says
+- Generic platitudes or filler text
+
+The goal is to preserve the authentic interview experience while making it readable as an ebook."""
+
+
+def build_interview_qa_system_prompt(
+    book_title: str,
+    speaker_name: str,
+) -> str:
+    """Build system prompt for Interview Q&A format generation.
+
+    Args:
+        book_title: Title of the ebook.
+        speaker_name: Name of the interview subject/speaker.
+
+    Returns:
+        Formatted system prompt string.
+    """
+    return f"""{INTERVIEW_QA_SYSTEM_PROMPT}
+
+## Book Context
+
+- Book title: "{book_title}"
+- Primary speaker: {speaker_name}
+
+Attribute insights and quotes to {speaker_name}. Use their name naturally in the text
+where attribution adds clarity."""
+
+
+def build_interview_qa_chapter_prompt(
+    chapter_plan: ChapterPlan,
+    transcript_segment: str,
+    speaker_name: str,
+) -> str:
+    """Build user prompt for Interview Q&A chapter generation.
+
+    This prompt instructs the LLM to:
+    - Extract questions from the transcript as section headers
+    - Group questions by topic/theme
+    - Preserve the speaker's voice with selective blockquotes
+
+    Args:
+        chapter_plan: The ChapterPlan for this chapter.
+        transcript_segment: The mapped transcript text for this chapter.
+        speaker_name: Name of the speaker for attribution.
+
+    Returns:
+        Formatted user prompt string.
+    """
+    parts = [
+        f"## Chapter: {chapter_plan.title}",
+        "",
+        "## Instructions",
+        "",
+        "Transform this transcript segment into Q&A format:",
+        "",
+        "1. **Identify questions**: Find each question posed by the host",
+        "2. **Create ### headers**: Convert questions into engaging section headers",
+        "3. **Preserve answers**: Edit the speaker's responses for readability while keeping their voice",
+        "4. **Add blockquotes**: Mark 1-3 particularly notable statements with > blockquotes",
+        f"5. **Attribution**: Attribute insights to {speaker_name} where helpful",
+        "",
+        "## Topic Guidance",
+    ]
+
+    if chapter_plan.key_points:
+        parts.append("")
+        parts.append("This chapter should cover these topics:")
+        for point in chapter_plan.key_points:
+            parts.append(f"- {point}")
+
+    parts.extend([
+        "",
+        "## Transcript Segment",
+        f"```",
+        transcript_segment,
+        "```",
+        "",
+        "## Output Format",
+        "",
+        "Use this structure:",
+        "```",
+        "## [Topic Theme]",
+        "",
+        "### [Question as header]",
+        "",
+        "[Speaker's response, edited for readability]",
+        "",
+        "> [Notable quote from speaker]",
+        "",
+        "### [Next question]",
+        "...",
+        "```",
+        "",
+        f"Write Chapter {chapter_plan.chapter_number}: {chapter_plan.title}",
+    ])
+
+    return "\n".join(parts)
