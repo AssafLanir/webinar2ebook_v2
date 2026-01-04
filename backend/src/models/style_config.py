@@ -16,6 +16,13 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
+class ContentMode(str, Enum):
+    """Content type that determines structure and constraints (Spec 009)."""
+    interview = "interview"  # Narrative, speaker insights, quotes
+    essay = "essay"          # Argument/thesis structure
+    tutorial = "tutorial"    # Step-by-step, action items allowed
+
+
 class TargetAudience(str, Enum):
     beginners = "beginners"
     intermediate = "intermediate"
@@ -245,6 +252,16 @@ class StyleConfig(BaseModel):
     include_checklists: bool = Field(default=False)
     include_templates: bool = Field(default=False)
     include_examples: bool = Field(default=True)
+
+    # Content mode and grounding (Spec 009)
+    content_mode: ContentMode = Field(
+        default=ContentMode.interview,
+        description="Type of source content - affects structure and constraints"
+    )
+    strict_grounded: bool = Field(
+        default=True,
+        description="When true, only generate content supported by Evidence Map"
+    )
 
     # Accuracy / policy
     faithfulness_level: FaithfulnessLevel = Field(default=FaithfulnessLevel.balanced)

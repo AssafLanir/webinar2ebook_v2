@@ -333,3 +333,266 @@ async def cancel_qa_job(job_id: str) -> dict:
         "message": "Cancellation requested",
         "cancelled": True,
     })
+
+
+# ============================================================================
+# Rewrite Endpoints (Spec 009 US3)
+# ============================================================================
+
+class RewriteRequest(BaseModel):
+    """Request to start a targeted rewrite."""
+    project_id: str = Field(description="Project ID to rewrite")
+    issue_types: Optional[list[str]] = Field(
+        default=None,
+        description="Only fix these issue types (default: all)"
+    )
+    pass_number: int = Field(
+        default=1, ge=1, le=3,
+        description="Which rewrite pass (max 3)"
+    )
+
+
+class RewriteStartData(BaseModel):
+    """Response data for rewrite start."""
+    job_id: str = Field(description="Job ID for polling")
+    status: str = Field(description="Initial status")
+    message: str = Field(description="Status message")
+    warning: Optional[str] = Field(default=None, description="Multi-pass warning if applicable")
+
+
+class RewriteStatusData(BaseModel):
+    """Response data for rewrite status."""
+    job_id: str = Field(description="Job identifier")
+    status: str = Field(description="Current status")
+    progress_pct: int = Field(ge=0, le=100, description="Progress percentage")
+    sections_rewritten: Optional[int] = Field(default=None)
+    issues_addressed: Optional[int] = Field(default=None)
+    diffs: Optional[list[dict]] = Field(default=None, description="Section diffs when complete")
+    error: Optional[str] = Field(default=None)
+
+
+# Rewrite job store (in-memory for now, similar to QA jobs)
+_rewrite_jobs: dict[str, dict] = {}
+
+
+async def run_rewrite_task(
+    job_id: str,
+    project_id: str,
+    issue_types: Optional[list[str]],
+    pass_number: int,
+) -> None:
+    """Background task to run rewrite."""
+    from src.models.qa_report import IssueType
+    from src.services.rewrite_service import (
+        create_rewrite_plan,
+        execute_targeted_rewrite,
+        get_rewritten_draft,
+    )
+    from src.services.evidence_service import generate_evidence_map
+    from src.models import ChapterPlan
+
+    try:
+        _rewrite_jobs[job_id]["status"] = "running"
+        _rewrite_jobs[job_id]["progress_pct"] = 10
+
+        # Fetch project
+        project = await get_project(project_id)
+        if not project:
+            _rewrite_jobs[job_id]["status"] = "failed"
+            _rewrite_jobs[job_id]["error"] = f"Project {project_id} not found"
+            return
+
+        draft = project.draftText
+        if not draft:
+            _rewrite_jobs[job_id]["status"] = "failed"
+            _rewrite_jobs[job_id]["error"] = "No draft to rewrite"
+            return
+
+        qa_report = project.qaReport
+        if not qa_report:
+            _rewrite_jobs[job_id]["status"] = "failed"
+            _rewrite_jobs[job_id]["error"] = "No QA report - run QA analysis first"
+            return
+
+        _rewrite_jobs[job_id]["progress_pct"] = 30
+
+        # Get evidence map if available
+        evidence_map = project.evidenceMap if hasattr(project, 'evidenceMap') and project.evidenceMap else None
+
+        # Convert issue type strings to enums
+        issue_type_enums = None
+        if issue_types:
+            issue_type_enums = [IssueType(t) for t in issue_types]
+
+        # Create rewrite plan
+        _rewrite_jobs[job_id]["progress_pct"] = 40
+        plan = create_rewrite_plan(
+            project_id=project_id,
+            draft=draft,
+            qa_report=qa_report,
+            evidence_map=evidence_map,
+            pass_number=pass_number,
+            issue_types=issue_type_enums,
+        )
+
+        if not plan.sections:
+            _rewrite_jobs[job_id]["status"] = "completed"
+            _rewrite_jobs[job_id]["progress_pct"] = 100
+            _rewrite_jobs[job_id]["sections_rewritten"] = 0
+            _rewrite_jobs[job_id]["issues_addressed"] = 0
+            _rewrite_jobs[job_id]["message"] = "No sections matched for rewrite"
+            return
+
+        # Execute rewrite
+        _rewrite_jobs[job_id]["progress_pct"] = 60
+        result = await execute_targeted_rewrite(
+            draft=draft,
+            rewrite_plan=plan,
+            evidence_map=evidence_map,
+        )
+
+        # Get updated draft
+        updated_draft = get_rewritten_draft(draft, result)
+
+        # Save updated draft to project
+        _rewrite_jobs[job_id]["progress_pct"] = 90
+        await patch_project(project_id, {"draftText": updated_draft})
+
+        # Mark complete
+        _rewrite_jobs[job_id]["status"] = "completed"
+        _rewrite_jobs[job_id]["progress_pct"] = 100
+        _rewrite_jobs[job_id]["sections_rewritten"] = result.sections_rewritten
+        _rewrite_jobs[job_id]["issues_addressed"] = result.issues_addressed
+        _rewrite_jobs[job_id]["diffs"] = [d.model_dump() for d in result.diffs]
+        _rewrite_jobs[job_id]["warnings"] = result.warnings
+
+        logger.info(
+            f"Rewrite complete for project {project_id}: "
+            f"{result.sections_rewritten} sections, {result.issues_addressed} issues"
+        )
+
+    except Exception as e:
+        logger.exception(f"Rewrite failed for job {job_id}: {e}")
+        _rewrite_jobs[job_id]["status"] = "failed"
+        _rewrite_jobs[job_id]["error"] = str(e)[:500]
+
+
+@router.post("/rewrite")
+async def start_rewrite(
+    request: RewriteRequest,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    """Start a targeted rewrite to fix QA issues.
+
+    Creates a background job that rewrites sections flagged by QA
+    without adding new claims beyond those in the Evidence Map.
+
+    Args:
+        request: Rewrite request with project_id and options.
+        background_tasks: FastAPI background tasks.
+
+    Returns:
+        Job ID and status for polling.
+    """
+    from src.services.rewrite_service import should_allow_rewrite_pass
+
+    # Check if project exists
+    project = await get_project(request.project_id)
+    if not project:
+        return JSONResponse(
+            status_code=404,
+            content=error_response(
+                "PROJECT_NOT_FOUND",
+                f"Project {request.project_id} not found",
+            ),
+        )
+
+    # Check if draft exists
+    if not project.draftText:
+        return JSONResponse(
+            status_code=400,
+            content=error_response(
+                "NO_DRAFT",
+                "Project has no draft to rewrite",
+            ),
+        )
+
+    # Check if QA report exists
+    if not project.qaReport:
+        return JSONResponse(
+            status_code=400,
+            content=error_response(
+                "NO_QA_REPORT",
+                "Run QA analysis before rewriting",
+            ),
+        )
+
+    # Check pass number
+    allowed, warning = should_allow_rewrite_pass(request.pass_number)
+    if not allowed:
+        return JSONResponse(
+            status_code=400,
+            content=error_response(
+                "MAX_PASSES_EXCEEDED",
+                warning or "Maximum rewrite passes exceeded",
+            ),
+        )
+
+    # Create job
+    import uuid
+    job_id = str(uuid.uuid4())
+    _rewrite_jobs[job_id] = {
+        "job_id": job_id,
+        "project_id": request.project_id,
+        "status": "queued",
+        "progress_pct": 0,
+        "pass_number": request.pass_number,
+    }
+
+    # Start background task
+    background_tasks.add_task(
+        run_rewrite_task,
+        job_id,
+        request.project_id,
+        request.issue_types,
+        request.pass_number,
+    )
+
+    return success_response({
+        "job_id": job_id,
+        "status": "queued",
+        "message": "Rewrite started",
+        "warning": warning,
+    })
+
+
+@router.get("/rewrite/{job_id}")
+async def get_rewrite_status(job_id: str) -> dict:
+    """Get rewrite job status.
+
+    Poll this endpoint to track progress and get results.
+
+    Args:
+        job_id: The job identifier from /rewrite.
+
+    Returns:
+        Current status, progress, and diffs when complete.
+    """
+    job = _rewrite_jobs.get(job_id)
+
+    if not job:
+        return JSONResponse(
+            status_code=404,
+            content=error_response("JOB_NOT_FOUND", f"Job {job_id} not found"),
+        )
+
+    return success_response({
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "progress_pct": job.get("progress_pct", 0),
+        "sections_rewritten": job.get("sections_rewritten"),
+        "issues_addressed": job.get("issues_addressed"),
+        "diffs": job.get("diffs"),
+        "error": job.get("error"),
+        "warnings": job.get("warnings"),
+    })

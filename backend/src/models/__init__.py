@@ -23,6 +23,7 @@ from .style_config import (
     STYLE_CONFIG_VERSION,
     style_config_json_schema,
     # Enums
+    ContentMode,  # Spec 009
     TargetAudience,
     ReaderRole,
     PrimaryGoal,
@@ -118,6 +119,28 @@ from .qa_report import (
 from .qa_job import (
     QAJob,
     QAJobStatus,
+)
+# Evidence Map models (Spec 009)
+from .evidence_map import (
+    EvidenceMap,
+    ChapterEvidence,
+    EvidenceEntry,
+    SupportQuote,
+    MustIncludeItem,
+    TranscriptRange,
+    GlobalContext,
+    SpeakerInfo,
+    ClaimType,
+    MustIncludePriority,
+)
+# Rewrite Plan models (Spec 009)
+from .rewrite_plan import (
+    RewritePlan,
+    RewriteSection,
+    RewriteResult,
+    SectionDiff,
+    IssueReference,
+    IssueTypeEnum,
 )
 
 __all__ = [
@@ -230,4 +253,24 @@ __all__ = [
     # QA job models
     "QAJob",
     "QAJobStatus",
+    # Evidence Map models (Spec 009)
+    "EvidenceMap",
+    "ChapterEvidence",
+    "EvidenceEntry",
+    "SupportQuote",
+    "MustIncludeItem",
+    "TranscriptRange",
+    "GlobalContext",
+    "SpeakerInfo",
+    "ClaimType",
+    "MustIncludePriority",
+    # Rewrite Plan models (Spec 009)
+    "RewritePlan",
+    "RewriteSection",
+    "RewriteResult",
+    "SectionDiff",
+    "IssueReference",
+    "IssueTypeEnum",
+    # Content Mode (Spec 009)
+    "ContentMode",
 ]

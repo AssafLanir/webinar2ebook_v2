@@ -12,7 +12,8 @@ import type { VisualPlan } from './visuals'
 // Job Status
 // ============================================================================
 
-export type JobStatus = 'queued' | 'planning' | 'generating' | 'completed' | 'cancelled' | 'failed'
+// evidence_map phase added for Spec 009
+export type JobStatus = 'queued' | 'planning' | 'evidence_map' | 'generating' | 'completed' | 'cancelled' | 'failed'
 
 // ============================================================================
 // Progress and Stats
@@ -37,6 +38,26 @@ export interface GenerationStats {
   total_words: number
   generation_time_ms: number
   tokens_used: TokenUsage
+}
+
+// ============================================================================
+// Evidence Map Summary (Spec 009)
+// ============================================================================
+
+export interface ChapterClaimSummary {
+  chapter: number
+  title: string
+  claims: number
+  must_include: number
+}
+
+export interface EvidenceMapSummary {
+  total_claims: number
+  chapters: number
+  content_mode: string
+  strict_grounded: boolean
+  transcript_hash?: string
+  per_chapter_claims?: ChapterClaimSummary[]
 }
 
 // ============================================================================
@@ -131,6 +152,9 @@ export interface DraftStatusData {
   chapters_available?: number
   error_code?: string
   error_message?: string
+  // Spec 009: Evidence Map info
+  evidence_map_summary?: EvidenceMapSummary
+  constraint_warnings?: string[]
 }
 
 export interface DraftCancelData {
@@ -153,7 +177,8 @@ export interface DraftRegenerateData {
 // UI State Types
 // ============================================================================
 
-export type DraftGenerationPhase = 'idle' | 'starting' | 'planning' | 'generating' | 'completed' | 'cancelled' | 'failed'
+// evidence_map phase added for Spec 009
+export type DraftGenerationPhase = 'idle' | 'starting' | 'planning' | 'evidence_map' | 'generating' | 'completed' | 'cancelled' | 'failed'
 
 export interface DraftGenerationState {
   /** Current phase of generation */
@@ -172,6 +197,10 @@ export interface DraftGenerationState {
   visualPlan: VisualPlan | null
   /** Statistics after completion */
   stats: GenerationStats | null
+  /** Evidence Map summary (Spec 009) */
+  evidenceMapSummary: EvidenceMapSummary | null
+  /** Constraint warnings (Spec 009) */
+  constraintWarnings: string[]
 }
 
 export const initialDraftGenerationState: DraftGenerationState = {
@@ -183,6 +212,8 @@ export const initialDraftGenerationState: DraftGenerationState = {
   draftPlan: null,
   visualPlan: null,
   stats: null,
+  evidenceMapSummary: null,
+  constraintWarnings: [],
 }
 
 // ============================================================================

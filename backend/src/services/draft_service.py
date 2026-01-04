@@ -36,7 +36,9 @@ from src.models.style_config import (
     compute_words_per_chapter,
     TotalLengthPreset,
     DetailLevel,
+    ContentMode,
 )
+from src.models.evidence_map import EvidenceMap, ChapterEvidence
 
 from .job_store import get_job_store, get_job, update_job
 from .prompts import (
@@ -53,6 +55,18 @@ from .prompts import (
     # Interview Q&A format
     build_interview_qa_system_prompt,
     build_interview_qa_chapter_prompt,
+    # Evidence-grounded prompts (Spec 009)
+    build_grounded_chapter_system_prompt,
+    build_grounded_chapter_user_prompt,
+    get_content_mode_prompt,
+)
+from .evidence_service import (
+    generate_evidence_map,
+    get_evidence_for_chapter,
+    check_interview_constraints,
+    detect_content_type,
+    generate_mode_warning,
+    evidence_map_to_summary,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,7 +124,7 @@ async def get_job_status(job_id: str) -> Optional[DraftStatusData]:
         return None
 
     # Determine what to return based on status
-    is_active = job.status in (JobStatus.queued, JobStatus.planning, JobStatus.generating)
+    is_active = job.status in (JobStatus.queued, JobStatus.planning, JobStatus.evidence_map, JobStatus.generating)
     is_completed = job.status == JobStatus.completed
     is_failed = job.status == JobStatus.failed
     is_partial = job.status in (JobStatus.cancelled, JobStatus.failed)
@@ -136,6 +150,20 @@ async def get_job_status(job_id: str) -> Optional[DraftStatusData]:
             estimated_remaining_seconds=0,
         )
 
+    # Build Evidence Map summary (Spec 009)
+    evidence_summary = None
+    if job.evidence_map:
+        from src.models.evidence_map import EvidenceMap
+        try:
+            emap = EvidenceMap.model_validate(job.evidence_map)
+            evidence_summary = evidence_map_to_summary(emap)
+        except Exception:
+            # If validation fails, use raw data
+            evidence_summary = {
+                "total_claims": len(job.evidence_map.get("chapters", [])),
+                "content_mode": job.evidence_map.get("content_mode", "interview"),
+            }
+
     return DraftStatusData(
         job_id=job.job_id,
         status=job.status,
@@ -148,6 +176,9 @@ async def get_job_status(job_id: str) -> Optional[DraftStatusData]:
         chapters_available=len(job.chapters_completed) if has_chapters else None,
         error_code=job.error_code if is_failed else None,
         error_message=job.error if is_failed else None,
+        # Spec 009: Evidence Map info
+        evidence_map_summary=evidence_summary,
+        constraint_warnings=job.constraint_warnings if job.constraint_warnings else None,
     )
 
 
@@ -282,7 +313,57 @@ async def _generate_draft_task(
             logger.info(f"Job {job_id}: Cancelled during planning")
             return
 
-        # Phase 2: Generate chapters
+        # Phase 2: Generate Evidence Map (Spec 009)
+        await update_job(job_id, status=JobStatus.evidence_map)
+        logger.info(f"Job {job_id}: Starting evidence map generation")
+
+        # Extract content mode from style config
+        style_dict = request.style_config.get("style", request.style_config) if isinstance(request.style_config, dict) else {}
+        content_mode_str = style_dict.get("content_mode", "interview")
+        try:
+            content_mode = ContentMode(content_mode_str)
+        except ValueError:
+            content_mode = ContentMode.interview
+        strict_grounded = style_dict.get("strict_grounded", True)
+
+        # Detect content type and generate warning if mismatch
+        constraint_warnings: list[str] = []
+        detected_mode, confidence = detect_content_type(request.transcript)
+        mode_warning = generate_mode_warning(detected_mode, content_mode, confidence)
+        if mode_warning:
+            constraint_warnings.append(mode_warning)
+            logger.warning(f"Job {job_id}: {mode_warning}")
+
+        # Generate Evidence Map
+        evidence_map = await generate_evidence_map(
+            project_id=job.project_id or job_id,
+            transcript=request.transcript,
+            chapters=draft_plan.chapters,
+            content_mode=content_mode,
+            strict_grounded=strict_grounded,
+            style_config=style_dict,
+        )
+
+        await update_job(
+            job_id,
+            evidence_map=evidence_map.model_dump(mode="json"),
+            content_mode=content_mode,
+            constraint_warnings=constraint_warnings,
+        )
+
+        logger.info(
+            f"Job {job_id}: Evidence Map complete - "
+            f"{sum(len(ch.claims) for ch in evidence_map.chapters)} claims across {len(evidence_map.chapters)} chapters"
+        )
+
+        # Check for cancellation
+        job = await get_job(job_id)
+        if job and job.cancel_requested:
+            await update_job(job_id, status=JobStatus.cancelled)
+            logger.info(f"Job {job_id}: Cancelled during evidence map generation")
+            return
+
+        # Phase 3: Generate chapters
         await update_job(job_id, status=JobStatus.generating)
         logger.info(f"Job {job_id}: Starting generation phase ({len(draft_plan.chapters)} chapters)")
 
@@ -320,6 +401,9 @@ async def _generate_draft_task(
             await update_job(job_id, current_chapter=i + 1)
             logger.debug(f"Job {job_id}: Generating chapter {i + 1}/{len(draft_plan.chapters)}")
 
+            # Get chapter evidence from Evidence Map
+            chapter_evidence = get_evidence_for_chapter(evidence_map, chapter_plan.chapter_number)
+
             chapter_md = await generate_chapter(
                 chapter_plan=chapter_plan,
                 transcript=request.transcript,
@@ -329,7 +413,26 @@ async def _generate_draft_task(
                 all_chapters=draft_plan.chapters,
                 words_per_chapter_target=words_per_chapter,
                 detail_level=detail_level_str,
+                # Spec 009: Evidence-grounded generation
+                chapter_evidence=chapter_evidence,
+                content_mode=content_mode,
+                strict_grounded=strict_grounded,
             )
+
+            # Check for interview mode violations (Spec 009 US2)
+            if content_mode == ContentMode.interview:
+                violations = check_interview_constraints(chapter_md)
+                if violations:
+                    logger.warning(
+                        f"Job {job_id}: Chapter {chapter_plan.chapter_number} has "
+                        f"{len(violations)} interview mode violations"
+                    )
+                    # Add to warnings but don't fail
+                    constraint_warnings.extend([
+                        f"Ch{chapter_plan.chapter_number}: {v['matched_text'][:50]}..."
+                        for v in violations[:3]
+                    ])
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
 
             chapters_completed.append(chapter_md)
             await update_job(job_id, chapters_completed=chapters_completed)
@@ -606,6 +709,10 @@ async def generate_chapter(
     all_chapters: list[ChapterPlan],
     words_per_chapter_target: int = 625,
     detail_level: str = "balanced",
+    # Spec 009: Evidence-grounded generation
+    chapter_evidence: Optional[ChapterEvidence] = None,
+    content_mode: ContentMode = ContentMode.interview,
+    strict_grounded: bool = True,
 ) -> str:
     """Generate a single chapter using LLM.
 
@@ -618,6 +725,9 @@ async def generate_chapter(
         all_chapters: All chapter plans (for next chapter preview).
         words_per_chapter_target: Target word count for this chapter.
         detail_level: Detail level (concise/balanced/detailed).
+        chapter_evidence: Evidence Map data for this chapter (Spec 009).
+        content_mode: Content mode (interview/essay/tutorial) (Spec 009).
+        strict_grounded: Whether to enforce strict grounding (Spec 009).
 
     Returns:
         Generated chapter markdown.
@@ -636,8 +746,13 @@ async def generate_chapter(
     # Check if using Interview Q&A format
     book_format = style_dict.get("book_format", "guide")
 
+    # Get context from previous/next chapters
+    previous_ending = get_previous_chapter_ending(chapters_completed)
+    chapter_index = chapter_plan.chapter_number - 1
+    next_preview = get_next_chapter_preview(all_chapters, chapter_index)
+
     if book_format == "interview_qa":
-        # Use Q&A-specific prompts
+        # Use Q&A-specific prompts (Interview Q&A format from main)
         speaker_name = _extract_speaker_name(transcript)
         system_prompt = build_interview_qa_system_prompt(
             book_title=book_title,
@@ -648,13 +763,31 @@ async def generate_chapter(
             transcript_segment=transcript_segment,
             speaker_name=speaker_name,
         )
+    elif chapter_evidence and chapter_evidence.claims:
+        # Use grounded chapter generation prompts (Spec 009)
+        system_prompt = build_grounded_chapter_system_prompt(
+            book_title=book_title,
+            chapter_number=chapter_plan.chapter_number,
+            style_config=style_dict,
+            words_per_chapter_target=words_per_chapter_target,
+            detail_level=detail_level,
+            content_mode=content_mode.value,
+            strict_grounded=strict_grounded,
+        )
+        user_prompt = build_grounded_chapter_user_prompt(
+            chapter_plan=chapter_plan,
+            evidence_claims=[claim.model_dump() for claim in chapter_evidence.claims],
+            must_include=[item.model_dump() for item in chapter_evidence.must_include],
+            transcript_segment=transcript_segment,
+            previous_chapter_ending=previous_ending,
+            next_chapter_preview=next_preview,
+        )
+        logger.debug(
+            f"Using grounded prompts for chapter {chapter_plan.chapter_number} "
+            f"({len(chapter_evidence.claims)} claims)"
+        )
     else:
-        # Use standard chapter prompts
-        # Get context from previous/next chapters
-        previous_ending = get_previous_chapter_ending(chapters_completed)
-        chapter_index = chapter_plan.chapter_number - 1
-        next_preview = get_next_chapter_preview(all_chapters, chapter_index)
-
+        # Fall back to standard prompts (no evidence available)
         system_prompt = build_chapter_system_prompt(
             book_title=book_title,
             chapter_number=chapter_plan.chapter_number,
@@ -667,6 +800,10 @@ async def generate_chapter(
             transcript_segment=transcript_segment,
             previous_chapter_ending=previous_ending,
             next_chapter_preview=next_preview,
+        )
+        logger.debug(
+            f"Using standard prompts for chapter {chapter_plan.chapter_number} "
+            "(no evidence available)"
         )
 
     request = LLMRequest(

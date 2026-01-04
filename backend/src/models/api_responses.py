@@ -27,6 +27,7 @@ class JobStatus(str, Enum):
     """Status of a draft generation job."""
     queued = "queued"
     planning = "planning"
+    evidence_map = "evidence_map"  # NEW: Evidence Map extraction phase (Spec 009)
     generating = "generating"
     completed = "completed"
     cancelled = "cancelled"
@@ -183,6 +184,16 @@ class DraftStatusData(BaseModel):
     error_message: Optional[str] = Field(
         default=None,
         description="Human-readable error message (only when failed)"
+    )
+
+    # Evidence Map info (Spec 009)
+    evidence_map_summary: Optional[dict] = Field(
+        default=None,
+        description="Summary of Evidence Map (claims per chapter, content mode)"
+    )
+    constraint_warnings: Optional[List[str]] = Field(
+        default=None,
+        description="Warnings about content mode constraints"
     )
 
 

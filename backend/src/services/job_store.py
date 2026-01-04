@@ -21,6 +21,7 @@ from typing import Optional
 from uuid import uuid4
 
 from src.models import GenerationJob, JobStatus, DraftPlan, VisualPlan
+from src.models.style_config import ContentMode
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +286,10 @@ class MongoJobStore(BaseJobStore):
             "cancel_requested": job.cancel_requested,
             "error": job.error,
             "error_code": job.error_code,
+            # Evidence Map fields (Spec 009)
+            "evidence_map": job.evidence_map,
+            "content_mode": job.content_mode.value if job.content_mode else None,
+            "constraint_warnings": job.constraint_warnings,
         }
 
         # Serialize complex objects
@@ -311,6 +316,11 @@ class MongoJobStore(BaseJobStore):
         if doc.get("visual_plan"):
             visual_plan = VisualPlan.model_validate(doc["visual_plan"])
 
+        # Deserialize content_mode (Spec 009)
+        content_mode = None
+        if doc.get("content_mode"):
+            content_mode = ContentMode(doc["content_mode"])
+
         return GenerationJob(
             job_id=doc["job_id"],
             project_id=doc.get("project_id"),
@@ -327,6 +337,10 @@ class MongoJobStore(BaseJobStore):
             cancel_requested=doc.get("cancel_requested", False),
             error=doc.get("error"),
             error_code=doc.get("error_code"),
+            # Evidence Map fields (Spec 009)
+            evidence_map=doc.get("evidence_map"),
+            content_mode=content_mode,
+            constraint_warnings=doc.get("constraint_warnings", []),
         )
 
     async def create_job(self, project_id: Optional[str] = None) -> str:
@@ -427,6 +441,7 @@ class MongoJobStore(BaseJobStore):
             "status": {"$in": [
                 JobStatus.queued.value,
                 JobStatus.planning.value,
+                JobStatus.evidence_map.value,
                 JobStatus.generating.value,
             ]}
         })

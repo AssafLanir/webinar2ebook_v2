@@ -8,11 +8,13 @@
  * - Rerun button for manual analysis
  */
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Card } from '../common/Card'
 import { Button } from '../common/Button'
 import { QAIssueList } from './QAIssueList'
+import { RewriteDiffView } from './RewriteDiffView'
 import { useQA } from '../../hooks/useQA'
+import { useRewrite } from '../../hooks/useRewrite'
 import { getScoreColor, getScoreLabel } from '../../types/qa'
 
 interface QAPanelProps {
@@ -82,6 +84,17 @@ export function QAPanel({ projectId, hasDraft }: QAPanelProps) {
     hasReport,
   } = useQA()
 
+  // Rewrite functionality (US3)
+  const {
+    state: rewriteState,
+    startRewriteJob,
+    reset: resetRewrite,
+    isRewriting,
+    hasDiffs,
+  } = useRewrite()
+
+  const [showDiffs, setShowDiffs] = useState(false)
+
   // Load existing report when projectId changes
   useEffect(() => {
     if (projectId && hasDraft) {
@@ -89,8 +102,27 @@ export function QAPanel({ projectId, hasDraft }: QAPanelProps) {
     }
   }, [projectId, hasDraft, loadReport])
 
+  // Show diffs when rewrite completes
+  useEffect(() => {
+    if (rewriteState.phase === 'completed' && hasDiffs) {
+      setShowDiffs(true)
+    }
+  }, [rewriteState.phase, hasDiffs])
+
   const handleRunAnalysis = () => {
     startAnalysis(projectId, true) // Force rerun
+  }
+
+  const handleFixIssues = () => {
+    // Track how many passes have been run (simple: use 1 for now, could track in state)
+    startRewriteJob(projectId, undefined, 1)
+  }
+
+  const handleCloseDiffs = () => {
+    setShowDiffs(false)
+    resetRewrite()
+    // Reload the report to show updated scores after rewrite
+    loadReport(projectId)
   }
 
   // Don't show panel if no draft
@@ -231,10 +263,83 @@ export function QAPanel({ projectId, hasDraft }: QAPanelProps) {
             </div>
           )}
 
+          {/* Fix Issues Button */}
+          {report.total_issue_count > 0 && !isRewriting && !showDiffs && (
+            <div className="pt-4 border-t border-slate-700">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleFixIssues}
+              >
+                <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                Fix Flagged Issues
+              </Button>
+              <p className="text-xs text-slate-500 mt-2">
+                AI will rewrite only the sections with issues, preserving the rest.
+              </p>
+            </div>
+          )}
+
           {/* Analysis Time */}
           <p className="text-xs text-slate-500 pt-2 border-t border-slate-700">
             Analysis completed in {(report.analysis_duration_ms / 1000).toFixed(1)}s
           </p>
+        </div>
+      )}
+
+      {/* Rewriting State */}
+      {isRewriting && (
+        <div className="py-6">
+          <div className="flex items-center justify-center gap-3 mb-4">
+            <svg className="w-5 h-5 text-cyan-400 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span className="text-slate-300">Rewriting flagged sections...</span>
+          </div>
+          <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-cyan-500 transition-all duration-300"
+              style={{ width: `${rewriteState.progress}%` }}
+            />
+          </div>
+          <p className="text-center text-xs text-slate-500 mt-2">{rewriteState.progress}%</p>
+          {rewriteState.warning && (
+            <p className="text-center text-xs text-yellow-400 mt-2">{rewriteState.warning}</p>
+          )}
+        </div>
+      )}
+
+      {/* Rewrite Error */}
+      {rewriteState.phase === 'failed' && rewriteState.error && (
+        <div className="py-4">
+          <div className="flex items-center gap-2 text-red-400 mb-2">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-sm">Rewrite failed</span>
+          </div>
+          <p className="text-xs text-slate-400">{rewriteState.error}</p>
+          <Button variant="secondary" size="sm" onClick={resetRewrite} className="mt-2">
+            Dismiss
+          </Button>
+        </div>
+      )}
+
+      {/* Rewrite Diffs View */}
+      {showDiffs && hasDiffs && (
+        <div className="pt-4 border-t border-slate-700">
+          <RewriteDiffView diffs={rewriteState.diffs} onClose={handleCloseDiffs} />
+          <div className="mt-4 flex items-center justify-between">
+            <p className="text-sm text-green-400">
+              {rewriteState.sectionsRewritten} section{rewriteState.sectionsRewritten !== 1 ? 's' : ''} rewritten, {rewriteState.issuesAddressed} issue{rewriteState.issuesAddressed !== 1 ? 's' : ''} addressed
+            </p>
+            <Button variant="primary" size="sm" onClick={handleCloseDiffs}>
+              Done
+            </Button>
+          </div>
         </div>
       )}
     </Card>
