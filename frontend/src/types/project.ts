@@ -2,11 +2,12 @@ import type { StyleConfig, StyleConfigEnvelope } from './style'
 import type { VisualPlan } from './visuals'
 
 // Webinar Type - aligned with backend
-export type WebinarType = 'standard_presentation' | 'training_tutorial'
+export type WebinarType = 'standard_presentation' | 'training_tutorial' | 'interview'
 
 export const WEBINAR_TYPE_LABELS: Record<WebinarType, string> = {
   standard_presentation: 'Standard Presentation',
   training_tutorial: 'Training / Tutorial',
+  interview: 'Interview',
 }
 
 // Style Config - re-export from dedicated file

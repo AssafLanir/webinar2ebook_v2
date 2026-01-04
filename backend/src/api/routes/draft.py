@@ -51,7 +51,13 @@ async def generate_draft(request: DraftGenerateRequest) -> dict:
             ),
         )
 
-    if len(request.outline) < 3:
+    # Check book_format for interview_qa (allows empty outline)
+    style_dict = request.style_config.get("style", request.style_config) if isinstance(request.style_config, dict) else {}
+    book_format = style_dict.get("book_format", "guide")
+    is_interview_qa = book_format == "interview_qa"
+
+    # Interview Q&A format allows empty outline (single flowing document)
+    if len(request.outline) < 3 and not is_interview_qa:
         return JSONResponse(
             status_code=400,
             content=error_response(

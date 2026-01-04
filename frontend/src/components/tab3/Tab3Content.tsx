@@ -84,12 +84,15 @@ export function Tab3Content() {
   const validation = useMemo(() => {
     const transcriptLength = project?.transcriptText?.length ?? 0
     const outlineCount = project?.outlineItems?.length ?? 0
+    const bookFormat = styleEnvelope.style.book_format
+    const isInterviewQA = bookFormat === 'interview_qa'
 
     const errors: string[] = []
     if (transcriptLength < MIN_TRANSCRIPT_LENGTH) {
       errors.push(`Transcript must be at least ${MIN_TRANSCRIPT_LENGTH} characters (currently ${transcriptLength})`)
     }
-    if (outlineCount < MIN_OUTLINE_ITEMS) {
+    // Interview Q&A format allows empty outline (generates single flowing Q&A document)
+    if (outlineCount < MIN_OUTLINE_ITEMS && !isInterviewQA) {
       errors.push(`Outline must have at least ${MIN_OUTLINE_ITEMS} items (currently ${outlineCount})`)
     }
 
@@ -99,7 +102,7 @@ export function Tab3Content() {
       transcriptLength,
       outlineCount,
     }
-  }, [project?.transcriptText, project?.outlineItems])
+  }, [project?.transcriptText, project?.outlineItems, styleEnvelope.style.book_format])
 
   // Compute words per chapter hint
   const lengthHint = useMemo(() => {

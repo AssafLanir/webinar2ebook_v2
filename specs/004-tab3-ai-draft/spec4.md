@@ -368,7 +368,7 @@ Style config tells the model what kind of ebook to write. It shapes tone, struct
 ```typescript
 interface StyleConfig {
   // Book structure
-  book_format: "playbook" | "handbook" | "tutorial" | "guide" | "ebook_marketing" | "executive_brief" | "course_notes";
+  book_format: "playbook" | "handbook" | "tutorial" | "guide" | "ebook_marketing" | "executive_brief" | "course_notes" | "interview_qa";
   chapter_count_target: number; // 3-20
 
   // Writing style
@@ -420,6 +420,32 @@ interface StyleConfig {
 | Training Handbook | handbook | conversational | mixed | 10 | medium |
 | Executive Brief | executive_brief | authoritative | advanced | 4 | light |
 | Course Notes | course_notes | academic | intermediate | 12 | light |
+| Interview Q&A | interview_qa | conversational | mixed | - | light |
+
+#### 10.4.1 Interview Q&A Format Details
+
+The `interview_qa` format is designed for interview transcripts where the goal is to preserve the conversational Q&A structure rather than transform content into traditional chapters.
+
+**Characteristics:**
+- Uses questions from the interview as section headers
+- Preserves the speaker's voice and direct quotes
+- Groups related Q&A exchanges into thematic sections
+- Does NOT add artificial "Key Takeaways", "Action Steps", or "Summary" sections
+- Minimal editorial transformation - stays faithful to what was said
+- Chapter count is determined by natural topic groupings, not a fixed target
+
+**When to use:**
+- Interviews with thought leaders, experts, or founders
+- Philosophical or exploratory conversations
+- Content where the speaker's exact words and perspective are the value
+- When readers want to "hear" the interviewee, not a summary
+
+**Automatic behaviors when `interview_qa` is selected:**
+- `include_key_takeaways`: false
+- `include_action_steps`: false
+- `include_checklists`: false
+- `faithfulness_level`: "strict"
+- `content_mode`: "interview" (from Spec 009)
 
 ### 10.5 Validation Rules
 
@@ -431,7 +457,7 @@ interface StyleConfig {
 
 ## 11. Markdown Output Structure
 
-### 11.1 Required Structure
+### 11.1 Standard Structure (Default)
 
 ```markdown
 # {Book Title}
@@ -449,7 +475,54 @@ interface StyleConfig {
 ...
 ```
 
-### 11.2 Formatting Rules
+### 11.2 Interview Q&A Structure
+
+When `book_format: "interview_qa"` is selected, use this structure:
+
+```markdown
+# {Book Title}: A Conversation with {Speaker Name}
+
+## Introduction
+
+{Brief context: who the speaker is, what the conversation covers, when/where it took place}
+
+## {Topic/Theme 1}
+
+### {Question from interviewer}
+
+{Speaker's response - preserving their voice, using direct quotes where impactful}
+
+> "{Particularly notable quote}" — {Speaker Name}
+
+### {Follow-up question}
+
+{Speaker's response}
+
+## {Topic/Theme 2}
+
+### {Question}
+
+{Response}
+
+...
+
+## Closing Thoughts
+
+### {Final question or wrap-up}
+
+{Speaker's closing remarks}
+```
+
+**Key differences from standard structure:**
+- Questions become `###` section headers (not invented section titles)
+- Responses preserve the speaker's voice and phrasing
+- Blockquotes (`>`) highlight particularly notable quotes
+- Topics/themes are `##` headers that group related Q&A
+- No "Key Takeaways" or "Action Steps" sections
+- Introduction provides context, not a summary
+- Closing captures the speaker's own wrap-up, not an editorial conclusion
+
+### 11.3 Formatting Rules
 
 - **FR-MD-01**: Book title MUST be `# ` (h1)
 - **FR-MD-02**: Chapters MUST be `## ` (h2)
@@ -665,6 +738,28 @@ interface Project {
 - 4-8 visual opportunities are listed
 - Each has section_ref, suggested_type, prompt, priority
 - No image placeholders appear in markdown
+
+### AS-008: Interview Q&A Format
+**Given**: User has interview transcript with clear Q&A structure, selects `book_format: "interview_qa"`
+**When**: User clicks "Generate Draft"
+**Then**:
+- Draft uses questions as section headers (### level)
+- Topics are grouped under thematic ## headers
+- Speaker's voice is preserved with direct quotes
+- Blockquotes highlight notable statements
+- NO "Key Takeaways" or "Action Steps" sections appear
+- NO invented biography or background for the speaker
+- Content stays faithful to what was actually said
+
+### AS-009: Interview Q&A Auto-Configuration
+**Given**: User selects `book_format: "interview_qa"` in style config
+**When**: Generation begins
+**Then**:
+- `include_key_takeaways` is automatically set to false
+- `include_action_steps` is automatically set to false
+- `faithfulness_level` is automatically set to "strict"
+- `content_mode` is automatically set to "interview"
+- User cannot override these settings while interview_qa is selected
 
 ---
 
