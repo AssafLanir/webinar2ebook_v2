@@ -100,6 +100,7 @@ class BookFormat(str, Enum):
     ebook_marketing = "ebook_marketing"
     executive_brief = "executive_brief"
     course_notes = "course_notes"
+    interview_qa = "interview_qa"  # Q&A structure preserving interview flow
 
 
 class ChapterLengthTarget(str, Enum):

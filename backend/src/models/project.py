@@ -17,6 +17,7 @@ class WebinarType(str, Enum):
 
     STANDARD_PRESENTATION = "standard_presentation"
     TRAINING_TUTORIAL = "training_tutorial"
+    INTERVIEW = "interview"
 
 
 class ResourceType(str, Enum):

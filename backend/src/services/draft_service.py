@@ -52,6 +52,9 @@ from .prompts import (
     parse_outline_to_chapters,
     VISUAL_OPPORTUNITY_SYSTEM_PROMPT,
     build_visual_opportunity_user_prompt,
+    # Interview Q&A format
+    build_interview_qa_system_prompt,
+    build_interview_qa_chapter_prompt,
     # Evidence-grounded prompts (Spec 009)
     build_grounded_chapter_system_prompt,
     build_grounded_chapter_user_prompt,
@@ -479,6 +482,9 @@ async def generate_draft_plan(
     Chapters are derived from the outline (level=1 items = chapters).
     LLM is used only for visual plan generation, not chapter structure.
 
+    Special case: For interview_qa format with no outline, creates a single
+    flowing Q&A document with topics emerging naturally from the content.
+
     Args:
         transcript: Full transcript text.
         outline: List of outline items.
@@ -488,30 +494,66 @@ async def generate_draft_plan(
     Returns:
         Generated DraftPlan with outline-driven chapters.
     """
+    # Extract style dict
+    if "style" in style_config:
+        style_dict = style_config.get("style", {})
+    else:
+        style_dict = style_config
+
+    book_format = style_dict.get("book_format", "guide")
+
     # Step 1: Derive chapter structure from outline
     chapters = parse_outline_to_chapters(outline, transcript)
 
     if not chapters:
-        # Fallback: create a single chapter if no outline structure
         from src.models import TranscriptSegment
-        chapters = [
-            ChapterPlan(
-                chapter_number=1,
-                title="Content",
-                outline_item_id="fallback-1",
-                goals=["Cover the main content from the transcript"],
-                key_points=["Key points from the source material"],
-                transcript_segments=[
-                    TranscriptSegment(start_char=0, end_char=len(transcript), relevance="primary")
-                ],
-                estimated_words=max(500, len(transcript) // 5),
-            )
-        ]
+
+        # Special handling for interview_qa without outline:
+        # Create a single "document" that will generate flowing Q&A
+        if book_format == "interview_qa":
+            # Extract speaker name for title
+            speaker_name = _extract_speaker_name(transcript)
+            title = f"A Conversation with {speaker_name}" if speaker_name != "The speaker" else "Interview"
+
+            chapters = [
+                ChapterPlan(
+                    chapter_number=1,
+                    title=title,
+                    outline_item_id="interview-qa-1",
+                    goals=["Preserve the natural Q&A flow of the interview"],
+                    key_points=["Questions and answers organized by topic"],
+                    transcript_segments=[
+                        TranscriptSegment(start_char=0, end_char=len(transcript), relevance="primary")
+                    ],
+                    estimated_words=max(500, len(transcript) // 5),
+                )
+            ]
+            logger.info(f"Interview Q&A mode: creating single flowing document")
+        else:
+            # Standard fallback: create a single chapter
+            chapters = [
+                ChapterPlan(
+                    chapter_number=1,
+                    title="Content",
+                    outline_item_id="fallback-1",
+                    goals=["Cover the main content from the transcript"],
+                    key_points=["Key points from the source material"],
+                    transcript_segments=[
+                        TranscriptSegment(start_char=0, end_char=len(transcript), relevance="primary")
+                    ],
+                    estimated_words=max(500, len(transcript) // 5),
+                )
+            ]
 
     logger.info(f"Derived {len(chapters)} chapters from outline")
 
     # Step 2: Generate visual plan using LLM (optional enhancement)
-    visual_plan = await _generate_visual_plan(transcript, chapters, style_config)
+    # Skip visual generation for interview_qa (usually minimal visuals)
+    if book_format == "interview_qa":
+        from src.models.visuals import VisualPlan
+        visual_plan = VisualPlan(opportunities=[], assets=[])
+    else:
+        visual_plan = await _generate_visual_plan(transcript, chapters, style_config)
 
     # Step 3: Calculate metadata
     total_words = sum(ch.estimated_words for ch in chapters)
@@ -527,10 +569,14 @@ async def generate_draft_plan(
 
     # Step 4: Build book title from first outline item or default
     book_title = "Untitled Ebook"
-    for item in outline:
-        if item.get("level", 1) == 1:
-            book_title = item.get("title", book_title)
-            break
+    if outline:
+        for item in outline:
+            if item.get("level", 1) == 1:
+                book_title = item.get("title", book_title)
+                break
+    elif book_format == "interview_qa":
+        # For interview_qa without outline, use the chapter title
+        book_title = chapters[0].title if chapters else "Interview"
 
     draft_plan = DraftPlan(
         version=1,
@@ -697,14 +743,28 @@ async def generate_chapter(
     # Get transcript segment for this chapter
     transcript_segment = extract_transcript_segment(transcript, chapter_plan)
 
+    # Check if using Interview Q&A format
+    book_format = style_dict.get("book_format", "guide")
+
     # Get context from previous/next chapters
     previous_ending = get_previous_chapter_ending(chapters_completed)
     chapter_index = chapter_plan.chapter_number - 1
     next_preview = get_next_chapter_preview(all_chapters, chapter_index)
 
-    # Build prompts - use evidence-grounded prompts if evidence available (Spec 009)
-    if chapter_evidence and chapter_evidence.claims:
-        # Use grounded chapter generation prompts
+    if book_format == "interview_qa":
+        # Use Q&A-specific prompts (Interview Q&A format from main)
+        speaker_name = _extract_speaker_name(transcript)
+        system_prompt = build_interview_qa_system_prompt(
+            book_title=book_title,
+            speaker_name=speaker_name,
+        )
+        user_prompt = build_interview_qa_chapter_prompt(
+            chapter_plan=chapter_plan,
+            transcript_segment=transcript_segment,
+            speaker_name=speaker_name,
+        )
+    elif chapter_evidence and chapter_evidence.claims:
+        # Use grounded chapter generation prompts (Spec 009)
         system_prompt = build_grounded_chapter_system_prompt(
             book_title=book_title,
             chapter_number=chapter_plan.chapter_number,
@@ -760,6 +820,38 @@ async def generate_chapter(
 
     logger.debug(f"Generated chapter {chapter_plan.chapter_number}: {len(response.text)} chars")
     return response.text
+
+
+def _extract_speaker_name(transcript: str) -> str:
+    """Extract the primary speaker name from transcript.
+
+    Looks for patterns like "Name:" at the start of lines.
+    Returns "The speaker" if no clear pattern found.
+
+    Args:
+        transcript: The transcript text.
+
+    Returns:
+        Extracted speaker name or default.
+    """
+    import re
+
+    # Find speaker patterns like "Name:" at line starts (excluding "Host:")
+    pattern = r'^([A-Z][a-zA-Z\s]+):'
+    matches = re.findall(pattern, transcript, re.MULTILINE)
+
+    # Filter out common host/interviewer labels
+    host_labels = {"Host", "Interviewer", "Q", "Question", "Moderator"}
+    speakers = [m.strip() for m in matches if m.strip() not in host_labels]
+
+    if speakers:
+        # Return most common non-host speaker
+        from collections import Counter
+        counter = Counter(speakers)
+        most_common = counter.most_common(1)[0][0]
+        return most_common
+
+    return "The speaker"
 
 
 def assemble_chapters(

@@ -32,7 +32,8 @@ export type BookFormat =
   | "guide"
   | "ebook_marketing"
   | "executive_brief"
-  | "course_notes";
+  | "course_notes"
+  | "interview_qa";
 
 export type ChapterLengthTarget = "short" | "medium" | "long";
 
