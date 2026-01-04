@@ -1,0 +1,49 @@
+{
+  "$schema": "../schemas/golden_projects.schema.json",
+  "version": "1.0",
+  "description": "Golden projects for QA regression testing",
+  "projects": [
+    {
+      "id": "6952b29c85a4cece481a1c51",
+      "name": "David Deutsch - The Beginning of Infinity",
+      "description": "Complex philosophical content, good test for faithfulness",
+      "baseline_scores": {
+        "overall": 72,
+        "structure": 85,
+        "clarity": 70,
+        "faithfulness": 80,
+        "repetition": 60,
+        "completeness": 75
+      },
+      "expected_issues": {
+        "critical": {"min": 0, "max": 2},
+        "warning": {"min": 5, "max": 15},
+        "info": {"min": 10, "max": 30}
+      },
+      "last_validated": "2026-01-01T00:00:00Z"
+    },
+    {
+      "id": "693c25566e6bf1d180694f6a",
+      "name": "Toftof",
+      "description": "Shorter content, test for completeness",
+      "baseline_scores": {
+        "overall": 78,
+        "structure": 82,
+        "clarity": 75,
+        "faithfulness": 85,
+        "repetition": 70,
+        "completeness": 80
+      },
+      "expected_issues": {
+        "critical": {"min": 0, "max": 1},
+        "warning": {"min": 2, "max": 8},
+        "info": {"min": 5, "max": 15}
+      },
+      "last_validated": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "tolerance": {
+    "score_variance": 5,
+    "description": "Scores within +/- 5 points are acceptable"
+  }
+}

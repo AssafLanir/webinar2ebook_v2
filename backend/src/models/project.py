@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from .style_config import StyleConfigEnvelope
 from .visuals import VisualPlan
+from .qa_report import QAReport
 
 
 class WebinarType(str, Enum):
@@ -137,6 +138,7 @@ class Project(BaseModel):
     draftText: str = ""
     styleConfig: StyleConfigEnvelope | LegacyStyleConfig | dict[str, Any] | None = None
     visualPlan: VisualPlan | None = None
+    qaReport: QAReport | None = None
     finalTitle: str = ""
     finalSubtitle: str = ""
     creditsText: str = ""

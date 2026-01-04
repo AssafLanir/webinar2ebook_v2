@@ -53,6 +53,7 @@ def _to_project(doc: dict) -> Project:
         finalTitle=doc.get("finalTitle", ""),
         finalSubtitle=doc.get("finalSubtitle", ""),
         creditsText=doc.get("creditsText", ""),
+        qaReport=doc.get("qaReport"),
     )
 
 
@@ -166,6 +167,45 @@ async def update_project(project_id: str, request: UpdateProjectRequest) -> Proj
     await collection.update_one({"_id": object_id}, {"$set": update_doc})
 
     # Fetch updated document
+    updated_doc = await collection.find_one({"_id": object_id})
+    return _to_project(updated_doc)
+
+
+async def patch_project(project_id: str, updates: dict) -> Project:
+    """Partially update a project with specific fields.
+
+    Unlike update_project which requires all fields, this allows
+    updating only the specified fields.
+
+    Args:
+        project_id: The project ID to update.
+        updates: Dictionary of fields to update.
+
+    Returns:
+        The updated Project.
+
+    Raises:
+        ProjectNotFoundError: If project doesn't exist.
+    """
+    db = await get_database()
+    collection = db[COLLECTION_NAME]
+
+    try:
+        object_id = ObjectId(project_id)
+    except Exception:
+        raise ProjectNotFoundError(project_id) from None
+
+    # Check if project exists
+    existing = await collection.find_one({"_id": object_id})
+    if existing is None:
+        raise ProjectNotFoundError(project_id)
+
+    # Add updatedAt timestamp
+    updates["updatedAt"] = datetime.now(UTC)
+
+    await collection.update_one({"_id": object_id}, {"$set": updates})
+
+    # Fetch and return updated document
     updated_doc = await collection.find_one({"_id": object_id})
     return _to_project(updated_doc)
 
