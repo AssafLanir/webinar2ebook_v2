@@ -42,10 +42,13 @@ export function WorkspacePage() {
   const handleWebinarTypeChange = async (newType: WebinarType) => {
     if (newType === project.webinarType) return
 
-    // Call API directly with updated data to avoid race condition
-    // (dispatch is async, so saveProject() would use stale state)
+    // Call API directly with full project data (UpdateProjectRequest requires all fields)
+    // This avoids the race condition where dispatch is async and saveProject uses stale state
     try {
-      const updatedProject = await apiUpdateProject(project.id, { webinarType: newType })
+      const updatedProject = await apiUpdateProject(project.id, {
+        ...project,
+        webinarType: newType,
+      })
       dispatch({
         type: 'UPDATE_PROJECT_DATA',
         payload: updatedProject,
