@@ -5,6 +5,7 @@ import { Tab2Content } from '../components/tab2/Tab2Content'
 import { Tab3Content } from '../components/tab3/Tab3Content'
 import { Tab4Content } from '../components/tab4/Tab4Content'
 import { Toast } from '../components/common/Toast'
+import { updateProject as apiUpdateProject } from '../services/api'
 import type { TabIndex, WebinarType } from '../types/project'
 
 export function WorkspacePage() {
@@ -40,13 +41,18 @@ export function WorkspacePage() {
 
   const handleWebinarTypeChange = async (newType: WebinarType) => {
     if (newType === project.webinarType) return
-    // Update project with new webinarType
-    dispatch({
-      type: 'UPDATE_PROJECT_DATA',
-      payload: { ...project, webinarType: newType },
-    })
-    // Auto-save the change
-    await saveProject()
+
+    // Call API directly with updated data to avoid race condition
+    // (dispatch is async, so saveProject() would use stale state)
+    try {
+      const updatedProject = await apiUpdateProject(project.id, { webinarType: newType })
+      dispatch({
+        type: 'UPDATE_PROJECT_DATA',
+        payload: updatedProject,
+      })
+    } catch (error) {
+      console.error('Failed to update webinar type:', error)
+    }
   }
 
   const renderTabContent = () => {
