@@ -88,7 +88,7 @@
 **Purpose**: Validation and cleanup
 
 - [x] T021 Run backend tests: `python -m pytest backend/tests/ -v`
-- [ ] T022 Run quickstart.md validation (manual EPUB export test in browser)
+- [x] T022 Run quickstart.md validation (manual EPUB export test in browser)
 - [ ] T023 [P] Validate generated EPUB with epubcheck (development validation only)
 - [x] T024 Code review and cleanup
 

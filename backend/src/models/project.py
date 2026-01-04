@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from .style_config import StyleConfigEnvelope
 from .visuals import VisualPlan
 from .qa_report import QAReport
+from .evidence_map import EvidenceMap
 
 
 class WebinarType(str, Enum):
@@ -139,6 +140,7 @@ class Project(BaseModel):
     styleConfig: StyleConfigEnvelope | LegacyStyleConfig | dict[str, Any] | None = None
     visualPlan: VisualPlan | None = None
     qaReport: QAReport | None = None
+    evidenceMap: EvidenceMap | None = None  # Spec 009: Evidence Map for grounded generation
     finalTitle: str = ""
     finalSubtitle: str = ""
     creditsText: str = ""

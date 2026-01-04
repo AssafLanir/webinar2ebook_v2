@@ -1,6 +1,9 @@
 // Tab 3 Style Config types (mirrors backend/src/models/style_config.py).
 // Prefer generating types from OpenAPI later to avoid drift.
 
+// Content mode for Evidence-Grounded Drafting (Spec 009)
+export type ContentMode = "interview" | "essay" | "tutorial";
+
 export type TargetAudience = "beginners" | "intermediate" | "advanced" | "mixed";
 export type ReaderRole =
   | "founder"
@@ -114,6 +117,10 @@ export interface StyleConfig {
   include_checklists?: boolean;
   include_templates?: boolean;
   include_examples?: boolean;
+
+  // Content mode and grounding (Spec 009)
+  content_mode?: ContentMode;
+  strict_grounded?: boolean;
 
   faithfulness_level?: FaithfulnessLevel;
   allowed_extrapolation?: AllowedExtrapolation;

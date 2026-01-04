@@ -30,6 +30,7 @@ def _ensure_tz_aware(dt: Optional[datetime]) -> Optional[datetime]:
 from .api_responses import JobStatus, GenerationProgress, GenerationStats, TokenUsage
 from .draft_plan import DraftPlan
 from .visuals import VisualPlan
+from .style_config import ContentMode
 
 
 class GenerationJob(BaseModel):
@@ -85,6 +86,20 @@ class GenerationJob(BaseModel):
     draft_markdown: Optional[str] = Field(
         default=None,
         description="Final assembled markdown (available when completed)"
+    )
+
+    # Evidence Map (Spec 009)
+    evidence_map: Optional[dict] = Field(
+        default=None,
+        description="Evidence Map for grounded generation (stored as dict to avoid circular imports)"
+    )
+    content_mode: Optional[ContentMode] = Field(
+        default=None,
+        description="Content mode used for generation"
+    )
+    constraint_warnings: List[str] = Field(
+        default_factory=list,
+        description="Warnings from constraint validation"
     )
 
     # Error handling

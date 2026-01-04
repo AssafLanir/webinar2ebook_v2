@@ -27,6 +27,7 @@ class JobStatus(str, Enum):
     """Status of a draft generation job."""
     queued = "queued"
     planning = "planning"
+    evidence_map = "evidence_map"  # NEW: Evidence Map extraction phase (Spec 009)
     generating = "generating"
     completed = "completed"
     cancelled = "cancelled"
