@@ -346,6 +346,11 @@ async def _generate_draft_task(
 
         logger.info(f"Job {job_id}: Generation completed")
 
+        # T019: Auto-trigger QA analysis after draft completion
+        job = await get_job(job_id)
+        if job and job.project_id:
+            await _trigger_qa_analysis(job.project_id, final_markdown, request.transcript)
+
     except Exception as e:
         logger.error(f"Job {job_id}: Generation failed: {e}", exc_info=True)
         await update_job(
@@ -697,3 +702,48 @@ def _find_section_boundaries(
             break
 
     return (start_line, end_line)
+
+
+# ==============================================================================
+# T019: QA Auto-Trigger
+# ==============================================================================
+
+async def _trigger_qa_analysis(
+    project_id: str,
+    draft: str,
+    transcript: Optional[str] = None,
+) -> None:
+    """Trigger QA analysis after draft completion.
+
+    Runs in background - does not block draft completion.
+    Stores report in project.qaReport field.
+
+    Args:
+        project_id: The project ID.
+        draft: The completed draft markdown.
+        transcript: Optional transcript for faithfulness check.
+    """
+    try:
+        from src.services.qa_evaluator import evaluate_draft
+        from src.services.project_service import update_project
+
+        logger.info(f"Auto-triggering QA analysis for project {project_id}")
+
+        # Run QA evaluation
+        report = await evaluate_draft(
+            project_id=project_id,
+            draft=draft,
+            transcript=transcript,
+        )
+
+        # Store report in project
+        await update_project(project_id, {"qaReport": report.model_dump(mode="json")})
+
+        logger.info(
+            f"QA analysis complete for project {project_id}: "
+            f"score={report.overall_score}, issues={report.total_issue_count}"
+        )
+
+    except Exception as e:
+        # Log error but don't fail the draft generation
+        logger.error(f"QA auto-trigger failed for project {project_id}: {e}")

@@ -104,6 +104,21 @@ from .export_job import (
     ExportJobStatus,
     ExportFormat,
 )
+from .qa_report import (
+    QAReport,
+    QAIssue,
+    RubricScores,
+    IssueCounts,
+    IssueSeverity,
+    IssueType,
+    MAX_ISSUES,
+    QA_REPORT_VERSION,
+    qa_report_json_schema,
+)
+from .qa_job import (
+    QAJob,
+    QAJobStatus,
+)
 
 __all__ = [
     # Project models
@@ -202,4 +217,17 @@ __all__ = [
     "ExportStatusResponse",
     "ExportCancelData",
     "ExportCancelResponse",
+    # QA report models
+    "QAReport",
+    "QAIssue",
+    "RubricScores",
+    "IssueCounts",
+    "IssueSeverity",
+    "IssueType",
+    "MAX_ISSUES",
+    "QA_REPORT_VERSION",
+    "qa_report_json_schema",
+    # QA job models
+    "QAJob",
+    "QAJobStatus",
 ]

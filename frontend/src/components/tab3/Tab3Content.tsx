@@ -8,6 +8,7 @@ import { DraftEditor } from './DraftEditor'
 import { GenerateProgress } from './GenerateProgress'
 import { DraftPreviewModal } from './DraftPreviewModal'
 import { useDraftGeneration } from '../../hooks/useDraftGeneration'
+import { QAPanel } from './QAPanel'
 import { STYLE_PRESETS } from '../../constants/stylePresets'
 import { downloadAsMarkdown, downloadAsText } from '../../utils/draftExport'
 import type { StyleConfig, StyleConfigEnvelope, TotalLengthPreset } from '../../types/style'
@@ -537,6 +538,12 @@ export function Tab3Content() {
           />
         </Card>
       </div>
+
+      {/* QA Panel - T026 */}
+      <QAPanel
+        projectId={project.id}
+        hasDraft={!!project.draftText && project.draftText.length > 100}
+      />
 
       {/* Preview Modal */}
       <DraftPreviewModal

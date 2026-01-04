@@ -1,170 +1,104 @@
-# Implementation Plan: Draft Quality System
+# Implementation Plan: [FEATURE]
 
-**Branch**: `008-draft-quality` | **Date**: 2026-01-01 | **Spec**: [spec.md](./spec.md)
-**Input**: Feature specification from `/specs/008-draft-quality/spec.md`
+**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
+**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
+
+**Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/commands/plan.md` for the execution workflow.
 
 ## Summary
 
-Add a systematic quality assessment system for AI-generated ebook drafts. The system produces structured QA reports with scores and issues after draft generation, displays results in a UI panel, and optionally provides an "editor pass" to fix issues. A regression suite enables measurement of quality improvements over time.
-
-**Technical Approach**: Hybrid evaluation using regex for structural issues (fast, deterministic) + LLM for semantic analysis (faithfulness, clarity). Reuses existing job-based async patterns and LLM abstraction.
+[Extract from feature spec: primary requirement + technical approach from research]
 
 ## Technical Context
 
-**Language/Version**: Python 3.11 (backend), TypeScript 5.x (frontend)
-**Primary Dependencies**: FastAPI, Pydantic v2, React, existing LLM client (OpenAI/Anthropic)
-**Storage**: MongoDB (QA reports stored in project document)
-**Testing**: pytest (backend), vitest (frontend)
-**Target Platform**: Web application (localhost development, cloud deployment)
-**Project Type**: Web application (backend + frontend)
-**Performance Goals**: QA report generation < 30 seconds for 50k word drafts
-**Constraints**: Must work with existing project data model, no new collections
-**Scale/Scope**: Single user, projects up to 100k words
+<!--
+  ACTION REQUIRED: Replace the content in this section with the technical details
+  for the project. The structure here is presented in advisory capacity to guide
+  the iteration process.
+-->
+
+**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
+**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
+**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
+**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
+**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
+**Project Type**: [single/web/mobile - determines source structure]  
+**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
+**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
+**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
 
 ## Constitution Check
 
-*GATE: Project constitution is a template - no specific gates defined.*
+*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-✅ No constitution violations - proceeding with standard patterns.
+[Gates determined based on constitution file]
 
 ## Project Structure
 
 ### Documentation (this feature)
 
 ```text
-specs/008-draft-quality/
-├── plan.md              # This file
-├── research.md          # Phase 0 output
-├── data-model.md        # Phase 1 output
-├── quickstart.md        # Phase 1 output
-├── contracts/           # Phase 1 output (API schemas)
-├── schemas/             # QA report JSON schema
-├── fixtures/            # Golden projects for regression suite
-└── tasks.md             # Phase 2 output
+specs/[###-feature]/
+├── plan.md              # This file (/speckit.plan command output)
+├── research.md          # Phase 0 output (/speckit.plan command)
+├── data-model.md        # Phase 1 output (/speckit.plan command)
+├── quickstart.md        # Phase 1 output (/speckit.plan command)
+├── contracts/           # Phase 1 output (/speckit.plan command)
+└── tasks.md             # Phase 2 output (/speckit.tasks command - NOT created by /speckit.plan)
 ```
 
 ### Source Code (repository root)
+<!--
+  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
+  for this feature. Delete unused options and expand the chosen structure with
+  real paths (e.g., apps/admin, packages/something). The delivered plan must
+  not include Option labels.
+-->
 
 ```text
+# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
+src/
+├── models/
+├── services/
+├── cli/
+└── lib/
+
+tests/
+├── contract/
+├── integration/
+└── unit/
+
+# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
 backend/
 ├── src/
 │   ├── models/
-│   │   └── qa_report.py          # QAReport, QAIssue, RubricScores models
 │   ├── services/
-│   │   ├── qa_evaluator.py       # QA evaluation logic (hybrid regex+LLM)
-│   │   ├── qa_structural.py      # Regex-based structural analysis
-│   │   ├── qa_semantic.py        # LLM-based semantic analysis
-│   │   └── editor_pass.py        # P2: Editor improvement pass
 │   └── api/
-│       └── routes/
-│           └── qa.py             # QA endpoints
 └── tests/
-    ├── unit/
-    │   ├── test_qa_structural.py
-    │   └── test_qa_semantic.py
-    ├── integration/
-    │   └── test_qa_api.py
-    └── fixtures/
-        └── golden_projects.json  # Regression suite config
 
 frontend/
 ├── src/
 │   ├── components/
-│   │   └── tab3/
-│   │       ├── QAPanel.tsx       # QA results panel
-│   │       └── QAIssueList.tsx   # Issue list component
-│   ├── hooks/
-│   │   └── useQA.ts              # QA state management
-│   ├── services/
-│   │   └── qaApi.ts              # QA API client
-│   └── types/
-│       └── qa.ts                 # TypeScript types
+│   ├── pages/
+│   └── services/
 └── tests/
+
+# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
+api/
+└── [same as backend above]
+
+ios/ or android/
+└── [platform-specific structure: feature modules, UI flows, platform tests]
 ```
 
-**Structure Decision**: Extends existing web application structure. QA logic is primarily backend (evaluation). Frontend adds a collapsible panel to Tab3.
-
-## File Summary
-
-| File | Action | Phase |
-|------|--------|-------|
-| backend/src/models/qa_report.py | NEW | US1 |
-| backend/src/services/qa_evaluator.py | NEW | US1 |
-| backend/src/services/qa_structural.py | NEW | US1 |
-| backend/src/services/qa_semantic.py | NEW | US1 |
-| backend/src/api/routes/qa.py | NEW | US1 |
-| frontend/src/components/tab3/QAPanel.tsx | NEW | US2 |
-| frontend/src/components/tab3/QAIssueList.tsx | NEW | US2 |
-| frontend/src/hooks/useQA.ts | NEW | US2 |
-| frontend/src/services/qaApi.ts | NEW | US2 |
-| frontend/src/types/qa.ts | NEW | US2 |
-| backend/src/services/editor_pass.py | NEW | US3 (P2) |
-| backend/tests/fixtures/golden_projects.json | NEW | US4 (P2) |
-
-## API Design
-
-### QA Endpoints
-
-All endpoints follow existing `{ data, error }` envelope pattern.
-
-```
-POST /api/projects/{project_id}/qa/analyze
-  → Triggers QA analysis (can be sync for small drafts, async for large)
-  → Returns: { data: { job_id?, qa_report? }, error: null }
-
-GET /api/projects/{project_id}/qa/report
-  → Returns latest QA report for project
-  → Returns: { data: QAReport, error: null }
-
-POST /api/projects/{project_id}/qa/improve  (P2)
-  → Triggers editor pass
-  → Returns: { data: { job_id }, error: null }
-```
-
-### Integration with Draft Generation
-
-Option A (Recommended): Auto-trigger QA after draft completion
-- Modify draft_service.py to call qa_evaluator after draft saved
-- QA report stored in project.qaReport field
-
-Option B: Manual trigger only
-- User clicks "Run QA" button in UI
-- Separate API call
-
-**Decision**: Option A for seamless UX, with manual re-run available.
-
-## Implementation Strategy
-
-### Phase 1: MVP (US1 + US2)
-
-1. **Structural Analysis** (regex-based, no LLM)
-   - Repetition detection (n-gram analysis)
-   - Heading hierarchy validation
-   - Paragraph length checks
-   - Chapter balance analysis
-
-2. **Semantic Analysis** (LLM-based)
-   - Faithfulness scoring (compare to transcript)
-   - Clarity assessment
-   - Completeness check
-
-3. **UI Panel**
-   - Summary badge in Tab3
-   - Expandable issue list
-   - Score breakdown
-
-### Phase 2: Improvements (US3 + US4)
-
-4. **Editor Pass** (P2)
-   - LLM-based rewriting
-   - Diff generation
-   - Faithfulness preservation check
-
-5. **Regression Suite** (P2)
-   - Golden project fixtures
-   - Score comparison script
-   - CI integration
+**Structure Decision**: [Document the selected structure and reference the real
+directories captured above]
 
 ## Complexity Tracking
 
-No constitution violations requiring justification.
+> **Fill ONLY if Constitution Check has violations that must be justified**
+
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|-----------|------------|-------------------------------------|
+| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
+| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
