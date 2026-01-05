@@ -445,3 +445,185 @@ class TestContentModeIntegration:
 
         # Should use single-pass because book_format is interview_qa
         assert use_single_pass is True
+
+
+class TestTitleGuardrail:
+    """Test that generic titles are prevented in interview mode."""
+
+    def test_sanitize_interview_title_keeps_real_title(self):
+        """Should keep valid book titles."""
+        from src.services.draft_service import sanitize_interview_title
+
+        assert sanitize_interview_title("The Beginning of Infinity") == "The Beginning of Infinity"
+        assert sanitize_interview_title("A Conversation with Sarah Chen") == "A Conversation with Sarah Chen"
+
+    def test_sanitize_interview_title_rejects_generic(self):
+        """Should reject generic titles like 'Interview'."""
+        from src.services.draft_service import sanitize_interview_title
+
+        # Generic titles should be replaced
+        assert sanitize_interview_title("Interview") != "Interview"
+        assert sanitize_interview_title("interview") != "interview"
+        assert sanitize_interview_title("Untitled") != "Untitled"
+        assert sanitize_interview_title("Draft") != "Draft"
+        assert sanitize_interview_title("") != ""
+
+    def test_sanitize_interview_title_uses_fallback(self):
+        """Should use fallback when title is generic."""
+        from src.services.draft_service import sanitize_interview_title
+
+        result = sanitize_interview_title("Interview", fallback="David Deutsch on Infinity")
+        assert result == "David Deutsch on Infinity"
+
+    def test_sanitize_interview_title_rejects_generic_fallback(self):
+        """Should not use generic fallback."""
+        from src.services.draft_service import sanitize_interview_title
+
+        result = sanitize_interview_title("Interview", fallback="Untitled")
+        assert result == "Interview Transcript"  # Last resort
+
+
+class TestAcceptanceTests:
+    """Acceptance tests for interview mode - regression guards.
+
+    These tests ensure interview drafts don't regress into "book report" style.
+    """
+
+    def test_prompt_requires_verbatim_quotes(self):
+        """Prompt must specify that only verbatim excerpts get quotes."""
+        assert "verbatim" in INTERVIEW_GROUNDED_SYSTEM_PROMPT.lower()
+        assert "VERBATIM" in INTERVIEW_GROUNDED_SYSTEM_PROMPT
+        assert "paraphras" in INTERVIEW_GROUNDED_SYSTEM_PROMPT.lower()
+
+    def test_prompt_prioritizes_core_framework(self):
+        """Prompt must ask for speaker's core thesis/framework."""
+        prompt_lower = INTERVIEW_GROUNDED_SYSTEM_PROMPT.lower()
+        assert "core framework" in prompt_lower or "central thesis" in prompt_lower
+        assert "foundational" in prompt_lower
+
+    def test_prompt_forbids_book_report_patterns(self):
+        """Prompt must explicitly forbid 'believes', 'argues', 'emphasizes'."""
+        assert "believes" in INTERVIEW_GROUNDED_SYSTEM_PROMPT
+        assert "argues" in INTERVIEW_GROUNDED_SYSTEM_PROMPT
+        assert "emphasizes" in INTERVIEW_GROUNDED_SYSTEM_PROMPT
+
+    def test_output_validation_detects_book_report_style(self):
+        """Should detect when output regresses to book-report style."""
+        from src.services.evidence_service import check_interview_constraints
+
+        # Clean interview-style output
+        clean_output = """## Key Ideas (Grounded)
+
+- **Science is about testable laws**: "Science is about finding laws of nature, which are testable regularities."
+
+## The Conversation
+
+### The Scientific Method
+
+#### How does science work?
+
+Science discovers testable regularities in nature.
+"""
+
+        # Book-report style output (should be flagged)
+        book_report_output = """## Key Ideas
+
+Deutsch believes that science is transformative. He argues that the Enlightenment
+changed everything. The physicist emphasizes that progress is unlimited.
+
+## The Conversation
+
+Deutsch contends that humans can understand anything.
+"""
+
+        clean_violations = check_interview_constraints(clean_output)
+        book_report_violations = check_interview_constraints(book_report_output)
+
+        # Clean output should have few/no violations
+        assert len(clean_violations) == 0, f"Clean output had violations: {clean_violations}"
+
+        # Book report output should have multiple violations
+        assert len(book_report_violations) >= 3, \
+            f"Book report style should be detected. Found only {len(book_report_violations)} violations"
+
+    def test_key_ideas_must_have_inline_quotes(self):
+        """Key Ideas bullets must have inline quotes."""
+        # Pattern: - **[Idea]**: "[quote]"
+        quote_pattern = r'-\s+\*\*[^*]+\*\*:\s*"[^"]+"'
+
+        valid_key_ideas = """## Key Ideas (Grounded)
+
+- **The Enlightenment changed everything**: "This line is the most important thing that's ever happened"
+- **Science finds testable laws**: "Science is about finding laws of nature, which are testable regularities"
+"""
+
+        invalid_key_ideas = """## Key Ideas
+
+- **The Enlightenment changed everything** - Deutsch explains this was transformative
+- **Science finds testable laws** - He notes this is key to progress
+"""
+
+        valid_matches = re.findall(quote_pattern, valid_key_ideas)
+        invalid_matches = re.findall(quote_pattern, invalid_key_ideas)
+
+        assert len(valid_matches) >= 2, "Valid Key Ideas should have inline quotes"
+        assert len(invalid_matches) == 0, "Invalid Key Ideas should not match quote pattern"
+
+    def test_no_chapter_headings_in_output(self):
+        """Output must not contain chapter headings."""
+        chapter_pattern = r"^#+\s*Chapter\s+\d+"
+
+        valid_output = """# The Beginning of Infinity
+
+## Key Ideas (Grounded)
+
+## The Conversation
+
+### Science and Progress
+
+### Human Potential
+"""
+
+        invalid_output = """# The Beginning of Infinity
+
+## Chapter 1: Introduction
+
+## Chapter 2: Science and Progress
+
+## Chapter 3: Human Potential
+"""
+
+        valid_chapters = re.findall(chapter_pattern, valid_output, re.MULTILINE | re.IGNORECASE)
+        invalid_chapters = re.findall(chapter_pattern, invalid_output, re.MULTILINE | re.IGNORECASE)
+
+        assert len(valid_chapters) == 0, "Valid output should have no chapter headings"
+        assert len(invalid_chapters) >= 2, "Invalid output should have chapter headings"
+
+    def test_distancing_language_detection(self):
+        """Should detect distancing language patterns."""
+        distancing_pattern = INTERVIEW_FORBIDDEN_PATTERNS[-1]
+
+        # These should match (bad)
+        bad_phrases = [
+            "Deutsch believes that science is key",
+            "The speaker argues that progress is unlimited",
+            "She emphasizes that focus matters",
+            "He contends that knowledge grows",
+            "Sarah maintains that real-time data helps",
+        ]
+
+        # These should NOT match (good)
+        good_phrases = [
+            "As Deutsch explains, science is key",
+            "According to Sarah, focus matters",
+            "The speaker notes that progress continues",
+            "Science is the key to understanding",  # Direct statement
+        ]
+
+        for phrase in bad_phrases:
+            match = re.search(distancing_pattern, phrase, re.IGNORECASE)
+            assert match is not None, f"Should detect distancing language in: {phrase}"
+
+        for phrase in good_phrases:
+            match = re.search(distancing_pattern, phrase, re.IGNORECASE)
+            assert match is None, f"Should NOT flag acceptable phrase: {phrase}"

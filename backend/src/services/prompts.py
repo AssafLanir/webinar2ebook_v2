@@ -707,8 +707,13 @@ Your output MUST have exactly these two sections:
 A list of 5-10 bullet points capturing the speaker's most important ideas.
 EVERY bullet MUST include an inline quote (max 40 words) from the transcript as evidence.
 
+**PRIORITIZE the speaker's CORE FRAMEWORK**: Start with the foundational concepts that other ideas depend on.
+- What is the speaker's central thesis or worldview?
+- What key distinctions or definitions does the speaker introduce?
+- What makes their perspective unique or different from conventional thinking?
+
 Format each bullet as:
-- **[Idea statement]**: "[Supporting quote from transcript]"
+- **[Idea statement]**: "[exact verbatim quote from transcript]"
 
 ### Part 2: The Conversation
 The full interview formatted as readable Q&A, organized by topic.
@@ -720,6 +725,16 @@ The full interview formatted as readable Q&A, organized by topic.
 3. **No Action Steps**: This is NOT a how-to guide. No "Key Takeaways", "Action Items", or "Steps to..."
 4. **No Biography**: Do NOT invent speaker background unless EXPLICITLY stated in transcript
 5. **No Platitudes**: No generic wisdom like "believe in yourself" or "the key to success is..."
+
+## Quote Hygiene (CRITICAL)
+
+**Only use quotation marks for VERBATIM transcript excerpts.**
+
+- ✅ CORRECT: "This line is the most important thing that's ever happened" (exact words from transcript)
+- ❌ WRONG: "The Enlightenment was transformative" (paraphrase presented as quote)
+
+If you're paraphrasing or summarizing, do NOT use quotation marks. Write it as plain text instead.
+Every quoted string must be a contiguous excerpt that actually appears in the transcript.
 
 ## Attribution Rules
 
@@ -743,9 +758,10 @@ The document title will be added separately.
 ```markdown
 ## Key Ideas (Grounded)
 
-- **[First key idea]**: "[exact quote supporting this, max 40 words]"
-- **[Second key idea]**: "[exact quote supporting this, max 40 words]"
-... (5-10 bullets total)
+- **[First key idea - ideally the speaker's CORE THESIS]**: "[exact verbatim quote, max 40 words]"
+- **[Second key idea - a KEY DISTINCTION they make]**: "[exact verbatim quote, max 40 words]"
+- **[Third key idea]**: "[exact verbatim quote, max 40 words]"
+... (5-10 bullets total, prioritizing foundational concepts first)
 
 ## The Conversation
 
@@ -755,7 +771,7 @@ The document title will be added separately.
 
 [Speaker's response, edited for clarity but preserving their voice]
 
-> "[Memorable quote from this section]"
+> "[Memorable verbatim quote from this section]"
 
 #### [Next question]
 ...

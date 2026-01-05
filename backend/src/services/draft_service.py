@@ -78,6 +78,33 @@ logger = logging.getLogger(__name__)
 PLANNING_MODEL = "gpt-4o-mini"  # Faster, cheaper for structured planning
 CHAPTER_MODEL = "gpt-4o-mini"   # Could use gpt-4o for higher quality
 
+# Generic titles that should be replaced
+GENERIC_TITLES = {"interview", "untitled", "untitled ebook", "draft", ""}
+
+
+def sanitize_interview_title(
+    title: str,
+    fallback: Optional[str] = None,
+) -> str:
+    """Ensure interview mode doesn't use generic titles like 'Interview'.
+
+    Args:
+        title: The book title from draft plan.
+        fallback: Optional fallback (e.g., project name, YouTube title).
+
+    Returns:
+        A proper book title, never a generic placeholder.
+    """
+    if title and title.lower().strip() not in GENERIC_TITLES:
+        return title
+
+    # Use fallback if provided and not generic
+    if fallback and fallback.lower().strip() not in GENERIC_TITLES:
+        return fallback
+
+    # Last resort: descriptive placeholder
+    return "Interview Transcript"
+
 
 # ==============================================================================
 # Public API
@@ -400,9 +427,15 @@ async def _generate_draft_task(
             logger.info(f"Job {job_id}: Using single-pass interview generation")
             await update_job(job_id, current_chapter=1, total_chapters=1)
 
+            # Title guardrail: prevent generic titles like "Interview"
+            interview_book_title = sanitize_interview_title(
+                draft_plan.book_title,
+                fallback=request.project_name if hasattr(request, "project_name") else None,
+            )
+
             final_markdown = await generate_interview_single_pass(
                 transcript=request.transcript,
-                book_title=draft_plan.book_title,
+                book_title=interview_book_title,
                 evidence_map=evidence_map,
             )
 
