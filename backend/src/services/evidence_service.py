@@ -569,6 +569,179 @@ class InterviewConstraintViolation(Exception):
 
 
 # ==============================================================================
+# Definitional/Criterial Candidate Extraction (Key Ideas Coverage Guard)
+# ==============================================================================
+
+# Keywords that signal definitional/criterial statements
+DEFINITIONAL_KEYWORDS = [
+    r"\bmeans\b",
+    r"\bthe phrase\b",
+    r"\bis essentially\b",
+    r"\bthe method\b",
+    r"\bthe reason\b",
+    r"\brather than\b",
+    r"\bgood explanations?\b",
+    r"\bbad explanations?\b",
+    r"\bcriterion\b",
+    r"\bcriteria\b",
+    r"\bthe key\b",
+    r"\bthe difference\b",
+    r"\bwhat makes\b",
+    r"\bwhat distinguishes\b",
+    r"\bi define\b",
+    r"\bi call this\b",
+    r"\bthe distinction\b",
+]
+
+
+def extract_definitional_candidates(
+    transcript: str,
+    min_length: int = 40,
+    max_length: int = 300,
+) -> list[dict]:
+    """Extract candidate definitional/criterial statements from transcript.
+
+    Identifies sentences that likely contain core framework definitions,
+    method descriptions, or key distinctions - the "intellectual spine"
+    of the speaker's thinking.
+
+    Args:
+        transcript: Full transcript text.
+        min_length: Minimum sentence length (chars) to consider.
+        max_length: Maximum sentence length (chars) to consider.
+
+    Returns:
+        List of candidate dicts with 'sentence', 'keyword', 'start', 'end'.
+    """
+    candidates: list[dict] = []
+    seen_sentences: set[str] = set()
+
+    # Split into sentences (rough heuristic)
+    # Handle both . and : as potential sentence boundaries in transcripts
+    sentences = re.split(r'(?<=[.!?])\s+', transcript)
+
+    current_pos = 0
+    for sentence in sentences:
+        sentence = sentence.strip()
+
+        # Skip if too short or too long
+        if len(sentence) < min_length or len(sentence) > max_length:
+            current_pos += len(sentence) + 1
+            continue
+
+        # Skip if we've seen similar content (dedup)
+        sentence_key = sentence[:50].lower()
+        if sentence_key in seen_sentences:
+            current_pos += len(sentence) + 1
+            continue
+
+        # Check for definitional keywords
+        for keyword_pattern in DEFINITIONAL_KEYWORDS:
+            match = re.search(keyword_pattern, sentence, re.IGNORECASE)
+            if match:
+                candidates.append({
+                    "sentence": sentence,
+                    "keyword": match.group(),
+                    "start": current_pos,
+                    "end": current_pos + len(sentence),
+                })
+                seen_sentences.add(sentence_key)
+                break  # Only add once per sentence
+
+        current_pos += len(sentence) + 1
+
+    # Sort by keyword importance (good explanations > means > others)
+    priority_keywords = ["good explanation", "bad explanation", "rather than", "the method", "criterion"]
+
+    def priority_score(candidate: dict) -> int:
+        keyword_lower = candidate["keyword"].lower()
+        for i, pk in enumerate(priority_keywords):
+            if pk in keyword_lower:
+                return i
+        return len(priority_keywords)
+
+    candidates.sort(key=priority_score)
+
+    logger.info(f"Extracted {len(candidates)} definitional candidates from transcript")
+    return candidates
+
+
+def check_key_ideas_coverage(
+    key_ideas_text: str,
+    candidates: list[dict],
+    min_match_length: int = 20,
+) -> dict:
+    """Check if Key Ideas section quotes any definitional candidates.
+
+    Args:
+        key_ideas_text: The Key Ideas section of the draft.
+        candidates: List of definitional candidates from transcript.
+        min_match_length: Minimum overlap length to count as coverage.
+
+    Returns:
+        Dict with 'covered', 'missing_candidates', 'matched_candidate'.
+    """
+    if not candidates:
+        return {
+            "covered": True,  # No candidates to cover
+            "missing_candidates": [],
+            "matched_candidate": None,
+        }
+
+    # Normalize key ideas text for matching
+    key_ideas_lower = key_ideas_text.lower()
+
+    # Check each candidate for presence in Key Ideas
+    for candidate in candidates:
+        sentence = candidate["sentence"]
+
+        # Try to find a substantial substring match
+        # Look for key phrases within the sentence
+        words = sentence.split()
+        for i in range(len(words) - 3):
+            phrase = " ".join(words[i:i+4]).lower()
+            # Clean up punctuation for matching
+            phrase_clean = re.sub(r'[^\w\s]', '', phrase)
+            if len(phrase_clean) >= min_match_length:
+                if phrase_clean in re.sub(r'[^\w\s]', '', key_ideas_lower):
+                    return {
+                        "covered": True,
+                        "missing_candidates": [],
+                        "matched_candidate": candidate,
+                    }
+
+    # No coverage found
+    return {
+        "covered": False,
+        "missing_candidates": candidates[:5],  # Return top 5 for re-run
+        "matched_candidate": None,
+    }
+
+
+def format_candidates_for_prompt(candidates: list[dict], max_candidates: int = 5) -> str:
+    """Format definitional candidates for inclusion in re-run prompt.
+
+    Args:
+        candidates: List of candidate dicts.
+        max_candidates: Maximum number to include.
+
+    Returns:
+        Formatted string for prompt injection.
+    """
+    if not candidates:
+        return ""
+
+    lines = ["The following definitional/criterial statements from the transcript MUST be considered for Key Ideas:"]
+    for i, candidate in enumerate(candidates[:max_candidates], 1):
+        lines.append(f'{i}. "{candidate["sentence"]}"')
+
+    lines.append("")
+    lines.append("Bullet #1 MUST quote from one of these statements.")
+
+    return "\n".join(lines)
+
+
+# ==============================================================================
 # Global Context Extraction
 # ==============================================================================
 

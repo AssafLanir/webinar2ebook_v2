@@ -730,6 +730,8 @@ The full interview formatted as readable Q&A, organized by topic.
 3. **No Action Steps**: This is NOT a how-to guide. No "Key Takeaways", "Action Items", or "Steps to..."
 4. **No Biography**: Do NOT invent speaker background unless EXPLICITLY stated in transcript
 5. **No Platitudes**: No generic wisdom like "believe in yourself" or "the key to success is..."
+6. **Bullet #1 MUST be definitional/criterial**: The FIRST Key Idea must quote a line where the speaker DEFINES, DISTINGUISHES, or EXPLAINS THEIR METHOD. Look for phrases like "is essentially", "rather than", "the method is", "what makes X good/bad".
+7. **No generic textbook definitions**: Do NOT use generic phrases like "Science is about finding laws of nature" when the speaker provides a SHARPER criterion (like "good explanations rather than bad explanations"). Always prefer the more distinctive, quotable line.
 
 ## Quote Hygiene (CRITICAL)
 

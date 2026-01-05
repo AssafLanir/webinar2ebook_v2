@@ -70,6 +70,9 @@ from .evidence_service import (
     detect_content_type,
     generate_mode_warning,
     evidence_map_to_summary,
+    extract_definitional_candidates,
+    check_key_ideas_coverage,
+    format_candidates_for_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -433,11 +436,42 @@ async def _generate_draft_task(
                 fallback=request.project_name if hasattr(request, "project_name") else None,
             )
 
+            # Extract definitional candidates BEFORE generation for coverage check
+            definitional_candidates = extract_definitional_candidates(request.transcript)
+            if definitional_candidates:
+                logger.info(f"Job {job_id}: Found {len(definitional_candidates)} definitional candidates")
+
+            # First generation pass
             final_markdown = await generate_interview_single_pass(
                 transcript=request.transcript,
                 book_title=interview_book_title,
                 evidence_map=evidence_map,
             )
+
+            # Key Ideas Coverage Guard: Check if core framework is surfaced
+            if definitional_candidates:
+                key_ideas_text = _extract_key_ideas_section(final_markdown)
+                coverage = check_key_ideas_coverage(key_ideas_text, definitional_candidates)
+
+                if not coverage["covered"]:
+                    logger.warning(
+                        f"Job {job_id}: Key Ideas missing definitional coverage, re-running with forced candidates"
+                    )
+                    # Re-run with forced candidates
+                    final_markdown = await generate_interview_single_pass(
+                        transcript=request.transcript,
+                        book_title=interview_book_title,
+                        evidence_map=evidence_map,
+                        forced_candidates=coverage["missing_candidates"],
+                    )
+                    constraint_warnings.append(
+                        "Key Ideas re-generated to include core framework definitions"
+                    )
+                else:
+                    logger.info(
+                        f"Job {job_id}: Key Ideas coverage check passed "
+                        f"(matched: {coverage['matched_candidate']['keyword'] if coverage['matched_candidate'] else 'N/A'})"
+                    )
 
             # Check for interview mode violations
             violations = check_interview_constraints(final_markdown)
@@ -933,6 +967,7 @@ async def generate_interview_single_pass(
     transcript: str,
     book_title: str,
     evidence_map: EvidenceMap,
+    forced_candidates: Optional[list[dict]] = None,
 ) -> str:
     """Generate interview ebook using single-pass approach (P0).
 
@@ -944,6 +979,7 @@ async def generate_interview_single_pass(
         transcript: Full transcript text.
         book_title: Title of the ebook.
         evidence_map: Evidence Map with extracted claims.
+        forced_candidates: Optional list of definitional candidates to force into Key Ideas.
 
     Returns:
         Generated markdown with Key Ideas + Conversation structure.
@@ -973,6 +1009,12 @@ async def generate_interview_single_pass(
         speaker_name=speaker_name,
         evidence_claims=all_claims,
     )
+
+    # If we have forced candidates (re-run), inject them into the prompt
+    if forced_candidates:
+        forced_text = format_candidates_for_prompt(forced_candidates)
+        user_prompt = f"{forced_text}\n\n---\n\n{user_prompt}"
+        logger.info(f"Re-running with {len(forced_candidates)} forced definitional candidates")
 
     request = LLMRequest(
         model=CHAPTER_MODEL,
@@ -1006,6 +1048,29 @@ async def generate_interview_single_pass(
 
     logger.info(f"Generated interview single-pass: {len(content)} chars")
     return final_markdown
+
+
+def _extract_key_ideas_section(markdown: str) -> str:
+    """Extract just the Key Ideas section from the generated markdown.
+
+    Args:
+        markdown: Full generated markdown.
+
+    Returns:
+        Just the Key Ideas section content.
+    """
+    import re
+
+    # Find Key Ideas section
+    match = re.search(
+        r'## Key Ideas.*?\n(.*?)(?=\n## |\Z)',
+        markdown,
+        re.DOTALL | re.IGNORECASE
+    )
+
+    if match:
+        return match.group(1).strip()
+    return ""
 
 
 def assemble_chapters(
