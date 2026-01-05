@@ -182,10 +182,10 @@ async def extract_claims_for_chapter(
     )
 
     try:
-        response = await client.complete(request)
+        response = await client.generate(request)
 
         # Parse response
-        result = json.loads(response.content)
+        result = json.loads(response.text)
 
         # Build claims from response
         claims = _parse_claims_response(result.get("claims", []), chapter_index)
