@@ -737,6 +737,9 @@ The speaker is sharing their experience and insights - present them directly.
 
 ## Structure Template
 
+IMPORTANT: Do NOT include a top-level H1 heading (like "# Interview"). Start directly with "## Key Ideas".
+The document title will be added separately.
+
 ```markdown
 ## Key Ideas (Grounded)
 

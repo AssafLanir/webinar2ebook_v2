@@ -953,10 +953,25 @@ async def generate_interview_single_pass(
 
     response = await client.generate(request)
 
-    # Assemble final output with title
-    final_markdown = f"# {book_title}\n\n{response.text}"
+    # Strip any H1 heading the LLM might have generated (we add our own)
+    content = response.text.strip()
+    if content.startswith("# "):
+        # Remove the first H1 line
+        lines = content.split("\n")
+        # Find first non-H1 line
+        start_idx = 0
+        for i, line in enumerate(lines):
+            if line.strip() and not line.startswith("# "):
+                start_idx = i
+                break
+            elif line.startswith("# "):
+                start_idx = i + 1
+        content = "\n".join(lines[start_idx:]).strip()
 
-    logger.info(f"Generated interview single-pass: {len(response.text)} chars")
+    # Assemble final output with proper book title
+    final_markdown = f"# {book_title}\n\n{content}"
+
+    logger.info(f"Generated interview single-pass: {len(content)} chars")
     return final_markdown
 
 
