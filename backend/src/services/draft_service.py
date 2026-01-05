@@ -59,6 +59,9 @@ from .prompts import (
     build_grounded_chapter_system_prompt,
     build_grounded_chapter_user_prompt,
     get_content_mode_prompt,
+    # P0: Interview grounded single-pass generation
+    build_interview_grounded_system_prompt,
+    build_interview_grounded_user_prompt,
 )
 from .evidence_service import (
     generate_evidence_map,
@@ -363,9 +366,8 @@ async def _generate_draft_task(
             logger.info(f"Job {job_id}: Cancelled during evidence map generation")
             return
 
-        # Phase 3: Generate chapters
+        # Phase 3: Generate content
         await update_job(job_id, status=JobStatus.generating)
-        logger.info(f"Job {job_id}: Starting generation phase ({len(draft_plan.chapters)} chapters)")
 
         # Compute words per chapter based on style config and chapter count
         style_dict = request.style_config.get("style", request.style_config) if isinstance(request.style_config, dict) else {}
@@ -382,66 +384,101 @@ async def _generate_draft_task(
             custom_total_words,
         )
         detail_level_str = style_dict.get("detail_level", "balanced")
-        logger.info(f"Job {job_id}: Target ~{words_per_chapter} words/chapter, detail_level={detail_level_str}")
+        book_format = style_dict.get("book_format", "guide")
 
-        chapters_completed: list[str] = []
+        # P0: Use single-pass generation for interview mode with evidence
+        use_interview_single_pass = (
+            content_mode == ContentMode.interview
+            and evidence_map
+            and sum(len(ch.claims) for ch in evidence_map.chapters) > 0
+            and book_format != "interview_qa"  # interview_qa uses different format
+        )
 
-        for i, chapter_plan in enumerate(draft_plan.chapters):
-            # Check for cancellation between chapters
-            job = await get_job(job_id)
-            if job and job.cancel_requested:
-                await update_job(
-                    job_id,
-                    status=JobStatus.cancelled,
-                    chapters_completed=chapters_completed,
-                )
-                logger.info(f"Job {job_id}: Cancelled after chapter {i}")
-                return
+        if use_interview_single_pass:
+            # Single-pass interview generation (P0: Key Ideas + Conversation)
+            logger.info(f"Job {job_id}: Using single-pass interview generation")
+            await update_job(job_id, current_chapter=1, total_chapters=1)
 
-            await update_job(job_id, current_chapter=i + 1)
-            logger.debug(f"Job {job_id}: Generating chapter {i + 1}/{len(draft_plan.chapters)}")
-
-            # Get chapter evidence from Evidence Map
-            chapter_evidence = get_evidence_for_chapter(evidence_map, chapter_plan.chapter_number)
-
-            chapter_md = await generate_chapter(
-                chapter_plan=chapter_plan,
+            final_markdown = await generate_interview_single_pass(
                 transcript=request.transcript,
                 book_title=draft_plan.book_title,
-                style_config=request.style_config,
-                chapters_completed=chapters_completed,
-                all_chapters=draft_plan.chapters,
-                words_per_chapter_target=words_per_chapter,
-                detail_level=detail_level_str,
-                # Spec 009: Evidence-grounded generation
-                chapter_evidence=chapter_evidence,
-                content_mode=content_mode,
-                strict_grounded=strict_grounded,
+                evidence_map=evidence_map,
             )
 
-            # Check for interview mode violations (Spec 009 US2)
-            if content_mode == ContentMode.interview:
-                violations = check_interview_constraints(chapter_md)
-                if violations:
-                    logger.warning(
-                        f"Job {job_id}: Chapter {chapter_plan.chapter_number} has "
-                        f"{len(violations)} interview mode violations"
+            # Check for interview mode violations
+            violations = check_interview_constraints(final_markdown)
+            if violations:
+                logger.warning(f"Job {job_id}: {len(violations)} interview mode violations in output")
+                constraint_warnings.extend([
+                    f"{v['matched_text'][:50]}..." for v in violations[:5]
+                ])
+                await update_job(job_id, constraint_warnings=constraint_warnings)
+
+            chapters_completed = [final_markdown]
+
+        else:
+            # Standard chapter-by-chapter generation
+            logger.info(f"Job {job_id}: Starting chapter generation ({len(draft_plan.chapters)} chapters)")
+            logger.info(f"Job {job_id}: Target ~{words_per_chapter} words/chapter, detail_level={detail_level_str}")
+
+            chapters_completed: list[str] = []
+
+            for i, chapter_plan in enumerate(draft_plan.chapters):
+                # Check for cancellation between chapters
+                job = await get_job(job_id)
+                if job and job.cancel_requested:
+                    await update_job(
+                        job_id,
+                        status=JobStatus.cancelled,
+                        chapters_completed=chapters_completed,
                     )
-                    # Add to warnings but don't fail
-                    constraint_warnings.extend([
-                        f"Ch{chapter_plan.chapter_number}: {v['matched_text'][:50]}..."
-                        for v in violations[:3]
-                    ])
-                    await update_job(job_id, constraint_warnings=constraint_warnings)
+                    logger.info(f"Job {job_id}: Cancelled after chapter {i}")
+                    return
 
-            chapters_completed.append(chapter_md)
-            await update_job(job_id, chapters_completed=chapters_completed)
+                await update_job(job_id, current_chapter=i + 1)
+                logger.debug(f"Job {job_id}: Generating chapter {i + 1}/{len(draft_plan.chapters)}")
 
-        # Assemble final draft
-        final_markdown = assemble_chapters(
-            book_title=draft_plan.book_title,
-            chapters=chapters_completed,
-        )
+                # Get chapter evidence from Evidence Map
+                chapter_evidence = get_evidence_for_chapter(evidence_map, chapter_plan.chapter_number)
+
+                chapter_md = await generate_chapter(
+                    chapter_plan=chapter_plan,
+                    transcript=request.transcript,
+                    book_title=draft_plan.book_title,
+                    style_config=request.style_config,
+                    chapters_completed=chapters_completed,
+                    all_chapters=draft_plan.chapters,
+                    words_per_chapter_target=words_per_chapter,
+                    detail_level=detail_level_str,
+                    # Spec 009: Evidence-grounded generation
+                    chapter_evidence=chapter_evidence,
+                    content_mode=content_mode,
+                    strict_grounded=strict_grounded,
+                )
+
+                # Check for interview mode violations (Spec 009 US2)
+                if content_mode == ContentMode.interview:
+                    violations = check_interview_constraints(chapter_md)
+                    if violations:
+                        logger.warning(
+                            f"Job {job_id}: Chapter {chapter_plan.chapter_number} has "
+                            f"{len(violations)} interview mode violations"
+                        )
+                        # Add to warnings but don't fail
+                        constraint_warnings.extend([
+                            f"Ch{chapter_plan.chapter_number}: {v['matched_text'][:50]}..."
+                            for v in violations[:3]
+                        ])
+                        await update_job(job_id, constraint_warnings=constraint_warnings)
+
+                chapters_completed.append(chapter_md)
+                await update_job(job_id, chapters_completed=chapters_completed)
+
+            # Assemble final draft for chapter-by-chapter mode
+            final_markdown = assemble_chapters(
+                book_title=draft_plan.book_title,
+                chapters=chapters_completed,
+            )
 
         await update_job(
             job_id,
@@ -852,6 +889,74 @@ def _extract_speaker_name(transcript: str) -> str:
         return most_common
 
     return "The speaker"
+
+
+# ==============================================================================
+# P0: Single-Pass Interview Generation
+# ==============================================================================
+
+async def generate_interview_single_pass(
+    transcript: str,
+    book_title: str,
+    evidence_map: EvidenceMap,
+) -> str:
+    """Generate interview ebook using single-pass approach (P0).
+
+    Produces the new output structure:
+    - ## Key Ideas (Grounded) - with inline supporting quotes
+    - ## The Conversation - Q&A format
+
+    Args:
+        transcript: Full transcript text.
+        book_title: Title of the ebook.
+        evidence_map: Evidence Map with extracted claims.
+
+    Returns:
+        Generated markdown with Key Ideas + Conversation structure.
+    """
+    client = LLMClient()
+
+    # Extract speaker name
+    speaker_name = _extract_speaker_name(transcript)
+
+    # Collect all claims from all chapters for the Key Ideas section
+    all_claims: list[dict] = []
+    for chapter in evidence_map.chapters:
+        for claim in chapter.claims:
+            all_claims.append(claim.model_dump())
+
+    # Sort by confidence to prioritize strongest claims
+    all_claims.sort(key=lambda c: c.get("confidence", 0), reverse=True)
+
+    # Build prompts
+    system_prompt = build_interview_grounded_system_prompt(
+        book_title=book_title,
+        speaker_name=speaker_name,
+    )
+
+    user_prompt = build_interview_grounded_user_prompt(
+        transcript=transcript,
+        speaker_name=speaker_name,
+        evidence_claims=all_claims,
+    )
+
+    request = LLMRequest(
+        model=CHAPTER_MODEL,
+        messages=[
+            ChatMessage(role="system", content=system_prompt),
+            ChatMessage(role="user", content=user_prompt),
+        ],
+        temperature=0.7,
+        max_tokens=8000,  # Larger for single-pass
+    )
+
+    response = await client.generate(request)
+
+    # Assemble final output with title
+    final_markdown = f"# {book_title}\n\n{response.text}"
+
+    logger.info(f"Generated interview single-pass: {len(response.text)} chars")
+    return final_markdown
 
 
 def assemble_chapters(

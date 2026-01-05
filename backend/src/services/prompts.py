@@ -694,6 +694,170 @@ def build_interview_qa_chapter_prompt(
 
 
 # ==============================================================================
+# Interview Mode Single-Pass Generation (P0: New Output Template)
+# ==============================================================================
+
+INTERVIEW_GROUNDED_SYSTEM_PROMPT = """You are transforming an interview transcript into an ebook with a SPECIFIC two-part structure.
+
+## Output Structure (MANDATORY)
+
+Your output MUST have exactly these two sections:
+
+### Part 1: Key Ideas (Grounded)
+A list of 5-10 bullet points capturing the speaker's most important ideas.
+EVERY bullet MUST include an inline quote (max 40 words) from the transcript as evidence.
+
+Format each bullet as:
+- **[Idea statement]**: "[Supporting quote from transcript]"
+
+### Part 2: The Conversation
+The full interview formatted as readable Q&A, organized by topic.
+
+## Critical Rules
+
+1. **Inline Quotes are MANDATORY**: Every Key Idea bullet MUST contain a direct quote
+2. **No Chapters**: Do NOT use "Chapter 1", "Chapter 2" etc. - use topic headers instead
+3. **No Action Steps**: This is NOT a how-to guide. No "Key Takeaways", "Action Items", or "Steps to..."
+4. **No Biography**: Do NOT invent speaker background unless EXPLICITLY stated in transcript
+5. **No Platitudes**: No generic wisdom like "believe in yourself" or "the key to success is..."
+
+## Attribution Rules
+
+When referencing what the speaker said, you MAY use phrases like:
+- "As [Name] explains, ..."
+- "[Name] notes that ..."
+- "According to [Name], ..."
+
+Do NOT use distancing language like:
+- "[Name] believes..." (implies skepticism)
+- "[Name] argues..." (implies contentiousness)
+- "[Name] emphasizes..." (vague, often used to pad)
+
+The speaker is sharing their experience and insights - present them directly.
+
+## Structure Template
+
+```markdown
+## Key Ideas (Grounded)
+
+- **[First key idea]**: "[exact quote supporting this, max 40 words]"
+- **[Second key idea]**: "[exact quote supporting this, max 40 words]"
+... (5-10 bullets total)
+
+## The Conversation
+
+### [Topic Theme 1]
+
+#### [Question from host rephrased as header]
+
+[Speaker's response, edited for clarity but preserving their voice]
+
+> "[Memorable quote from this section]"
+
+#### [Next question]
+...
+
+### [Topic Theme 2]
+...
+```
+"""
+
+
+def build_interview_grounded_system_prompt(
+    book_title: str,
+    speaker_name: str,
+) -> str:
+    """Build system prompt for grounded interview generation (P0 format).
+
+    This produces the new output structure:
+    - ## Key Ideas (Grounded) - with inline quotes
+    - ## The Conversation - Q&A format
+
+    Args:
+        book_title: Title of the ebook.
+        speaker_name: Name of the interview subject/speaker.
+
+    Returns:
+        Formatted system prompt string.
+    """
+    return f"""{INTERVIEW_GROUNDED_SYSTEM_PROMPT}
+
+## Book Context
+
+- Book title: "{book_title}"
+- Primary speaker: {speaker_name}
+
+All quotes should be from {speaker_name} unless otherwise indicated.
+Use {speaker_name}'s name naturally in the text for attribution."""
+
+
+def build_interview_grounded_user_prompt(
+    transcript: str,
+    speaker_name: str,
+    evidence_claims: list[dict],
+) -> str:
+    """Build user prompt for grounded interview generation.
+
+    This is a SINGLE-PASS generation (no chapters) that produces the
+    Key Ideas + Conversation format.
+
+    Args:
+        transcript: Full transcript text.
+        speaker_name: Name of the speaker.
+        evidence_claims: List of extracted claims with supporting quotes.
+
+    Returns:
+        Formatted user prompt string.
+    """
+    parts = [
+        "## Source Transcript",
+        "```",
+        transcript,
+        "```",
+        "",
+        "## Evidence Map (Claims You Can Use)",
+        "",
+        "Use ONLY these verified claims and their supporting quotes for the Key Ideas section:",
+        "",
+    ]
+
+    # Include evidence claims with their quotes
+    for i, claim in enumerate(evidence_claims[:15], 1):  # Limit to top 15 claims
+        claim_text = claim.get("claim", "")
+        parts.append(f"{i}. **{claim_text}**")
+        for quote in claim.get("support", [])[:1]:  # First supporting quote
+            quote_text = quote.get("quote", "")
+            if quote_text:
+                # Truncate to ~40 words for inline use
+                words = quote_text.split()
+                if len(words) > 40:
+                    quote_text = " ".join(words[:40]) + "..."
+                parts.append(f'   - Quote: "{quote_text}"')
+        parts.append("")
+
+    parts.extend([
+        "## Instructions",
+        "",
+        f"Generate an ebook about this conversation with {speaker_name}.",
+        "",
+        "Your output MUST follow this exact structure:",
+        "",
+        "1. **## Key Ideas (Grounded)** - 5-10 bullets, each with an inline quote",
+        "2. **## The Conversation** - The full interview as readable Q&A",
+        "",
+        "Remember:",
+        "- Every Key Idea bullet needs a supporting quote (use the Evidence Map above)",
+        "- No chapter headings like 'Chapter 1'",
+        "- No 'Key Takeaways', 'Action Steps', or how-to content",
+        f"- Do NOT invent {speaker_name}'s biography",
+        "",
+        "Begin generating the ebook:",
+    ])
+
+    return "\n".join(parts)
+
+
+# ==============================================================================
 # Evidence Map Prompts (Spec 009)
 # ==============================================================================
 
@@ -815,6 +979,8 @@ INTERVIEW_FORBIDDEN_PATTERNS = [
     r"(?i)the\s+(?:key|secret)\s+to\s+success\s+is",
     r"(?i)(?:anyone|you)\s+can\s+(?:do|achieve)\s+(?:it|this|anything)",
     r"(?i)(?:just|simply)\s+(?:remember|keep\s+in\s+mind)\s+that",
+    # P1: Distancing attribution patterns
+    r"(?i)\b\w+\s+(?:believes?|argues?|emphasizes?|contends?|maintains?|insists?)\s+that",
 ]
 
 # System prompt additions for interview mode
