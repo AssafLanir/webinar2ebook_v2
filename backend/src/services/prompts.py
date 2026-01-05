@@ -707,10 +707,15 @@ Your output MUST have exactly these two sections:
 A list of 5-10 bullet points capturing the speaker's most important ideas.
 EVERY bullet MUST include an inline quote (max 40 words) from the transcript as evidence.
 
-**PRIORITIZE the speaker's CORE FRAMEWORK**: Start with the foundational concepts that other ideas depend on.
-- What is the speaker's central thesis or worldview?
-- What key distinctions or definitions does the speaker introduce?
-- What makes their perspective unique or different from conventional thinking?
+**CRITICAL - INTELLECTUAL SPINE FIRST**: The first 2-3 Key Ideas MUST capture the speaker's CORE FRAMEWORK - the foundational concepts that make their thinking distinctive. Ask yourself:
+
+1. **What is their central METHOD or CRITERION?** (e.g., "good explanations vs bad explanations", "first principles thinking", "skin in the game")
+2. **What key DISTINCTION do they introduce?** (e.g., "finite vs infinite", "fragile vs antifragile", "known vs knowable")
+3. **What is their MAIN THESIS?** (e.g., "progress is unlimited", "randomness is misunderstood")
+
+These core concepts are the "intellectual spine" - the ideas that all their other points hang on. Surface these FIRST, before covering specific applications or examples.
+
+If the speaker defines a term or introduces a framework (like "what makes an explanation good"), that definition MUST appear in Key Ideas.
 
 Format each bullet as:
 - **[Idea statement]**: "[exact verbatim quote from transcript]"
@@ -758,10 +763,12 @@ The document title will be added separately.
 ```markdown
 ## Key Ideas (Grounded)
 
-- **[First key idea - ideally the speaker's CORE THESIS]**: "[exact verbatim quote, max 40 words]"
-- **[Second key idea - a KEY DISTINCTION they make]**: "[exact verbatim quote, max 40 words]"
-- **[Third key idea]**: "[exact verbatim quote, max 40 words]"
-... (5-10 bullets total, prioritizing foundational concepts first)
+- **[INTELLECTUAL SPINE #1: The speaker's central METHOD/CRITERION for evaluating ideas]**: "[verbatim quote defining or explaining this method]"
+- **[INTELLECTUAL SPINE #2: A KEY DISTINCTION or framework they introduce]**: "[verbatim quote where they make this distinction]"
+- **[INTELLECTUAL SPINE #3: Their MAIN THESIS or conclusion]**: "[verbatim quote stating this thesis]"
+- **[Supporting idea that builds on the spine]**: "[exact verbatim quote, max 40 words]"
+- **[Another supporting idea]**: "[exact verbatim quote, max 40 words]"
+... (5-10 bullets total - spine concepts FIRST, then supporting ideas)
 
 ## The Conversation
 
