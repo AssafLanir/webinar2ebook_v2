@@ -407,8 +407,8 @@ class TestContentModeIntegration:
         assert use_single_pass is True
 
     @pytest.mark.asyncio
-    async def test_interview_qa_format_does_not_use_new_template(self):
-        """book_format=interview_qa should use old Q&A format, not new template."""
+    async def test_interview_qa_format_uses_new_template(self):
+        """book_format=interview_qa should also use P0 template (Key Ideas + Conversation)."""
         from src.models.style_config import ContentMode
         from src.models.evidence_map import EvidenceMap, ChapterEvidence, EvidenceEntry, SupportQuote
 
@@ -433,15 +433,15 @@ class TestContentModeIntegration:
             ],
         )
 
-        content_mode = ContentMode.interview
-        book_format = "interview_qa"  # Old Q&A format
+        content_mode = ContentMode.essay  # Not interview mode
+        book_format = "interview_qa"  # But interview_qa format selected
 
+        # interview_qa book format should trigger single-pass even without interview content_mode
         use_single_pass = (
-            content_mode == ContentMode.interview
+            (content_mode == ContentMode.interview or book_format == "interview_qa")
             and evidence_map
             and sum(len(ch.claims) for ch in evidence_map.chapters) > 0
-            and book_format != "interview_qa"
         )
 
-        # Should NOT use single-pass because book_format is interview_qa
-        assert use_single_pass is False
+        # Should use single-pass because book_format is interview_qa
+        assert use_single_pass is True

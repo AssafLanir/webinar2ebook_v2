@@ -387,11 +387,12 @@ async def _generate_draft_task(
         book_format = style_dict.get("book_format", "guide")
 
         # P0: Use single-pass generation for interview mode with evidence
+        # Triggers when: content_mode=interview OR book_format=interview_qa
+        # Both should produce Key Ideas + Conversation structure
         use_interview_single_pass = (
-            content_mode == ContentMode.interview
+            (content_mode == ContentMode.interview or book_format == "interview_qa")
             and evidence_map
             and sum(len(ch.claims) for ch in evidence_map.chapters) > 0
-            and book_format != "interview_qa"  # interview_qa uses different format
         )
 
         if use_interview_single_pass:
