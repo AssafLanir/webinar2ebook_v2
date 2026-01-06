@@ -773,34 +773,52 @@ Use the actual book title: "# {book_title}" (the title will be provided in Book 
 
 ## Key Ideas (Grounded)
 
-- **[INTELLECTUAL SPINE #1: The speaker's central METHOD/CRITERION for evaluating ideas]**: "[verbatim quote defining or explaining this method]"
-- **[INTELLECTUAL SPINE #2: A KEY DISTINCTION or framework they introduce]**: "[verbatim quote where they make this distinction]"
-- **[INTELLECTUAL SPINE #3: Their MAIN THESIS or conclusion]**: "[verbatim quote stating this thesis]"
-- **[Supporting idea that builds on the spine]**: "[exact verbatim quote, max 40 words]"
-- **[Another supporting idea]**: "[exact verbatim quote, max 40 words]"
-... (5-10 bullets total - spine concepts FIRST, then supporting ideas)
+- **Good explanations vs vague ones**: "We discovered this method—the scientific method—which I think is essentially trying to find good explanations of what happens rather than bad explanations."
+- **After the Enlightenment, improvement became the norm**: "We have learned to live with the fact that everything improves in every generation."
+- **We still have a choice**: "We don't have to jump on this bandwagon of this built-in potential of the universe if we don't want to."
+- **Wisdom is not static**: "The truth of the matter is that wisdom, like scientific knowledge, is also limitless."
+... (5-10 bullets total - core concepts FIRST, then supporting ideas)
+```
+
+**Key Ideas label rules:**
+- Labels should be SHORT, PLAIN ENGLISH summaries (5-10 words max)
+- NO meta-language like "The speaker's central METHOD" or "A KEY DISTINCTION"
+- NO all-caps words like "CRITERION" or "THESIS"
+- The label should MATCH the quote's actual content
+- Think: what would a newspaper headline say?
+
+**BAD labels** (too meta, too shouty):
+- "The speaker's central METHOD/CRITERION for evaluating ideas"
+- "A KEY DISTINCTION introduced regarding human potential"
+- "Their MAIN THESIS about wisdom"
+
+**GOOD labels** (plain, specific, human):
+- "Good explanations vs vague ones"
+- "Progress became the expectation after the Enlightenment"
+- "We have a choice about our future"
 
 ## The Conversation
 
-Format each Q&A with EXPLICIT speaker labels for clarity:
+Format each Q&A with speaker labels. Quote blocks are OPTIONAL - use sparingly for the most memorable moments (1-2 per major section, not after every answer).
 
-### [Topic Theme 1]
+```markdown
+### The Enlightenment
 
-#### [Question from host rephrased as header]
+#### What changed after the Scientific Revolution?
 
-**[Speaker Name]:** [Speaker's response, edited for clarity but preserving their voice]
+**David Deutsch:** This line is the most important thing that's ever happened because prior to it, the world was static in terms of ideas. Things did improve, but from the point of view of any individual, the technology, the economics, the ways of life—everything they could notice about the world—would not have changed.
 
-> "[Memorable verbatim quote from this section]"
+#### How does progress continue?
 
-#### [Next question]
+**David Deutsch:** After the Enlightenment, it was the exact opposite. We have learned to live with the fact that everything improves in every generation.
 
-**[Speaker Name]:** [Response...]
+> "We have learned to live with the fact that everything improves in every generation."
 
-### [Topic Theme 2]
+### Human Potential
 ...
 ```
 
-**IMPORTANT**: Every answer in The Conversation MUST start with the speaker's name in bold followed by a colon (e.g., "**David Deutsch:**"). This makes it clear who is speaking.
+**IMPORTANT**: Every answer MUST start with the speaker's name in bold (e.g., "**David Deutsch:**"). Quote blocks (> "...") are highlights only - do NOT repeat every answer as a quote block.
 """
 
 
