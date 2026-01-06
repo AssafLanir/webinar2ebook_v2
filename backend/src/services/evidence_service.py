@@ -671,11 +671,14 @@ def check_key_ideas_coverage(
     candidates: list[dict],
     min_match_length: int = 20,
 ) -> dict:
-    """Check if Key Ideas section quotes any definitional candidates.
+    """Check if Key Ideas section quotes the TOP PRIORITY definitional candidates.
+
+    IMPORTANT: If a high-priority candidate exists (e.g., "good explanations"),
+    we require THAT specific candidate to be covered, not just any candidate.
 
     Args:
         key_ideas_text: The Key Ideas section of the draft.
-        candidates: List of definitional candidates from transcript.
+        candidates: List of definitional candidates from transcript (already sorted by priority).
         min_match_length: Minimum overlap length to count as coverage.
 
     Returns:
@@ -690,32 +693,177 @@ def check_key_ideas_coverage(
 
     # Normalize key ideas text for matching
     key_ideas_lower = key_ideas_text.lower()
+    key_ideas_clean = re.sub(r'[^\w\s]', '', key_ideas_lower)
 
-    # Check each candidate for presence in Key Ideas
-    for candidate in candidates:
+    # High-priority keywords that MUST be matched if present in candidates
+    # These are the "intellectual spine" keywords
+    must_match_keywords = ["good explanation", "bad explanation", "rather than"]
+
+    def candidate_matches_key_ideas(candidate: dict) -> bool:
+        """Check if a candidate's content appears in Key Ideas."""
         sentence = candidate["sentence"]
-
-        # Try to find a substantial substring match
-        # Look for key phrases within the sentence
         words = sentence.split()
         for i in range(len(words) - 3):
             phrase = " ".join(words[i:i+4]).lower()
-            # Clean up punctuation for matching
             phrase_clean = re.sub(r'[^\w\s]', '', phrase)
             if len(phrase_clean) >= min_match_length:
-                if phrase_clean in re.sub(r'[^\w\s]', '', key_ideas_lower):
-                    return {
-                        "covered": True,
-                        "missing_candidates": [],
-                        "matched_candidate": candidate,
-                    }
+                if phrase_clean in key_ideas_clean:
+                    return True
+        return False
+
+    # First, check if any candidate contains a must-match keyword
+    must_match_candidates = []
+    for candidate in candidates:
+        sentence_lower = candidate["sentence"].lower()
+        for keyword in must_match_keywords:
+            if keyword in sentence_lower:
+                must_match_candidates.append(candidate)
+                break
+
+    # If we have must-match candidates, we MUST match at least one of them
+    if must_match_candidates:
+        for candidate in must_match_candidates:
+            if candidate_matches_key_ideas(candidate):
+                logger.info(f"Coverage check: Found must-match candidate (keyword: {candidate['keyword']})")
+                return {
+                    "covered": True,
+                    "missing_candidates": [],
+                    "matched_candidate": candidate,
+                }
+
+        # Must-match candidates exist but none are covered - FAIL
+        logger.warning(f"Coverage check: {len(must_match_candidates)} must-match candidates not found in Key Ideas")
+        return {
+            "covered": False,
+            "missing_candidates": must_match_candidates[:5],  # Return must-match candidates
+            "matched_candidate": None,
+        }
+
+    # No must-match candidates - fall back to checking any candidate
+    for candidate in candidates:
+        if candidate_matches_key_ideas(candidate):
+            return {
+                "covered": True,
+                "missing_candidates": [],
+                "matched_candidate": candidate,
+            }
 
     # No coverage found
     return {
         "covered": False,
-        "missing_candidates": candidates[:5],  # Return top 5 for re-run
+        "missing_candidates": candidates[:5],
         "matched_candidate": None,
     }
+
+
+def verify_key_ideas_quotes(
+    key_ideas_text: str,
+    transcript: str,
+    min_match_ratio: float = 0.7,
+) -> dict:
+    """Verify that quotes in Key Ideas actually exist in the transcript.
+
+    Extracts all quoted text from Key Ideas and checks if each quote
+    (or a substantial portion) exists in the transcript.
+
+    Args:
+        key_ideas_text: The Key Ideas section of the draft.
+        transcript: The original transcript.
+        min_match_ratio: Minimum portion of quote that must match (0.0-1.0).
+
+    Returns:
+        Dict with 'valid', 'invalid_quotes', 'all_quotes'.
+    """
+    # Extract all quoted strings from Key Ideas
+    quote_pattern = r'"([^"]{10,})"'  # Quotes with at least 10 chars
+    quotes = re.findall(quote_pattern, key_ideas_text)
+
+    if not quotes:
+        return {
+            "valid": True,
+            "invalid_quotes": [],
+            "all_quotes": [],
+        }
+
+    # Normalize transcript for fuzzy matching
+    transcript_clean = re.sub(r'[^\w\s]', ' ', transcript.lower())
+    transcript_clean = re.sub(r'\s+', ' ', transcript_clean)
+
+    invalid_quotes = []
+    for quote in quotes:
+        # Normalize quote
+        quote_clean = re.sub(r'[^\w\s]', ' ', quote.lower())
+        quote_clean = re.sub(r'\s+', ' ', quote_clean).strip()
+
+        # Check if quote exists in transcript (fuzzy)
+        words = quote_clean.split()
+        if len(words) < 3:
+            continue  # Skip very short quotes
+
+        # Try to find a substantial match
+        found = False
+        # Try full quote first
+        if quote_clean in transcript_clean:
+            found = True
+        else:
+            # Try sliding window of 70% of words
+            window_size = max(3, int(len(words) * min_match_ratio))
+            for i in range(len(words) - window_size + 1):
+                phrase = " ".join(words[i:i + window_size])
+                if phrase in transcript_clean:
+                    found = True
+                    break
+
+        if not found:
+            invalid_quotes.append({
+                "quote": quote,
+                "reason": "Not found in transcript (possible fabrication or paraphrase)",
+            })
+
+    # Check for narration inside quotes (red flag)
+    narration_pattern = r'"[^"]*\b(?:he|she|they)\s+(?:says?|said|notes?)\b[^"]*"'
+    narration_matches = re.findall(narration_pattern, key_ideas_text, re.IGNORECASE)
+    for match in narration_matches:
+        if match not in [q["quote"] for q in invalid_quotes]:
+            invalid_quotes.append({
+                "quote": match,
+                "reason": "Contains narration inside quotes (e.g., 'he says')",
+            })
+
+    return {
+        "valid": len(invalid_quotes) == 0,
+        "invalid_quotes": invalid_quotes,
+        "all_quotes": quotes,
+    }
+
+
+def check_truncated_quotes(key_ideas_text: str) -> list[dict]:
+    """Check for quotes that appear truncated mid-sentence.
+
+    Args:
+        key_ideas_text: The Key Ideas section of the draft.
+
+    Returns:
+        List of truncated quote issues.
+    """
+    # Extract all quoted strings
+    quote_pattern = r'"([^"]{10,})"'
+    quotes = re.findall(quote_pattern, key_ideas_text)
+
+    issues = []
+    for quote in quotes:
+        quote = quote.strip()
+
+        # Check if quote ends mid-sentence (no sentence-ending punctuation)
+        if quote and not quote[-1] in '.!?…"':
+            # Allow if it ends with ellipsis indicator
+            if not quote.endswith('...'):
+                issues.append({
+                    "quote": quote,
+                    "reason": "Truncated mid-sentence (should end with . ! ? or ...)",
+                })
+
+    return issues
 
 
 def format_candidates_for_prompt(candidates: list[dict], max_candidates: int = 5) -> str:

@@ -739,9 +739,14 @@ The full interview formatted as readable Q&A, organized by topic.
 
 - ✅ CORRECT: "This line is the most important thing that's ever happened" (exact words from transcript)
 - ❌ WRONG: "The Enlightenment was transformative" (paraphrase presented as quote)
+- ❌ WRONG: "Since the revolution, he says, things changed" (narration inside quotes - NEVER do this)
+- ❌ WRONG: "...would not have changed and would not..." (truncated mid-sentence)
 
-If you're paraphrasing or summarizing, do NOT use quotation marks. Write it as plain text instead.
-Every quoted string must be a contiguous excerpt that actually appears in the transcript.
+**Rules:**
+1. Every quoted string must be a contiguous excerpt that actually appears in the transcript
+2. NEVER include narration like "he says", "she notes", "they explained" INSIDE quotation marks
+3. Quotes must be COMPLETE SENTENCES - never truncate mid-thought (use ellipsis "..." only at natural breaks)
+4. If you're paraphrasing, do NOT use quotation marks - write it as plain text instead
 
 ## Attribution Rules
 
@@ -774,20 +779,25 @@ The document title will be added separately.
 
 ## The Conversation
 
+Format each Q&A with EXPLICIT speaker labels for clarity:
+
 ### [Topic Theme 1]
 
 #### [Question from host rephrased as header]
 
-[Speaker's response, edited for clarity but preserving their voice]
+**[Speaker Name]:** [Speaker's response, edited for clarity but preserving their voice]
 
 > "[Memorable verbatim quote from this section]"
 
 #### [Next question]
-...
+
+**[Speaker Name]:** [Response...]
 
 ### [Topic Theme 2]
 ...
 ```
+
+**IMPORTANT**: Every answer in The Conversation MUST start with the speaker's name in bold followed by a colon (e.g., "**David Deutsch:**"). This makes it clear who is speaking.
 """
 
 
@@ -1009,6 +1019,8 @@ INTERVIEW_FORBIDDEN_PATTERNS = [
     r"(?i)(?:just|simply)\s+(?:remember|keep\s+in\s+mind)\s+that",
     # P1: Distancing attribution patterns
     r"(?i)\b\w+\s+(?:believes?|argues?|emphasizes?|contends?|maintains?|insists?)\s+that",
+    # Narration inside quotes (fabricated quotes indicator)
+    r'"[^"]*\b(?:he|she|they)\s+(?:says?|said|notes?|explained?|added?)\b[^"]*"',
 ]
 
 # System prompt additions for interview mode

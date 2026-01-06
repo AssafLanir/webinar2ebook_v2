@@ -185,7 +185,7 @@ class TestForbiddenPatterns:
 
     def test_distancing_pattern_matches_believes(self):
         """Pattern should match 'X believes that'."""
-        pattern = INTERVIEW_FORBIDDEN_PATTERNS[-1]  # Last pattern is distancing
+        pattern = INTERVIEW_FORBIDDEN_PATTERNS[-2]  # Distancing pattern (second to last)
 
         test_cases = [
             ("Deutsch believes that", True),
@@ -194,6 +194,29 @@ class TestForbiddenPatterns:
             ("The speaker maintains that", True),
             ("As Sarah explains, this is", False),  # Not distancing
             ("Sarah notes that", False),  # Not in pattern
+        ]
+
+        for text, should_match in test_cases:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if should_match:
+                assert match is not None, f"Pattern should match: {text}"
+            else:
+                assert match is None, f"Pattern should not match: {text}"
+
+    def test_narration_inside_quotes_pattern(self):
+        """Pattern should match narration like 'he says' inside quotes."""
+        pattern = INTERVIEW_FORBIDDEN_PATTERNS[-1]  # Narration inside quotes pattern
+
+        test_cases = [
+            ('"Since the revolution, he says, things changed"', True),
+            ('"She explained that the method works"', True),
+            ('"They said it was impossible"', True),
+            ('"He notes that progress continues"', True),
+            ('"She added that it matters"', True),
+            ('"This line is the most important thing"', False),  # No narration
+            ('He says "this is important"', False),  # Narration outside quotes
+            ('"Science is about finding laws of nature"', False),  # Clean quote
+            ('"The speaker notes that"', False),  # Only matches he/she/they
         ]
 
         for text, should_match in test_cases:
@@ -601,7 +624,7 @@ Deutsch contends that humans can understand anything.
 
     def test_distancing_language_detection(self):
         """Should detect distancing language patterns."""
-        distancing_pattern = INTERVIEW_FORBIDDEN_PATTERNS[-1]
+        distancing_pattern = INTERVIEW_FORBIDDEN_PATTERNS[-2]  # Distancing pattern (second to last)
 
         # These should match (bad)
         bad_phrases = [

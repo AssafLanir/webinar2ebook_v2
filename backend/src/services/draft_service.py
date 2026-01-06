@@ -73,6 +73,8 @@ from .evidence_service import (
     extract_definitional_candidates,
     check_key_ideas_coverage,
     format_candidates_for_prompt,
+    verify_key_ideas_quotes,
+    check_truncated_quotes,
 )
 
 logger = logging.getLogger(__name__)
@@ -473,6 +475,29 @@ async def _generate_draft_task(
                         f"(matched: {coverage['matched_candidate']['keyword'] if coverage['matched_candidate'] else 'N/A'})"
                     )
 
+            # Quote validation checks
+            key_ideas_text = _extract_key_ideas_section(final_markdown)
+
+            # Check for fabricated quotes (not in transcript)
+            quote_validation = verify_key_ideas_quotes(key_ideas_text, request.transcript)
+            if not quote_validation["valid"]:
+                logger.warning(
+                    f"Job {job_id}: {len(quote_validation['invalid_quotes'])} potentially invalid quotes in Key Ideas"
+                )
+                for invalid in quote_validation["invalid_quotes"][:3]:
+                    constraint_warnings.append(
+                        f"Quote issue: {invalid['reason'][:50]}"
+                    )
+
+            # Check for truncated quotes
+            truncated = check_truncated_quotes(key_ideas_text)
+            if truncated:
+                logger.warning(f"Job {job_id}: {len(truncated)} truncated quotes in Key Ideas")
+                for issue in truncated[:2]:
+                    constraint_warnings.append(
+                        f"Truncated quote: ...{issue['quote'][-30:]}"
+                    )
+
             # Check for interview mode violations
             violations = check_interview_constraints(final_markdown)
             if violations:
@@ -480,6 +505,9 @@ async def _generate_draft_task(
                 constraint_warnings.extend([
                     f"{v['matched_text'][:50]}..." for v in violations[:5]
                 ])
+
+            # Update job with any constraint warnings
+            if constraint_warnings:
                 await update_job(job_id, constraint_warnings=constraint_warnings)
 
             chapters_completed = [final_markdown]
