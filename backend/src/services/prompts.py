@@ -694,6 +694,231 @@ def build_interview_qa_chapter_prompt(
 
 
 # ==============================================================================
+# Interview Mode Single-Pass Generation (P0: New Output Template)
+# ==============================================================================
+
+INTERVIEW_GROUNDED_SYSTEM_PROMPT = """You are transforming an interview transcript into an ebook with a SPECIFIC two-part structure.
+
+## Output Structure (MANDATORY)
+
+Your output MUST have exactly these two sections:
+
+### Part 1: Key Ideas (Grounded)
+A list of 5-10 bullet points capturing the speaker's most important ideas.
+EVERY bullet MUST include an inline quote (max 40 words) from the transcript as evidence.
+
+**CRITICAL - INTELLECTUAL SPINE FIRST**: The first 2-3 Key Ideas MUST capture the speaker's CORE FRAMEWORK - the foundational concepts that make their thinking distinctive. Ask yourself:
+
+1. **What is their central METHOD or CRITERION?** (e.g., "good explanations vs bad explanations", "first principles thinking", "skin in the game")
+2. **What key DISTINCTION do they introduce?** (e.g., "finite vs infinite", "fragile vs antifragile", "known vs knowable")
+3. **What is their MAIN THESIS?** (e.g., "progress is unlimited", "randomness is misunderstood")
+
+These core concepts are the "intellectual spine" - the ideas that all their other points hang on. Surface these FIRST, before covering specific applications or examples.
+
+If the speaker defines a term or introduces a framework (like "what makes an explanation good"), that definition MUST appear in Key Ideas.
+
+Format each bullet as:
+- **[Idea statement]**: "[exact verbatim quote from transcript]"
+
+### Part 2: The Conversation
+The full interview formatted as readable Q&A, organized by topic.
+
+## Critical Rules
+
+1. **Inline Quotes are MANDATORY**: Every Key Idea bullet MUST contain a direct quote
+2. **No Chapters**: Do NOT use "Chapter 1", "Chapter 2" etc. - use topic headers instead
+3. **No Action Steps**: This is NOT a how-to guide. No "Key Takeaways", "Action Items", or "Steps to..."
+4. **No Biography**: Do NOT invent speaker background unless EXPLICITLY stated in transcript
+5. **No Platitudes**: No generic wisdom like "believe in yourself" or "the key to success is..."
+6. **Bullet #1 MUST be definitional/criterial**: The FIRST Key Idea must quote a line where the speaker DEFINES, DISTINGUISHES, or EXPLAINS THEIR METHOD. Look for phrases like "is essentially", "rather than", "the method is", "what makes X good/bad".
+7. **No generic textbook definitions**: Do NOT use generic phrases like "Science is about finding laws of nature" when the speaker provides a SHARPER criterion (like "good explanations rather than bad explanations"). Always prefer the more distinctive, quotable line.
+
+## Quote Hygiene (CRITICAL)
+
+**Only use quotation marks for VERBATIM transcript excerpts.**
+
+- ✅ CORRECT: "This line is the most important thing that's ever happened" (exact words from transcript)
+- ❌ WRONG: "The Enlightenment was transformative" (paraphrase presented as quote)
+- ❌ WRONG: "Since the revolution, he says, things changed" (narration inside quotes - NEVER do this)
+- ❌ WRONG: "...would not have changed and would not..." (truncated mid-sentence)
+
+**Rules:**
+1. Every quoted string must be a contiguous excerpt that actually appears in the transcript
+2. NEVER include narration like "he says", "she notes", "they explained" INSIDE quotation marks
+3. Quotes must be COMPLETE SENTENCES - never truncate mid-thought (use ellipsis "..." only at natural breaks)
+4. If you're paraphrasing, do NOT use quotation marks - write it as plain text instead
+
+## Attribution Rules
+
+When referencing what the speaker said, you MAY use phrases like:
+- "As [Name] explains, ..."
+- "[Name] notes that ..."
+- "According to [Name], ..."
+
+Do NOT use distancing language like:
+- "[Name] believes..." (implies skepticism)
+- "[Name] argues..." (implies contentiousness)
+- "[Name] emphasizes..." (vague, often used to pad)
+
+The speaker is sharing their experience and insights - present them directly.
+
+## Structure Template
+
+**IMPORTANT**: Start with an H1 title using the BOOK TITLE provided in the Book Context section below.
+Do NOT use generic titles like "# Interview" or "# Interview Transcript".
+Use the actual book title: "# {book_title}" (the title will be provided in Book Context).
+
+```markdown
+# {Book Title from Context}
+
+## Key Ideas (Grounded)
+
+- **Good explanations vs vague ones**: "We discovered this method—the scientific method—which I think is essentially trying to find good explanations of what happens rather than bad explanations."
+- **After the Enlightenment, improvement became the norm**: "We have learned to live with the fact that everything improves in every generation."
+- **We still have a choice**: "We don't have to jump on this bandwagon of this built-in potential of the universe if we don't want to."
+- **Wisdom is not static**: "The truth of the matter is that wisdom, like scientific knowledge, is also limitless."
+... (5-10 bullets total - core concepts FIRST, then supporting ideas)
+```
+
+**Key Ideas label rules:**
+- Labels should be SHORT, PLAIN ENGLISH summaries (5-10 words max)
+- NO meta-language like "The speaker's central METHOD" or "A KEY DISTINCTION"
+- NO all-caps words like "CRITERION" or "THESIS"
+- The label should MATCH the quote's actual content
+- Think: what would a newspaper headline say?
+
+**BAD labels** (too meta, too shouty):
+- "The speaker's central METHOD/CRITERION for evaluating ideas"
+- "A KEY DISTINCTION introduced regarding human potential"
+- "Their MAIN THESIS about wisdom"
+
+**GOOD labels** (plain, specific, human):
+- "Good explanations vs vague ones"
+- "Progress became the expectation after the Enlightenment"
+- "We have a choice about our future"
+
+## The Conversation
+
+Format each Q&A with speaker labels. Quote blocks are OPTIONAL - use sparingly for the most memorable moments (1-2 per major section, not after every answer).
+
+```markdown
+### The Enlightenment
+
+#### What changed after the Scientific Revolution?
+
+**David Deutsch:** This line is the most important thing that's ever happened because prior to it, the world was static in terms of ideas. Things did improve, but from the point of view of any individual, the technology, the economics, the ways of life—everything they could notice about the world—would not have changed.
+
+#### How does progress continue?
+
+**David Deutsch:** After the Enlightenment, it was the exact opposite. We have learned to live with the fact that everything improves in every generation.
+
+> "We have learned to live with the fact that everything improves in every generation."
+
+### Human Potential
+...
+```
+
+**IMPORTANT**: Every answer MUST start with the speaker's name in bold (e.g., "**David Deutsch:**"). Quote blocks (> "...") are highlights only - do NOT repeat every answer as a quote block.
+"""
+
+
+def build_interview_grounded_system_prompt(
+    book_title: str,
+    speaker_name: str,
+) -> str:
+    """Build system prompt for grounded interview generation (P0 format).
+
+    This produces the new output structure:
+    - ## Key Ideas (Grounded) - with inline quotes
+    - ## The Conversation - Q&A format
+
+    Args:
+        book_title: Title of the ebook.
+        speaker_name: Name of the interview subject/speaker.
+
+    Returns:
+        Formatted system prompt string.
+    """
+    return f"""{INTERVIEW_GROUNDED_SYSTEM_PROMPT}
+
+## Book Context
+
+- **Book title (USE THIS AS H1)**: "{book_title}"
+- Primary speaker: {speaker_name}
+
+**START YOUR OUTPUT WITH**: # {book_title}
+
+All quotes should be from {speaker_name} unless otherwise indicated.
+Use {speaker_name}'s name naturally in the text for attribution."""
+
+
+def build_interview_grounded_user_prompt(
+    transcript: str,
+    speaker_name: str,
+    evidence_claims: list[dict],
+) -> str:
+    """Build user prompt for grounded interview generation.
+
+    This is a SINGLE-PASS generation (no chapters) that produces the
+    Key Ideas + Conversation format.
+
+    Args:
+        transcript: Full transcript text.
+        speaker_name: Name of the speaker.
+        evidence_claims: List of extracted claims with supporting quotes.
+
+    Returns:
+        Formatted user prompt string.
+    """
+    parts = [
+        "## Source Transcript",
+        "```",
+        transcript,
+        "```",
+        "",
+        "## Evidence Map (Claims You Can Use)",
+        "",
+        "Use ONLY these verified claims and their supporting quotes for the Key Ideas section:",
+        "",
+    ]
+
+    # Include evidence claims with their quotes
+    for i, claim in enumerate(evidence_claims[:15], 1):  # Limit to top 15 claims
+        claim_text = claim.get("claim", "")
+        parts.append(f"{i}. **{claim_text}**")
+        for quote in claim.get("support", [])[:1]:  # First supporting quote
+            quote_text = quote.get("quote", "")
+            if quote_text:
+                # Truncate to ~40 words for inline use
+                words = quote_text.split()
+                if len(words) > 40:
+                    quote_text = " ".join(words[:40]) + "..."
+                parts.append(f'   - Quote: "{quote_text}"')
+        parts.append("")
+
+    parts.extend([
+        "## Instructions",
+        "",
+        f"Generate an ebook about this conversation with {speaker_name}.",
+        "",
+        "Your output MUST follow this exact structure:",
+        "",
+        "1. **## Key Ideas (Grounded)** - 5-10 bullets, each with an inline quote",
+        "2. **## The Conversation** - The full interview as readable Q&A",
+        "",
+        "Remember:",
+        "- Every Key Idea bullet needs a supporting quote (use the Evidence Map above)",
+        "- No chapter headings like 'Chapter 1'",
+        "- No 'Key Takeaways', 'Action Steps', or how-to content",
+        f"- Do NOT invent {speaker_name}'s biography",
+        "",
+        "Begin generating the ebook:",
+    ])
+
+    return "\n".join(parts)
+
+
+# ==============================================================================
 # Evidence Map Prompts (Spec 009)
 # ==============================================================================
 
@@ -815,6 +1040,10 @@ INTERVIEW_FORBIDDEN_PATTERNS = [
     r"(?i)the\s+(?:key|secret)\s+to\s+success\s+is",
     r"(?i)(?:anyone|you)\s+can\s+(?:do|achieve)\s+(?:it|this|anything)",
     r"(?i)(?:just|simply)\s+(?:remember|keep\s+in\s+mind)\s+that",
+    # P1: Distancing attribution patterns
+    r"(?i)\b\w+\s+(?:believes?|argues?|emphasizes?|contends?|maintains?|insists?)\s+that",
+    # Narration inside quotes (fabricated quotes indicator)
+    r'"[^"]*\b(?:he|she|they)\s+(?:says?|said|notes?|explained?|added?)\b[^"]*"',
 ]
 
 # System prompt additions for interview mode

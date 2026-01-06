@@ -59,6 +59,9 @@ from .prompts import (
     build_grounded_chapter_system_prompt,
     build_grounded_chapter_user_prompt,
     get_content_mode_prompt,
+    # P0: Interview grounded single-pass generation
+    build_interview_grounded_system_prompt,
+    build_interview_grounded_user_prompt,
 )
 from .evidence_service import (
     generate_evidence_map,
@@ -67,6 +70,11 @@ from .evidence_service import (
     detect_content_type,
     generate_mode_warning,
     evidence_map_to_summary,
+    extract_definitional_candidates,
+    check_key_ideas_coverage,
+    format_candidates_for_prompt,
+    verify_key_ideas_quotes,
+    check_truncated_quotes,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,6 +82,126 @@ logger = logging.getLogger(__name__)
 # Default LLM models
 PLANNING_MODEL = "gpt-4o-mini"  # Faster, cheaper for structured planning
 CHAPTER_MODEL = "gpt-4o-mini"   # Could use gpt-4o for higher quality
+
+# Generic titles that should be replaced
+GENERIC_TITLES = {
+    "interview", "interview transcript", "untitled", "untitled ebook", "draft", ""
+}
+
+
+def sanitize_interview_title(
+    title: str,
+    fallback: Optional[str] = None,
+    transcript: Optional[str] = None,
+) -> str:
+    """Ensure interview mode doesn't use generic titles like 'Interview'.
+
+    Args:
+        title: The book title from draft plan.
+        fallback: Optional fallback (e.g., project name, YouTube title).
+        transcript: Optional transcript to extract title from.
+
+    Returns:
+        A proper book title, never a generic placeholder.
+    """
+    result = None
+
+    if title and title.lower().strip() not in GENERIC_TITLES:
+        result = title
+    # Use fallback if provided and not generic
+    elif fallback and fallback.lower().strip() not in GENERIC_TITLES:
+        result = fallback
+    # Try to extract book title from transcript
+    elif transcript:
+        extracted = _extract_book_title_from_transcript(transcript)
+        if extracted:
+            result = extracted
+
+    if result:
+        return _clean_title(result)
+
+    # Last resort: generic placeholder (model should be told to improve it)
+    return "Untitled Interview"
+
+
+def _clean_title(title: str) -> str:
+    """Clean up a title by removing trailing punctuation and extra whitespace.
+
+    Args:
+        title: Raw title string.
+
+    Returns:
+        Cleaned title without trailing commas, periods, etc.
+    """
+    # Strip whitespace
+    title = title.strip()
+    # Remove trailing punctuation (but keep ! and ? if intentional)
+    while title and title[-1] in ".,;:":
+        title = title[:-1].strip()
+    return title
+
+
+def _clean_markdown_title(markdown: str) -> str:
+    """Clean up the H1 title in generated markdown.
+
+    The model sometimes adds trailing punctuation to titles.
+    This post-processes the markdown to clean it up.
+
+    Args:
+        markdown: Generated markdown content.
+
+    Returns:
+        Markdown with cleaned H1 title.
+    """
+    import re
+
+    # Match H1 title at start of document: # Title,
+    h1_pattern = r'^(#\s+)(.+?)([.,;:]+)?(\s*)$'
+
+    lines = markdown.split('\n')
+    for i, line in enumerate(lines):
+        match = re.match(h1_pattern, line)
+        if match:
+            prefix = match.group(1)  # "# "
+            title = match.group(2).strip()  # The title text
+            # Clean trailing punctuation from title
+            title = _clean_title(title)
+            lines[i] = f"{prefix}{title}"
+            break  # Only clean first H1
+
+    return '\n'.join(lines)
+
+
+def _extract_book_title_from_transcript(transcript: str) -> Optional[str]:
+    """Try to extract a book title mentioned in the transcript.
+
+    Looks for patterns like:
+    - "The title of the book is X"
+    - "my book X"
+    - "The Beginning of Infinity" (quoted)
+
+    Returns:
+        Extracted title if found, None otherwise.
+    """
+    import re
+
+    # Pattern 1: "title of the book is X" or "book is titled X"
+    title_pattern = r'(?:title\s+of\s+(?:the\s+)?book\s+is|book\s+is\s+titled?)\s+["\']?([^"\'\.]+)["\']?'
+    match = re.search(title_pattern, transcript, re.IGNORECASE)
+    if match:
+        return match.group(1).strip().strip('"\'')
+
+    # Pattern 2: "my book X" or "the book X"
+    book_pattern = r'(?:my|the)\s+book\s+["\']([^"\']+)["\']'
+    match = re.search(book_pattern, transcript, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    # Pattern 3: Look for "The Beginning of Infinity" specifically (common case)
+    if "beginning of infinity" in transcript.lower():
+        return "The Beginning of Infinity"
+
+    return None
 
 
 # ==============================================================================
@@ -363,9 +491,8 @@ async def _generate_draft_task(
             logger.info(f"Job {job_id}: Cancelled during evidence map generation")
             return
 
-        # Phase 3: Generate chapters
+        # Phase 3: Generate content
         await update_job(job_id, status=JobStatus.generating)
-        logger.info(f"Job {job_id}: Starting generation phase ({len(draft_plan.chapters)} chapters)")
 
         # Compute words per chapter based on style config and chapter count
         style_dict = request.style_config.get("style", request.style_config) if isinstance(request.style_config, dict) else {}
@@ -382,66 +509,170 @@ async def _generate_draft_task(
             custom_total_words,
         )
         detail_level_str = style_dict.get("detail_level", "balanced")
-        logger.info(f"Job {job_id}: Target ~{words_per_chapter} words/chapter, detail_level={detail_level_str}")
+        book_format = style_dict.get("book_format", "guide")
 
-        chapters_completed: list[str] = []
+        # P0: Use single-pass generation for interview mode with evidence
+        # Triggers when: content_mode=interview OR book_format=interview_qa
+        # Both should produce Key Ideas + Conversation structure
+        use_interview_single_pass = (
+            (content_mode == ContentMode.interview or book_format == "interview_qa")
+            and evidence_map
+            and sum(len(ch.claims) for ch in evidence_map.chapters) > 0
+        )
 
-        for i, chapter_plan in enumerate(draft_plan.chapters):
-            # Check for cancellation between chapters
-            job = await get_job(job_id)
-            if job and job.cancel_requested:
-                await update_job(
-                    job_id,
-                    status=JobStatus.cancelled,
-                    chapters_completed=chapters_completed,
-                )
-                logger.info(f"Job {job_id}: Cancelled after chapter {i}")
-                return
+        if use_interview_single_pass:
+            # Single-pass interview generation (P0: Key Ideas + Conversation)
+            logger.info(f"Job {job_id}: Using single-pass interview generation")
+            await update_job(job_id, current_chapter=1, total_chapters=1)
 
-            await update_job(job_id, current_chapter=i + 1)
-            logger.debug(f"Job {job_id}: Generating chapter {i + 1}/{len(draft_plan.chapters)}")
-
-            # Get chapter evidence from Evidence Map
-            chapter_evidence = get_evidence_for_chapter(evidence_map, chapter_plan.chapter_number)
-
-            chapter_md = await generate_chapter(
-                chapter_plan=chapter_plan,
+            # Title guardrail: prevent generic titles like "Interview"
+            interview_book_title = sanitize_interview_title(
+                draft_plan.book_title,
+                fallback=request.project_name if hasattr(request, "project_name") else None,
                 transcript=request.transcript,
-                book_title=draft_plan.book_title,
-                style_config=request.style_config,
-                chapters_completed=chapters_completed,
-                all_chapters=draft_plan.chapters,
-                words_per_chapter_target=words_per_chapter,
-                detail_level=detail_level_str,
-                # Spec 009: Evidence-grounded generation
-                chapter_evidence=chapter_evidence,
-                content_mode=content_mode,
-                strict_grounded=strict_grounded,
             )
 
-            # Check for interview mode violations (Spec 009 US2)
-            if content_mode == ContentMode.interview:
-                violations = check_interview_constraints(chapter_md)
-                if violations:
+            # Extract definitional candidates BEFORE generation for coverage check
+            definitional_candidates = extract_definitional_candidates(request.transcript)
+            if definitional_candidates:
+                logger.info(f"Job {job_id}: Found {len(definitional_candidates)} definitional candidates")
+
+            # First generation pass
+            final_markdown = await generate_interview_single_pass(
+                transcript=request.transcript,
+                book_title=interview_book_title,
+                evidence_map=evidence_map,
+            )
+            # Clean up any trailing punctuation in H1 title
+            final_markdown = _clean_markdown_title(final_markdown)
+
+            # Key Ideas Coverage Guard: Check if core framework is surfaced
+            if definitional_candidates:
+                key_ideas_text = _extract_key_ideas_section(final_markdown)
+                coverage = check_key_ideas_coverage(key_ideas_text, definitional_candidates)
+
+                if not coverage["covered"]:
                     logger.warning(
-                        f"Job {job_id}: Chapter {chapter_plan.chapter_number} has "
-                        f"{len(violations)} interview mode violations"
+                        f"Job {job_id}: Key Ideas missing definitional coverage, re-running with forced candidates"
                     )
-                    # Add to warnings but don't fail
-                    constraint_warnings.extend([
-                        f"Ch{chapter_plan.chapter_number}: {v['matched_text'][:50]}..."
-                        for v in violations[:3]
-                    ])
-                    await update_job(job_id, constraint_warnings=constraint_warnings)
+                    # Re-run with forced candidates
+                    final_markdown = await generate_interview_single_pass(
+                        transcript=request.transcript,
+                        book_title=interview_book_title,
+                        evidence_map=evidence_map,
+                        forced_candidates=coverage["missing_candidates"],
+                    )
+                    # Clean up any trailing punctuation in H1 title
+                    final_markdown = _clean_markdown_title(final_markdown)
+                    constraint_warnings.append(
+                        "Key Ideas re-generated to include core framework definitions"
+                    )
+                else:
+                    logger.info(
+                        f"Job {job_id}: Key Ideas coverage check passed "
+                        f"(matched: {coverage['matched_candidate']['keyword'] if coverage['matched_candidate'] else 'N/A'})"
+                    )
 
-            chapters_completed.append(chapter_md)
-            await update_job(job_id, chapters_completed=chapters_completed)
+            # Quote validation checks
+            key_ideas_text = _extract_key_ideas_section(final_markdown)
 
-        # Assemble final draft
-        final_markdown = assemble_chapters(
-            book_title=draft_plan.book_title,
-            chapters=chapters_completed,
-        )
+            # Check for fabricated quotes (not in transcript)
+            quote_validation = verify_key_ideas_quotes(key_ideas_text, request.transcript)
+            if not quote_validation["valid"]:
+                logger.warning(
+                    f"Job {job_id}: {len(quote_validation['invalid_quotes'])} potentially invalid quotes in Key Ideas"
+                )
+                for invalid in quote_validation["invalid_quotes"][:3]:
+                    constraint_warnings.append(
+                        f"Quote issue: {invalid['reason'][:50]}"
+                    )
+
+            # Check for truncated quotes
+            truncated = check_truncated_quotes(key_ideas_text)
+            if truncated:
+                logger.warning(f"Job {job_id}: {len(truncated)} truncated quotes in Key Ideas")
+                for issue in truncated[:2]:
+                    constraint_warnings.append(
+                        f"Truncated quote: ...{issue['quote'][-30:]}"
+                    )
+
+            # Check for interview mode violations
+            violations = check_interview_constraints(final_markdown)
+            if violations:
+                logger.warning(f"Job {job_id}: {len(violations)} interview mode violations in output")
+                constraint_warnings.extend([
+                    f"{v['matched_text'][:50]}..." for v in violations[:5]
+                ])
+
+            # Update job with any constraint warnings
+            if constraint_warnings:
+                await update_job(job_id, constraint_warnings=constraint_warnings)
+
+            chapters_completed = [final_markdown]
+
+        else:
+            # Standard chapter-by-chapter generation
+            logger.info(f"Job {job_id}: Starting chapter generation ({len(draft_plan.chapters)} chapters)")
+            logger.info(f"Job {job_id}: Target ~{words_per_chapter} words/chapter, detail_level={detail_level_str}")
+
+            chapters_completed: list[str] = []
+
+            for i, chapter_plan in enumerate(draft_plan.chapters):
+                # Check for cancellation between chapters
+                job = await get_job(job_id)
+                if job and job.cancel_requested:
+                    await update_job(
+                        job_id,
+                        status=JobStatus.cancelled,
+                        chapters_completed=chapters_completed,
+                    )
+                    logger.info(f"Job {job_id}: Cancelled after chapter {i}")
+                    return
+
+                await update_job(job_id, current_chapter=i + 1)
+                logger.debug(f"Job {job_id}: Generating chapter {i + 1}/{len(draft_plan.chapters)}")
+
+                # Get chapter evidence from Evidence Map
+                chapter_evidence = get_evidence_for_chapter(evidence_map, chapter_plan.chapter_number)
+
+                chapter_md = await generate_chapter(
+                    chapter_plan=chapter_plan,
+                    transcript=request.transcript,
+                    book_title=draft_plan.book_title,
+                    style_config=request.style_config,
+                    chapters_completed=chapters_completed,
+                    all_chapters=draft_plan.chapters,
+                    words_per_chapter_target=words_per_chapter,
+                    detail_level=detail_level_str,
+                    # Spec 009: Evidence-grounded generation
+                    chapter_evidence=chapter_evidence,
+                    content_mode=content_mode,
+                    strict_grounded=strict_grounded,
+                )
+
+                # Check for interview mode violations (Spec 009 US2)
+                if content_mode == ContentMode.interview:
+                    violations = check_interview_constraints(chapter_md)
+                    if violations:
+                        logger.warning(
+                            f"Job {job_id}: Chapter {chapter_plan.chapter_number} has "
+                            f"{len(violations)} interview mode violations"
+                        )
+                        # Add to warnings but don't fail
+                        constraint_warnings.extend([
+                            f"Ch{chapter_plan.chapter_number}: {v['matched_text'][:50]}..."
+                            for v in violations[:3]
+                        ])
+                        await update_job(job_id, constraint_warnings=constraint_warnings)
+
+                chapters_completed.append(chapter_md)
+                await update_job(job_id, chapters_completed=chapters_completed)
+
+            # Assemble final draft for chapter-by-chapter mode
+            final_markdown = assemble_chapters(
+                book_title=draft_plan.book_title,
+                chapters=chapters_completed,
+            )
 
         await update_job(
             job_id,
@@ -852,6 +1083,120 @@ def _extract_speaker_name(transcript: str) -> str:
         return most_common
 
     return "The speaker"
+
+
+# ==============================================================================
+# P0: Single-Pass Interview Generation
+# ==============================================================================
+
+async def generate_interview_single_pass(
+    transcript: str,
+    book_title: str,
+    evidence_map: EvidenceMap,
+    forced_candidates: Optional[list[dict]] = None,
+) -> str:
+    """Generate interview ebook using single-pass approach (P0).
+
+    Produces the new output structure:
+    - ## Key Ideas (Grounded) - with inline supporting quotes
+    - ## The Conversation - Q&A format
+
+    Args:
+        transcript: Full transcript text.
+        book_title: Title of the ebook.
+        evidence_map: Evidence Map with extracted claims.
+        forced_candidates: Optional list of definitional candidates to force into Key Ideas.
+
+    Returns:
+        Generated markdown with Key Ideas + Conversation structure.
+    """
+    client = LLMClient()
+
+    # Extract speaker name
+    speaker_name = _extract_speaker_name(transcript)
+
+    # Collect all claims from all chapters for the Key Ideas section
+    all_claims: list[dict] = []
+    for chapter in evidence_map.chapters:
+        for claim in chapter.claims:
+            all_claims.append(claim.model_dump())
+
+    # Sort by confidence to prioritize strongest claims
+    all_claims.sort(key=lambda c: c.get("confidence", 0), reverse=True)
+
+    # Build prompts
+    system_prompt = build_interview_grounded_system_prompt(
+        book_title=book_title,
+        speaker_name=speaker_name,
+    )
+
+    user_prompt = build_interview_grounded_user_prompt(
+        transcript=transcript,
+        speaker_name=speaker_name,
+        evidence_claims=all_claims,
+    )
+
+    # If we have forced candidates (re-run), inject them into the prompt
+    if forced_candidates:
+        forced_text = format_candidates_for_prompt(forced_candidates)
+        user_prompt = f"{forced_text}\n\n---\n\n{user_prompt}"
+        logger.info(f"Re-running with {len(forced_candidates)} forced definitional candidates")
+
+    request = LLMRequest(
+        model=CHAPTER_MODEL,
+        messages=[
+            ChatMessage(role="system", content=system_prompt),
+            ChatMessage(role="user", content=user_prompt),
+        ],
+        temperature=0.7,
+        max_tokens=8000,  # Larger for single-pass
+    )
+
+    response = await client.generate(request)
+
+    # Strip any H1 heading the LLM might have generated (we add our own)
+    content = response.text.strip()
+    if content.startswith("# "):
+        # Remove the first H1 line
+        lines = content.split("\n")
+        # Find first non-H1 line
+        start_idx = 0
+        for i, line in enumerate(lines):
+            if line.strip() and not line.startswith("# "):
+                start_idx = i
+                break
+            elif line.startswith("# "):
+                start_idx = i + 1
+        content = "\n".join(lines[start_idx:]).strip()
+
+    # Assemble final output with proper book title
+    final_markdown = f"# {book_title}\n\n{content}"
+
+    logger.info(f"Generated interview single-pass: {len(content)} chars")
+    return final_markdown
+
+
+def _extract_key_ideas_section(markdown: str) -> str:
+    """Extract just the Key Ideas section from the generated markdown.
+
+    Args:
+        markdown: Full generated markdown.
+
+    Returns:
+        Just the Key Ideas section content.
+    """
+    import re
+
+    # Find Key Ideas section
+    match = re.search(
+        r'## Key Ideas.*?\n(.*?)(?=\n## |\Z)',
+        markdown,
+        re.DOTALL | re.IGNORECASE
+    )
+
+    if match:
+        return match.group(1).strip()
+    return ""
 
 
 def assemble_chapters(

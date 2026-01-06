@@ -434,7 +434,7 @@ class TestExtractClaimsForChapter:
     async def test_extracts_claims_from_transcript(self):
         """Test basic claim extraction."""
         mock_response = MagicMock()
-        mock_response.content = json.dumps({
+        mock_response.text = json.dumps({
             "claims": [
                 {
                     "id": "claim_001",
@@ -462,7 +462,7 @@ class TestExtractClaimsForChapter:
 
         with patch("src.services.evidence_service.LLMClient") as mock_client_class:
             mock_client = AsyncMock()
-            mock_client.complete.return_value = mock_response
+            mock_client.generate.return_value = mock_response
             mock_client_class.return_value = mock_client
 
             result = await extract_claims_for_chapter(
