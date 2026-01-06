@@ -84,6 +84,12 @@ class DraftGenerateRequest(BaseModel):
     outline: List[dict] = Field(description="Outline items (min 3)")
     resources: List[dict] = Field(default_factory=list, description="Optional resources")
     style_config: dict = Field(description="StyleConfig or StyleConfigEnvelope")
+    candidate_count: int = Field(
+        default=1,
+        ge=1,
+        le=5,
+        description="Number of candidates for best-of-N selection (1=disabled, 2-3 recommended)"
+    )
 
 
 class DraftRegenerateRequest(BaseModel):

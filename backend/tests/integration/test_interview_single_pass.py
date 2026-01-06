@@ -817,12 +817,37 @@ Content.
         assert good_score["total"] > thin_score["total"], \
             f"Good draft ({good_score['total']}) should score higher than thin ({thin_score['total']})"
 
-    def test_config_flag_defaults_to_one(self):
-        """INTERVIEW_CANDIDATE_COUNT should default to 1 (disabled)."""
-        from src.services.draft_service import INTERVIEW_CANDIDATE_COUNT
+    def test_server_cap_config_exists(self):
+        """INTERVIEW_CANDIDATE_COUNT_MAX should exist as server-side cap."""
+        from src.services.draft_service import INTERVIEW_CANDIDATE_COUNT_MAX
 
-        # Without env var set, should default to 1
-        assert INTERVIEW_CANDIDATE_COUNT >= 1
+        # Server-side cap should be a reasonable positive integer
+        assert INTERVIEW_CANDIDATE_COUNT_MAX >= 1
+        assert INTERVIEW_CANDIDATE_COUNT_MAX <= 10  # Reasonable upper bound
+
+    def test_request_candidate_count_defaults_to_one(self):
+        """DraftGenerateRequest.candidate_count should default to 1 (disabled)."""
+        from src.models import DraftGenerateRequest
+
+        request = DraftGenerateRequest(
+            transcript="x" * 600,
+            outline=[{"id": "1", "title": "A", "level": 1}] * 3,
+            style_config={"style": {}},
+        )
+        assert request.candidate_count == 1
+
+    def test_request_candidate_count_accepts_valid_values(self):
+        """DraftGenerateRequest.candidate_count should accept 1-5."""
+        from src.models import DraftGenerateRequest
+
+        for count in [1, 2, 3, 4, 5]:
+            request = DraftGenerateRequest(
+                transcript="x" * 600,
+                outline=[{"id": "1", "title": "A", "level": 1}] * 3,
+                style_config={"style": {}},
+                candidate_count=count,
+            )
+            assert request.candidate_count == count
 
     def test_score_breakdown_has_expected_keys(self):
         """Score breakdown should have all expected component keys."""
@@ -852,3 +877,119 @@ Content.
 
         for key in expected_keys:
             assert key in score, f"Missing expected key: {key}"
+
+
+class TestInterviewTitlePostProcessing:
+    """Tests for interview title post-processing (NLP-based fix)."""
+
+    def test_extract_speaker_from_today_we_have_pattern(self):
+        """Test speaker extraction from 'Today we have X' pattern."""
+        from src.services.draft_service import _extract_speaker_name_from_transcript
+
+        transcript = "Host: Today we have physicist David Deutsch, author of The Beginning of Infinity."
+        speaker = _extract_speaker_name_from_transcript(transcript)
+
+        assert speaker == "David Deutsch"
+
+    def test_extract_speaker_from_guest_pattern(self):
+        """Test speaker extraction from 'our guest is X' pattern."""
+        from src.services.draft_service import _extract_speaker_name_from_transcript
+
+        transcript = "Host: Welcome to the show. Our guest is Sarah Chen, CEO of DataFlow."
+        speaker = _extract_speaker_name_from_transcript(transcript)
+
+        assert speaker == "Sarah Chen"
+
+    def test_extract_speaker_from_attributions(self):
+        """Test speaker extraction from speaker attributions when no intro pattern."""
+        from src.services.draft_service import _extract_speaker_name_from_transcript
+
+        transcript = """Host: What's your view?
+David Deutsch: I think progress is key.
+Host: Interesting.
+David Deutsch: Yes, it's about explanatory knowledge."""
+        speaker = _extract_speaker_name_from_transcript(transcript)
+
+        assert speaker == "David Deutsch"
+
+    def test_extract_speaker_ignores_host_label(self):
+        """Test that Host is not returned as speaker."""
+        from src.services.draft_service import _extract_speaker_name_from_transcript
+
+        transcript = """Host: Welcome.
+Host: Let's begin.
+John Smith: Thank you for having me."""
+        speaker = _extract_speaker_name_from_transcript(transcript)
+
+        assert speaker == "John Smith"
+
+    def test_format_interview_title_with_book(self):
+        """Test title formatting with speaker and book."""
+        from src.services.draft_service import _format_interview_title
+
+        title = _format_interview_title("David Deutsch", "The Beginning of Infinity")
+
+        assert title == "David Deutsch on *The Beginning of Infinity*"
+
+    def test_format_interview_title_without_book(self):
+        """Test title formatting without book title."""
+        from src.services.draft_service import _format_interview_title
+
+        title = _format_interview_title("Sarah Chen", None)
+
+        assert title == "Sarah Chen Interview"
+
+    def test_format_interview_title_without_speaker(self):
+        """Test title formatting without speaker returns None."""
+        from src.services.draft_service import _format_interview_title
+
+        title = _format_interview_title(None, "Some Book")
+
+        assert title is None
+
+    def test_fix_interview_title_replaces_chapter_heading(self):
+        """Test that chapter-like H1 is replaced with proper title."""
+        from src.services.draft_service import _fix_interview_title
+
+        transcript = "Host: Today we have David Deutsch, author of The Beginning of Infinity."
+        markdown = """# The Enlightenment
+
+## Key Ideas (Grounded)
+
+- **Idea one**: "quote"
+"""
+
+        result = _fix_interview_title(markdown, transcript)
+
+        assert result.startswith("# David Deutsch on *The Beginning of Infinity*")
+        assert "## The Enlightenment" in result
+
+    def test_fix_interview_title_preserves_good_title(self):
+        """Test that title with speaker name is not changed."""
+        from src.services.draft_service import _fix_interview_title
+
+        transcript = "Host: Today we have David Deutsch."
+        markdown = """# David Deutsch Interview
+
+## Key Ideas
+"""
+
+        result = _fix_interview_title(markdown, transcript)
+
+        # Should not change since "David Deutsch" already in title
+        assert result.startswith("# David Deutsch Interview")
+
+    def test_fix_interview_title_handles_no_extraction(self):
+        """Test graceful handling when speaker can't be extracted."""
+        from src.services.draft_service import _fix_interview_title
+
+        transcript = "Some random text without clear speaker attribution."
+        markdown = """# The Topic
+
+## Content
+"""
+
+        result = _fix_interview_title(markdown, transcript)
+
+        # Should return unchanged
+        assert result == markdown
