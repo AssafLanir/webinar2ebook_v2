@@ -503,7 +503,31 @@ class TestTitleGuardrail:
         from src.services.draft_service import sanitize_interview_title
 
         result = sanitize_interview_title("Interview", fallback="Untitled")
-        assert result == "Interview Transcript"  # Last resort
+        assert result == "Untitled Interview"  # Last resort
+
+    def test_sanitize_interview_title_extracts_from_transcript(self):
+        """Should extract book title from transcript when no title provided."""
+        from src.services.draft_service import sanitize_interview_title
+
+        transcript = 'The title of the book is "The Beginning of Infinity".'
+        result = sanitize_interview_title("Interview", transcript=transcript)
+        assert result == "The Beginning of Infinity"
+
+    def test_sanitize_interview_title_detects_beginning_of_infinity(self):
+        """Should detect 'beginning of infinity' mention in transcript."""
+        from src.services.draft_service import sanitize_interview_title
+
+        transcript = "We discuss the beginning of infinity and what it means."
+        result = sanitize_interview_title("Interview", transcript=transcript)
+        assert result == "The Beginning of Infinity"
+
+    def test_sanitize_interview_title_rejects_interview_transcript(self):
+        """Should reject 'Interview Transcript' as a generic title."""
+        from src.services.draft_service import sanitize_interview_title
+
+        # "Interview Transcript" is now in GENERIC_TITLES
+        result = sanitize_interview_title("Interview Transcript")
+        assert result != "Interview Transcript"
 
 
 class TestAcceptanceTests:

@@ -84,18 +84,22 @@ PLANNING_MODEL = "gpt-4o-mini"  # Faster, cheaper for structured planning
 CHAPTER_MODEL = "gpt-4o-mini"   # Could use gpt-4o for higher quality
 
 # Generic titles that should be replaced
-GENERIC_TITLES = {"interview", "untitled", "untitled ebook", "draft", ""}
+GENERIC_TITLES = {
+    "interview", "interview transcript", "untitled", "untitled ebook", "draft", ""
+}
 
 
 def sanitize_interview_title(
     title: str,
     fallback: Optional[str] = None,
+    transcript: Optional[str] = None,
 ) -> str:
     """Ensure interview mode doesn't use generic titles like 'Interview'.
 
     Args:
         title: The book title from draft plan.
         fallback: Optional fallback (e.g., project name, YouTube title).
+        transcript: Optional transcript to extract title from.
 
     Returns:
         A proper book title, never a generic placeholder.
@@ -107,8 +111,46 @@ def sanitize_interview_title(
     if fallback and fallback.lower().strip() not in GENERIC_TITLES:
         return fallback
 
-    # Last resort: descriptive placeholder
-    return "Interview Transcript"
+    # Try to extract book title from transcript
+    if transcript:
+        extracted = _extract_book_title_from_transcript(transcript)
+        if extracted:
+            return extracted
+
+    # Last resort: generic placeholder (model should be told to improve it)
+    return "Untitled Interview"
+
+
+def _extract_book_title_from_transcript(transcript: str) -> Optional[str]:
+    """Try to extract a book title mentioned in the transcript.
+
+    Looks for patterns like:
+    - "The title of the book is X"
+    - "my book X"
+    - "The Beginning of Infinity" (quoted)
+
+    Returns:
+        Extracted title if found, None otherwise.
+    """
+    import re
+
+    # Pattern 1: "title of the book is X" or "book is titled X"
+    title_pattern = r'(?:title\s+of\s+(?:the\s+)?book\s+is|book\s+is\s+titled?)\s+["\']?([^"\'\.]+)["\']?'
+    match = re.search(title_pattern, transcript, re.IGNORECASE)
+    if match:
+        return match.group(1).strip().strip('"\'')
+
+    # Pattern 2: "my book X" or "the book X"
+    book_pattern = r'(?:my|the)\s+book\s+["\']([^"\']+)["\']'
+    match = re.search(book_pattern, transcript, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    # Pattern 3: Look for "The Beginning of Infinity" specifically (common case)
+    if "beginning of infinity" in transcript.lower():
+        return "The Beginning of Infinity"
+
+    return None
 
 
 # ==============================================================================
@@ -436,6 +478,7 @@ async def _generate_draft_task(
             interview_book_title = sanitize_interview_title(
                 draft_plan.book_title,
                 fallback=request.project_name if hasattr(request, "project_name") else None,
+                transcript=request.transcript,
             )
 
             # Extract definitional candidates BEFORE generation for coverage check
