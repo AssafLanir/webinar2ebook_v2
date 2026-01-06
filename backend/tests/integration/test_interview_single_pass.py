@@ -993,3 +993,265 @@ John Smith: Thank you for having me."""
 
         # Should return unchanged
         assert result == markdown
+
+
+class TestPostprocessInterviewMarkdown:
+    """Tests for interview markdown post-processing (heading hierarchy, metadata, Thank you)."""
+
+    def test_downgrades_key_ideas_heading(self):
+        """Test that ## Key Ideas becomes ### Key Ideas."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# David Deutsch on *The Beginning of Infinity*
+
+## The Enlightenment
+
+## Key Ideas (Grounded)
+
+- **Idea one**: "quote"
+
+## The Conversation
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        assert "### Key Ideas (Grounded)" in result
+        # Check that the original ## Key Ideas line is gone (use line-level check)
+        assert "\n## Key Ideas" not in result
+
+    def test_downgrades_the_conversation_heading(self):
+        """Test that ## The Conversation becomes ### The Conversation."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# Title
+
+## Topic
+
+## Key Ideas (Grounded)
+
+- **Idea**: "quote"
+
+## The Conversation
+
+#### Question?
+**Speaker:** Answer.
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        assert "### The Conversation" in result
+        # Check that the original ## The Conversation line is gone
+        assert "\n## The Conversation" not in result
+
+    def test_converts_thank_you_heading(self):
+        """Test that #### Thank you... becomes *Interviewer:* Thank you..."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# Title
+
+## Topic
+
+### The Conversation
+
+#### Thank you so much for your time today.
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        assert "*Interviewer:* Thank you so much for your time today." in result
+        assert "#### Thank you" not in result
+
+    def test_converts_thank_you_with_different_heading_levels(self):
+        """Test Thank you conversion works for various heading levels."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# Title
+
+### Thank you for joining us!
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        assert "*Interviewer:* Thank you for joining us!" in result
+
+    def test_adds_metadata_block_after_h1(self):
+        """Test that metadata block is added after H1 title."""
+        from src.services.draft_service import postprocess_interview_markdown
+        from datetime import date
+
+        markdown = """# David Deutsch on *The Beginning of Infinity*
+
+## The Enlightenment
+
+Content here.
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=True)
+
+        assert "*Format:* Interview" in result
+        assert f"*Generated:* {date.today().isoformat()}" in result
+
+    def test_adds_source_url_to_metadata(self):
+        """Test that source URL is included in metadata when provided."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# Title
+
+## Content
+"""
+        result = postprocess_interview_markdown(
+            markdown,
+            source_url="https://example.com/interview",
+            include_metadata=True
+        )
+
+        assert "*Source:* https://example.com/interview" in result
+
+    def test_preserves_topic_heading(self):
+        """Test that the topic heading (first ## after H1) is preserved."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# David Deutsch on *The Beginning of Infinity*
+
+## The Enlightenment
+
+Some intro text.
+
+### Key Ideas (Grounded)
+
+- **Idea**: "quote"
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        # Topic heading should still be ##
+        assert "## The Enlightenment" in result
+
+    def test_removes_duplicate_topic_heading_in_conversation(self):
+        """Test that duplicate topic heading is removed from The Conversation section."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# Title
+
+## The Enlightenment
+
+Intro text.
+
+## Key Ideas (Grounded)
+
+- **Idea**: "quote"
+
+## The Conversation
+
+### The Enlightenment
+
+#### Question about enlightenment?
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        # First occurrence (topic) should remain, but second (in Conversation) should be removed
+        import re
+        heading_occurrences = len(re.findall(r'^#+\s+The Enlightenment', result, re.MULTILINE))
+        assert heading_occurrences == 1, f"Expected 1 heading, found {heading_occurrences}"
+
+    def test_full_postprocessing_integration(self):
+        """Test all post-processing fixes together."""
+        from src.services.draft_service import postprocess_interview_markdown
+        from datetime import date
+
+        markdown = """# David Deutsch on *The Beginning of Infinity*
+
+## The Enlightenment
+
+David Deutsch discusses the nature of the Enlightenment.
+
+## Key Ideas (Grounded)
+
+- **Progress is unlimited**: "Progress is not only possible but has no limit"
+
+## The Conversation
+
+### The Enlightenment
+
+#### What is the Enlightenment?
+
+**David Deutsch:** The Enlightenment was a pivotal moment.
+
+#### Thank you for your insights today.
+"""
+        result = postprocess_interview_markdown(
+            markdown,
+            source_url="https://example.com",
+            include_metadata=True
+        )
+
+        # Check all transformations:
+        # 1. Key Ideas downgraded
+        assert "### Key Ideas (Grounded)" in result
+        assert "\n## Key Ideas" not in result
+
+        # 2. The Conversation downgraded
+        assert "### The Conversation" in result
+        assert "\n## The Conversation" not in result
+
+        # 3. Duplicate topic heading removed (only heading occurrences, not prose)
+        import re
+        heading_occurrences = len(re.findall(r'^#+\s+The Enlightenment', result, re.MULTILINE))
+        assert heading_occurrences == 1, f"Expected 1 heading, found {heading_occurrences}"
+
+        # 4. Metadata added
+        assert "*Source:* https://example.com" in result
+        assert "*Format:* Interview" in result
+        assert f"*Generated:* {date.today().isoformat()}" in result
+
+        # 5. Thank you converted
+        assert "*Interviewer:* Thank you for your insights today." in result
+        assert "#### Thank you" not in result
+
+    def test_no_metadata_when_disabled(self):
+        """Test that metadata is not added when include_metadata=False."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# Title
+
+## Content
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        assert "*Format:* Interview" not in result
+        assert "*Generated:*" not in result
+
+    def test_handles_missing_h1(self):
+        """Test graceful handling when no H1 title is present."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """## Just Content
+
+Some text here.
+
+## Key Ideas (Grounded)
+
+- **Idea**: "quote"
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=True)
+
+        # Should still work, just no metadata insertion point
+        assert "### Key Ideas (Grounded)" in result
+
+    def test_downgrades_key_ideas_when_first_h2(self):
+        """Test Key Ideas is downgraded even when it's the first ## after H1 (no topic heading)."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        # This is the edge case from the bug - Key Ideas is the first ## after H1
+        markdown = """# The Beginning of Infinity
+
+## Key Ideas (Grounded)
+
+- **Idea**: "quote"
+
+## The Conversation
+
+#### Question?
+**Speaker:** Answer.
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        # Key Ideas should be downgraded to ### even when first
+        assert "### Key Ideas (Grounded)" in result
+        assert "\n## Key Ideas" not in result
+        # The Conversation should also be downgraded
+        assert "### The Conversation" in result

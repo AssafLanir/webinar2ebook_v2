@@ -350,6 +350,96 @@ def _fix_interview_title(markdown: str, transcript: str) -> str:
     return markdown
 
 
+def postprocess_interview_markdown(
+    markdown: str,
+    source_url: Optional[str] = None,
+    include_metadata: bool = True,
+) -> str:
+    """Post-process interview markdown for proper structure and polish.
+
+    Applies deterministic fixes that improve "book feel" without changing content:
+    1. Fix heading hierarchy (## Key Ideas → ### Key Ideas)
+    2. Add metadata block under H1 (source, format, date)
+    3. Fix "Thank you" formatting (#### → *Interviewer:*)
+
+    Args:
+        markdown: Generated interview markdown.
+        source_url: Optional source URL for metadata block.
+        include_metadata: Whether to add metadata block (default True).
+
+    Returns:
+        Post-processed markdown with improved structure.
+    """
+    import re
+    from datetime import date
+
+    lines = markdown.split('\n')
+    result_lines = []
+    h1_index = None
+    topic_heading = None
+    inside_conversation = False
+    seen_topic_in_conversation = False
+
+    for i, line in enumerate(lines):
+        # Track H1 position for metadata insertion
+        if re.match(r'^#\s+[^#]', line) and h1_index is None:
+            h1_index = len(result_lines)
+            result_lines.append(line)
+            continue
+
+        # Fix #1: Downgrade ## Key Ideas (Grounded) to ### (check BEFORE topic_heading)
+        if re.match(r'^##\s+Key Ideas', line, re.IGNORECASE):
+            line = re.sub(r'^##\s+', '### ', line)
+            result_lines.append(line)
+            continue
+
+        # Fix #1: Downgrade ## The Conversation to ### (check BEFORE topic_heading)
+        if re.match(r'^##\s+The Conversation', line, re.IGNORECASE):
+            line = re.sub(r'^##\s+', '### ', line)
+            inside_conversation = True
+            result_lines.append(line)
+            continue
+
+        # Track the topic heading (first ## after H1, after excluding structural sections)
+        if re.match(r'^##\s+[^#]', line) and topic_heading is None:
+            # This is the topic heading (e.g., "## The Enlightenment")
+            topic_heading = re.sub(r'^##\s+', '', line).strip()
+            result_lines.append(line)
+            continue
+
+        # Fix #1: Remove duplicate topic heading inside The Conversation
+        if inside_conversation and topic_heading:
+            if re.match(rf'^###\s+{re.escape(topic_heading)}\s*$', line, re.IGNORECASE):
+                if not seen_topic_in_conversation:
+                    seen_topic_in_conversation = True
+                    # Skip this duplicate heading
+                    continue
+
+        # Fix #5: Convert "#### Thank you..." to "*Interviewer:* Thank you..."
+        thank_you_match = re.match(r'^#{1,4}\s+(Thank\s+you.*)$', line, re.IGNORECASE)
+        if thank_you_match:
+            thank_text = thank_you_match.group(1)
+            result_lines.append(f'*Interviewer:* {thank_text}')
+            continue
+
+        result_lines.append(line)
+
+    # Fix #4: Insert metadata block after H1
+    if include_metadata and h1_index is not None:
+        metadata_lines = []
+        if source_url:
+            metadata_lines.append(f'*Source:* {source_url}')
+        metadata_lines.append('*Format:* Interview')
+        metadata_lines.append(f'*Generated:* {date.today().isoformat()}')
+
+        # Insert after H1 (with blank line before and after)
+        insert_pos = h1_index + 1
+        metadata_block = [''] + metadata_lines + ['']
+        result_lines = result_lines[:insert_pos] + metadata_block + result_lines[insert_pos:]
+
+    return '\n'.join(result_lines)
+
+
 # ==============================================================================
 # Interview Candidate Scoring (Best-of-N selection)
 # ==============================================================================
@@ -881,6 +971,10 @@ async def _generate_draft_task(
 
             # Fix title format: "# The Enlightenment" -> "# David Deutsch on *The Beginning of Infinity*"
             final_markdown = _fix_interview_title(final_markdown, request.transcript)
+
+            # Post-process for structure polish (heading hierarchy, metadata, Thank you)
+            # Note: source_url could come from project metadata in future
+            final_markdown = postprocess_interview_markdown(final_markdown, source_url=None)
 
             # Quote validation checks
             key_ideas_text = _extract_key_ideas_section(final_markdown)
