@@ -529,6 +529,30 @@ class TestTitleGuardrail:
         result = sanitize_interview_title("Interview Transcript")
         assert result != "Interview Transcript"
 
+    def test_clean_markdown_title_removes_trailing_comma(self):
+        """Should remove trailing comma from H1 title."""
+        from src.services.draft_service import _clean_markdown_title
+
+        markdown = "# The Beginning of Infinity,\n\n## Key Ideas"
+        result = _clean_markdown_title(markdown)
+        assert result == "# The Beginning of Infinity\n\n## Key Ideas"
+
+    def test_clean_markdown_title_removes_trailing_period(self):
+        """Should remove trailing period from H1 title."""
+        from src.services.draft_service import _clean_markdown_title
+
+        markdown = "# My Great Book.\n\n## Chapter 1"
+        result = _clean_markdown_title(markdown)
+        assert result == "# My Great Book\n\n## Chapter 1"
+
+    def test_clean_markdown_title_preserves_clean_title(self):
+        """Should not modify already clean titles."""
+        from src.services.draft_service import _clean_markdown_title
+
+        markdown = "# The Beginning of Infinity\n\n## Key Ideas"
+        result = _clean_markdown_title(markdown)
+        assert result == markdown
+
 
 class TestAcceptanceTests:
     """Acceptance tests for interview mode - regression guards.

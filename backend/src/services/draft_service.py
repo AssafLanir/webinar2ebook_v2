@@ -104,21 +104,72 @@ def sanitize_interview_title(
     Returns:
         A proper book title, never a generic placeholder.
     """
+    result = None
+
     if title and title.lower().strip() not in GENERIC_TITLES:
-        return title
-
+        result = title
     # Use fallback if provided and not generic
-    if fallback and fallback.lower().strip() not in GENERIC_TITLES:
-        return fallback
-
+    elif fallback and fallback.lower().strip() not in GENERIC_TITLES:
+        result = fallback
     # Try to extract book title from transcript
-    if transcript:
+    elif transcript:
         extracted = _extract_book_title_from_transcript(transcript)
         if extracted:
-            return extracted
+            result = extracted
+
+    if result:
+        return _clean_title(result)
 
     # Last resort: generic placeholder (model should be told to improve it)
     return "Untitled Interview"
+
+
+def _clean_title(title: str) -> str:
+    """Clean up a title by removing trailing punctuation and extra whitespace.
+
+    Args:
+        title: Raw title string.
+
+    Returns:
+        Cleaned title without trailing commas, periods, etc.
+    """
+    # Strip whitespace
+    title = title.strip()
+    # Remove trailing punctuation (but keep ! and ? if intentional)
+    while title and title[-1] in ".,;:":
+        title = title[:-1].strip()
+    return title
+
+
+def _clean_markdown_title(markdown: str) -> str:
+    """Clean up the H1 title in generated markdown.
+
+    The model sometimes adds trailing punctuation to titles.
+    This post-processes the markdown to clean it up.
+
+    Args:
+        markdown: Generated markdown content.
+
+    Returns:
+        Markdown with cleaned H1 title.
+    """
+    import re
+
+    # Match H1 title at start of document: # Title,
+    h1_pattern = r'^(#\s+)(.+?)([.,;:]+)?(\s*)$'
+
+    lines = markdown.split('\n')
+    for i, line in enumerate(lines):
+        match = re.match(h1_pattern, line)
+        if match:
+            prefix = match.group(1)  # "# "
+            title = match.group(2).strip()  # The title text
+            # Clean trailing punctuation from title
+            title = _clean_title(title)
+            lines[i] = f"{prefix}{title}"
+            break  # Only clean first H1
+
+    return '\n'.join(lines)
 
 
 def _extract_book_title_from_transcript(transcript: str) -> Optional[str]:
@@ -492,6 +543,8 @@ async def _generate_draft_task(
                 book_title=interview_book_title,
                 evidence_map=evidence_map,
             )
+            # Clean up any trailing punctuation in H1 title
+            final_markdown = _clean_markdown_title(final_markdown)
 
             # Key Ideas Coverage Guard: Check if core framework is surfaced
             if definitional_candidates:
@@ -509,6 +562,8 @@ async def _generate_draft_task(
                         evidence_map=evidence_map,
                         forced_candidates=coverage["missing_candidates"],
                     )
+                    # Clean up any trailing punctuation in H1 title
+                    final_markdown = _clean_markdown_title(final_markdown)
                     constraint_warnings.append(
                         "Key Ideas re-generated to include core framework definitions"
                     )
