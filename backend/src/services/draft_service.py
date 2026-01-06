@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -82,6 +84,10 @@ logger = logging.getLogger(__name__)
 # Default LLM models
 PLANNING_MODEL = "gpt-4o-mini"  # Faster, cheaper for structured planning
 CHAPTER_MODEL = "gpt-4o-mini"   # Could use gpt-4o for higher quality
+
+# Best-of-N candidate selection for interview mode
+# When enabled, generates multiple candidates and picks the best based on scoring
+INTERVIEW_CANDIDATE_COUNT = int(os.environ.get("INTERVIEW_CANDIDATE_COUNT", "1"))  # Default off (1 = no selection)
 
 # Generic titles that should be replaced
 GENERIC_TITLES = {
@@ -202,6 +208,122 @@ def _extract_book_title_from_transcript(transcript: str) -> Optional[str]:
         return "The Beginning of Infinity"
 
     return None
+
+
+# ==============================================================================
+# Interview Candidate Scoring (Best-of-N selection)
+# ==============================================================================
+
+def score_interview_draft(
+    markdown: str,
+    transcript: str,
+) -> dict:
+    """Score an interview draft for quality selection.
+
+    Used by best-of-N candidate selection to pick the highest quality draft.
+    Higher score = better draft.
+
+    Scoring components:
+    - Richness: Q&A block count, quote count
+    - Quality: Fewer QA violations (invalid quotes, truncation)
+
+    Args:
+        markdown: Generated interview draft markdown.
+        transcript: Original transcript for validation.
+
+    Returns:
+        Dict with total score and component breakdown.
+    """
+    score = 0.0
+    breakdown = {}
+
+    # 1. Count Q&A blocks (#### headers followed by speaker response)
+    qa_blocks = len(re.findall(r'^####\s+.+$', markdown, re.MULTILINE))
+    breakdown["qa_blocks"] = qa_blocks
+    # Award points for richness (diminishing returns after 8)
+    qa_score = min(qa_blocks, 8) * 10  # Max 80 points
+    score += qa_score
+    breakdown["qa_score"] = qa_score
+
+    # 2. Count quote blocks (> "..." lines)
+    quote_blocks = len(re.findall(r'^>\s*"[^"]+"\s*$', markdown, re.MULTILINE))
+    breakdown["quote_blocks"] = quote_blocks
+    # Award points for quotes (1-2 per section is good, diminishing after)
+    quote_score = min(quote_blocks, 6) * 5  # Max 30 points
+    score += quote_score
+    breakdown["quote_score"] = quote_score
+
+    # 3. Count Key Ideas bullets with inline quotes
+    key_ideas_section = _extract_key_ideas_section(markdown)
+    key_idea_bullets = len(re.findall(r'^-\s+\*\*[^*]+\*\*:\s*"[^"]+"', key_ideas_section, re.MULTILINE))
+    breakdown["key_idea_bullets"] = key_idea_bullets
+    key_ideas_score = min(key_idea_bullets, 8) * 8  # Max 64 points
+    score += key_ideas_score
+    breakdown["key_ideas_score"] = key_ideas_score
+
+    # 4. Penalize invalid quotes (not in transcript)
+    quote_validation = verify_key_ideas_quotes(key_ideas_section, transcript)
+    invalid_quote_count = len(quote_validation.get("invalid_quotes", []))
+    breakdown["invalid_quotes"] = invalid_quote_count
+    invalid_penalty = invalid_quote_count * -20  # Heavy penalty
+    score += invalid_penalty
+    breakdown["invalid_penalty"] = invalid_penalty
+
+    # 5. Penalize truncated quotes
+    truncated = check_truncated_quotes(key_ideas_section)
+    truncated_count = len(truncated)
+    breakdown["truncated_quotes"] = truncated_count
+    truncated_penalty = truncated_count * -10
+    score += truncated_penalty
+    breakdown["truncated_penalty"] = truncated_penalty
+
+    # 6. Penalize interview constraint violations
+    violations = check_interview_constraints(markdown)
+    violation_count = len(violations)
+    breakdown["constraint_violations"] = violation_count
+    violation_penalty = violation_count * -15
+    score += violation_penalty
+    breakdown["violation_penalty"] = violation_penalty
+
+    breakdown["total"] = score
+    return breakdown
+
+
+async def _generate_and_score_candidate(
+    transcript: str,
+    book_title: str,
+    evidence_map: dict,
+    forced_candidates: Optional[list] = None,
+    candidate_num: int = 1,
+) -> tuple[str, dict]:
+    """Generate a single interview draft candidate and score it.
+
+    Args:
+        transcript: Interview transcript.
+        book_title: Sanitized book title.
+        evidence_map: Evidence mapping for grounding.
+        forced_candidates: Optional definitional candidates to force into Key Ideas.
+        candidate_num: Candidate number for logging.
+
+    Returns:
+        Tuple of (markdown, score_breakdown).
+    """
+    markdown = await generate_interview_single_pass(
+        transcript=transcript,
+        book_title=book_title,
+        evidence_map=evidence_map,
+        forced_candidates=forced_candidates,
+    )
+    markdown = _clean_markdown_title(markdown)
+
+    score = score_interview_draft(markdown, transcript)
+    logger.info(
+        f"Candidate {candidate_num}: score={score['total']:.0f} "
+        f"(qa={score['qa_blocks']}, quotes={score['key_idea_bullets']}, "
+        f"invalid={score['invalid_quotes']}, violations={score['constraint_violations']})"
+    )
+
+    return markdown, score
 
 
 # ==============================================================================
@@ -537,14 +659,57 @@ async def _generate_draft_task(
             if definitional_candidates:
                 logger.info(f"Job {job_id}: Found {len(definitional_candidates)} definitional candidates")
 
-            # First generation pass
-            final_markdown = await generate_interview_single_pass(
-                transcript=request.transcript,
-                book_title=interview_book_title,
-                evidence_map=evidence_map,
-            )
-            # Clean up any trailing punctuation in H1 title
-            final_markdown = _clean_markdown_title(final_markdown)
+            # Determine forced candidates based on coverage requirements
+            forced_candidates_for_generation = None
+
+            # Best-of-N candidate selection
+            candidate_count = INTERVIEW_CANDIDATE_COUNT
+            runner_up_data = None  # Store runner-up for debugging
+
+            if candidate_count > 1:
+                logger.info(f"Job {job_id}: Generating {candidate_count} candidates for best-of-N selection")
+
+                candidates = []
+                for i in range(candidate_count):
+                    markdown, score = await _generate_and_score_candidate(
+                        transcript=request.transcript,
+                        book_title=interview_book_title,
+                        evidence_map=evidence_map,
+                        forced_candidates=forced_candidates_for_generation,
+                        candidate_num=i + 1,
+                    )
+                    candidates.append((markdown, score))
+
+                # Sort by score (highest first)
+                candidates.sort(key=lambda x: x[1]["total"], reverse=True)
+
+                # Pick the best
+                final_markdown, best_score = candidates[0]
+                logger.info(
+                    f"Job {job_id}: Selected candidate 1 with score {best_score['total']:.0f}"
+                )
+
+                # Store runner-up for debugging (if we have more than one)
+                if len(candidates) > 1:
+                    runner_up_markdown, runner_up_score = candidates[1]
+                    runner_up_data = {
+                        "score": runner_up_score,
+                        "markdown_preview": runner_up_markdown[:500] + "..." if len(runner_up_markdown) > 500 else runner_up_markdown,
+                    }
+                    logger.info(
+                        f"Job {job_id}: Runner-up score: {runner_up_score['total']:.0f} "
+                        f"(diff: {best_score['total'] - runner_up_score['total']:.0f})"
+                    )
+
+            else:
+                # Single candidate (default behavior)
+                final_markdown = await generate_interview_single_pass(
+                    transcript=request.transcript,
+                    book_title=interview_book_title,
+                    evidence_map=evidence_map,
+                )
+                # Clean up any trailing punctuation in H1 title
+                final_markdown = _clean_markdown_title(final_markdown)
 
             # Key Ideas Coverage Guard: Check if core framework is surfaced
             if definitional_candidates:
@@ -555,7 +720,7 @@ async def _generate_draft_task(
                     logger.warning(
                         f"Job {job_id}: Key Ideas missing definitional coverage, re-running with forced candidates"
                     )
-                    # Re-run with forced candidates
+                    # Re-run with forced candidates (single pass, not best-of-N)
                     final_markdown = await generate_interview_single_pass(
                         transcript=request.transcript,
                         book_title=interview_book_title,

@@ -698,3 +698,157 @@ Deutsch contends that humans can understand anything.
         for phrase in good_phrases:
             match = re.search(distancing_pattern, phrase, re.IGNORECASE)
             assert match is None, f"Should NOT flag acceptable phrase: {phrase}"
+
+
+class TestBestOfNCandidateSelection:
+    """Tests for the best-of-N candidate selection feature."""
+
+    def test_score_interview_draft_counts_qa_blocks(self):
+        """Should count Q&A blocks (#### headers)."""
+        from src.services.draft_service import score_interview_draft
+
+        markdown = """# Test
+## Key Ideas (Grounded)
+- **Idea one**: "quote one"
+
+## The Conversation
+
+### Topic 1
+
+#### Question 1?
+**Speaker:** Answer 1.
+
+#### Question 2?
+**Speaker:** Answer 2.
+
+#### Question 3?
+**Speaker:** Answer 3.
+"""
+        transcript = "quote one appears here"
+
+        score = score_interview_draft(markdown, transcript)
+
+        assert score["qa_blocks"] == 3
+        assert score["qa_score"] == 30  # 3 * 10
+
+    def test_score_interview_draft_counts_key_idea_bullets(self):
+        """Should count Key Ideas bullets with inline quotes."""
+        from src.services.draft_service import score_interview_draft
+
+        markdown = """# Test
+## Key Ideas (Grounded)
+- **First idea**: "first quote here"
+- **Second idea**: "second quote here"
+- **Third idea without quote**
+- **Fourth idea**: "fourth quote"
+
+## The Conversation
+Some content.
+"""
+        transcript = "first quote here second quote here fourth quote"
+
+        score = score_interview_draft(markdown, transcript)
+
+        # Should count 3 (bullets with quotes), not 4
+        assert score["key_idea_bullets"] == 3
+        assert score["key_ideas_score"] == 24  # 3 * 8
+
+    def test_score_interview_draft_penalizes_invalid_quotes(self):
+        """Should penalize quotes not found in transcript."""
+        from src.services.draft_service import score_interview_draft
+
+        markdown = """# Test
+## Key Ideas (Grounded)
+- **Idea**: "this quote does not exist in transcript"
+
+## The Conversation
+Content.
+"""
+        transcript = "The transcript contains completely different text."
+
+        score = score_interview_draft(markdown, transcript)
+
+        # Should have penalty for invalid quote
+        assert score["invalid_quotes"] >= 1
+        assert score["invalid_penalty"] < 0
+
+    def test_score_interview_draft_higher_for_better_draft(self):
+        """Better draft should score higher than worse draft."""
+        from src.services.draft_service import score_interview_draft
+
+        good_markdown = """# Test
+## Key Ideas (Grounded)
+- **Idea one**: "first quote"
+- **Idea two**: "second quote"
+- **Idea three**: "third quote"
+- **Idea four**: "fourth quote"
+
+## The Conversation
+
+### Topic 1
+
+#### Question 1?
+**Speaker:** Answer with first quote here.
+
+#### Question 2?
+**Speaker:** Answer with second quote.
+
+#### Question 3?
+**Speaker:** Answer with third quote.
+
+#### Question 4?
+**Speaker:** Answer with fourth quote.
+"""
+
+        thin_markdown = """# Test
+## Key Ideas (Grounded)
+- **Single idea**: "only quote"
+
+## The Conversation
+
+#### One question?
+**Speaker:** Short answer.
+"""
+        transcript = "first quote second quote third quote fourth quote only quote"
+
+        good_score = score_interview_draft(good_markdown, transcript)
+        thin_score = score_interview_draft(thin_markdown, transcript)
+
+        assert good_score["total"] > thin_score["total"], \
+            f"Good draft ({good_score['total']}) should score higher than thin ({thin_score['total']})"
+
+    def test_config_flag_defaults_to_one(self):
+        """INTERVIEW_CANDIDATE_COUNT should default to 1 (disabled)."""
+        from src.services.draft_service import INTERVIEW_CANDIDATE_COUNT
+
+        # Without env var set, should default to 1
+        assert INTERVIEW_CANDIDATE_COUNT >= 1
+
+    def test_score_breakdown_has_expected_keys(self):
+        """Score breakdown should have all expected component keys."""
+        from src.services.draft_service import score_interview_draft
+
+        markdown = """# Test
+## Key Ideas (Grounded)
+- **Idea**: "quote"
+
+## The Conversation
+#### Q?
+**S:** A.
+"""
+        transcript = "quote"
+
+        score = score_interview_draft(markdown, transcript)
+
+        expected_keys = [
+            "qa_blocks", "qa_score",
+            "quote_blocks", "quote_score",
+            "key_idea_bullets", "key_ideas_score",
+            "invalid_quotes", "invalid_penalty",
+            "truncated_quotes", "truncated_penalty",
+            "constraint_violations", "violation_penalty",
+            "total"
+        ]
+
+        for key in expected_keys:
+            assert key in score, f"Missing expected key: {key}"
