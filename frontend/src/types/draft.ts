@@ -117,6 +117,8 @@ export interface DraftGenerateRequest {
   outline: OutlineItem[]
   resources?: Resource[]
   style_config: StyleConfigEnvelope | Record<string, unknown>
+  /** Number of candidates for best-of-N selection (1=disabled, 2-3 recommended) */
+  candidate_count?: number
 }
 
 export interface DraftRegenerateRequest {

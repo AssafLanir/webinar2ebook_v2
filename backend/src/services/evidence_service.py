@@ -520,9 +520,39 @@ def generate_mode_warning(
 # Interview Mode Constraint Checking (T024)
 # ==============================================================================
 
+def _normalize_for_comparison(text: str) -> str:
+    """Normalize text for verbatim comparison.
+
+    Strips markdown formatting, collapses whitespace, and lowercases.
+    Used to compare draft content against transcript for false positive filtering.
+
+    Args:
+        text: Text to normalize.
+
+    Returns:
+        Normalized text suitable for substring comparison.
+    """
+    # Remove common markdown formatting
+    result = text
+    result = re.sub(r'\*\*([^*]+)\*\*', r'\1', result)  # **bold** -> bold
+    result = re.sub(r'\*([^*]+)\*', r'\1', result)      # *italic* -> italic
+    result = re.sub(r'#{1,6}\s+', '', result)           # # headers
+    result = re.sub(r'>\s*', '', result)                # > blockquotes
+    result = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', result)  # [link](url) -> link
+
+    # Remove any remaining asterisks (from partial matches at context boundaries)
+    result = re.sub(r'\*+', '', result)
+
+    # Collapse whitespace and lowercase
+    result = re.sub(r'\s+', ' ', result).strip().lower()
+
+    return result
+
+
 def check_interview_constraints(
     text: str,
     raise_on_violation: bool = False,
+    transcript: Optional[str] = None,
 ) -> list[dict]:
     """Check text for interview mode constraint violations.
 
@@ -534,18 +564,42 @@ def check_interview_constraints(
     Args:
         text: Text to check (draft content).
         raise_on_violation: If True, raise on first violation.
+        transcript: Optional transcript to check against. If provided,
+            matches that appear verbatim in the transcript are NOT flagged
+            (they're direct quotes, not fabrications).
 
     Returns:
         List of violation dicts with pattern, match, and location.
     """
     violations: list[dict] = []
 
+    # Normalize transcript for comparison (lowercase, collapse whitespace)
+    normalized_transcript = None
+    if transcript:
+        normalized_transcript = _normalize_for_comparison(transcript)
+
     for pattern in INTERVIEW_FORBIDDEN_PATTERNS:
         try:
             for match in re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE):
+                matched_text = match.group()
+
+                # If transcript provided, check if this is a verbatim quote
+                if normalized_transcript:
+                    # Get surrounding context from draft (30 chars each side)
+                    context_start = max(0, match.start() - 30)
+                    context_end = min(len(text), match.end() + 30)
+                    draft_context = text[context_start:context_end]
+
+                    # Normalize for comparison (strips markdown, collapses whitespace)
+                    normalized_context = _normalize_for_comparison(draft_context)
+
+                    # If this context appears in transcript, it's a verbatim quote - skip
+                    if normalized_context in normalized_transcript:
+                        continue
+
                 violation = {
                     "pattern": pattern,
-                    "matched_text": match.group(),
+                    "matched_text": matched_text,
                     "start": match.start(),
                     "end": match.end(),
                     "context": text[max(0, match.start()-50):match.end()+50],
@@ -554,7 +608,7 @@ def check_interview_constraints(
 
                 if raise_on_violation:
                     raise InterviewConstraintViolation(
-                        f"Interview mode violation: '{match.group()}' at position {match.start()}"
+                        f"Interview mode violation: '{matched_text}' at position {match.start()}"
                     )
         except re.error as e:
             logger.warning(f"Invalid regex pattern '{pattern}': {e}")

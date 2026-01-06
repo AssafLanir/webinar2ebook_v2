@@ -817,12 +817,37 @@ Content.
         assert good_score["total"] > thin_score["total"], \
             f"Good draft ({good_score['total']}) should score higher than thin ({thin_score['total']})"
 
-    def test_config_flag_defaults_to_one(self):
-        """INTERVIEW_CANDIDATE_COUNT should default to 1 (disabled)."""
-        from src.services.draft_service import INTERVIEW_CANDIDATE_COUNT
+    def test_server_cap_config_exists(self):
+        """INTERVIEW_CANDIDATE_COUNT_MAX should exist as server-side cap."""
+        from src.services.draft_service import INTERVIEW_CANDIDATE_COUNT_MAX
 
-        # Without env var set, should default to 1
-        assert INTERVIEW_CANDIDATE_COUNT >= 1
+        # Server-side cap should be a reasonable positive integer
+        assert INTERVIEW_CANDIDATE_COUNT_MAX >= 1
+        assert INTERVIEW_CANDIDATE_COUNT_MAX <= 10  # Reasonable upper bound
+
+    def test_request_candidate_count_defaults_to_one(self):
+        """DraftGenerateRequest.candidate_count should default to 1 (disabled)."""
+        from src.models import DraftGenerateRequest
+
+        request = DraftGenerateRequest(
+            transcript="x" * 600,
+            outline=[{"id": "1", "title": "A", "level": 1}] * 3,
+            style_config={"style": {}},
+        )
+        assert request.candidate_count == 1
+
+    def test_request_candidate_count_accepts_valid_values(self):
+        """DraftGenerateRequest.candidate_count should accept 1-5."""
+        from src.models import DraftGenerateRequest
+
+        for count in [1, 2, 3, 4, 5]:
+            request = DraftGenerateRequest(
+                transcript="x" * 600,
+                outline=[{"id": "1", "title": "A", "level": 1}] * 3,
+                style_config={"style": {}},
+                candidate_count=count,
+            )
+            assert request.candidate_count == count
 
     def test_score_breakdown_has_expected_keys(self):
         """Score breakdown should have all expected component keys."""
@@ -852,3 +877,381 @@ Content.
 
         for key in expected_keys:
             assert key in score, f"Missing expected key: {key}"
+
+
+class TestInterviewTitlePostProcessing:
+    """Tests for interview title post-processing (NLP-based fix)."""
+
+    def test_extract_speaker_from_today_we_have_pattern(self):
+        """Test speaker extraction from 'Today we have X' pattern."""
+        from src.services.draft_service import _extract_speaker_name_from_transcript
+
+        transcript = "Host: Today we have physicist David Deutsch, author of The Beginning of Infinity."
+        speaker = _extract_speaker_name_from_transcript(transcript)
+
+        assert speaker == "David Deutsch"
+
+    def test_extract_speaker_from_guest_pattern(self):
+        """Test speaker extraction from 'our guest is X' pattern."""
+        from src.services.draft_service import _extract_speaker_name_from_transcript
+
+        transcript = "Host: Welcome to the show. Our guest is Sarah Chen, CEO of DataFlow."
+        speaker = _extract_speaker_name_from_transcript(transcript)
+
+        assert speaker == "Sarah Chen"
+
+    def test_extract_speaker_from_attributions(self):
+        """Test speaker extraction from speaker attributions when no intro pattern."""
+        from src.services.draft_service import _extract_speaker_name_from_transcript
+
+        transcript = """Host: What's your view?
+David Deutsch: I think progress is key.
+Host: Interesting.
+David Deutsch: Yes, it's about explanatory knowledge."""
+        speaker = _extract_speaker_name_from_transcript(transcript)
+
+        assert speaker == "David Deutsch"
+
+    def test_extract_speaker_ignores_host_label(self):
+        """Test that Host is not returned as speaker."""
+        from src.services.draft_service import _extract_speaker_name_from_transcript
+
+        transcript = """Host: Welcome.
+Host: Let's begin.
+John Smith: Thank you for having me."""
+        speaker = _extract_speaker_name_from_transcript(transcript)
+
+        assert speaker == "John Smith"
+
+    def test_format_interview_title_with_book(self):
+        """Test title formatting with speaker and book."""
+        from src.services.draft_service import _format_interview_title
+
+        title = _format_interview_title("David Deutsch", "The Beginning of Infinity")
+
+        assert title == "David Deutsch on *The Beginning of Infinity*"
+
+    def test_format_interview_title_without_book(self):
+        """Test title formatting without book title."""
+        from src.services.draft_service import _format_interview_title
+
+        title = _format_interview_title("Sarah Chen", None)
+
+        assert title == "Sarah Chen Interview"
+
+    def test_format_interview_title_without_speaker(self):
+        """Test title formatting without speaker returns None."""
+        from src.services.draft_service import _format_interview_title
+
+        title = _format_interview_title(None, "Some Book")
+
+        assert title is None
+
+    def test_fix_interview_title_replaces_chapter_heading(self):
+        """Test that chapter-like H1 is replaced with proper title."""
+        from src.services.draft_service import _fix_interview_title
+
+        transcript = "Host: Today we have David Deutsch, author of The Beginning of Infinity."
+        markdown = """# The Enlightenment
+
+## Key Ideas (Grounded)
+
+- **Idea one**: "quote"
+"""
+
+        result = _fix_interview_title(markdown, transcript)
+
+        assert result.startswith("# David Deutsch on *The Beginning of Infinity*")
+        assert "## The Enlightenment" in result
+
+    def test_fix_interview_title_preserves_good_title(self):
+        """Test that title with speaker name is not changed."""
+        from src.services.draft_service import _fix_interview_title
+
+        transcript = "Host: Today we have David Deutsch."
+        markdown = """# David Deutsch Interview
+
+## Key Ideas
+"""
+
+        result = _fix_interview_title(markdown, transcript)
+
+        # Should not change since "David Deutsch" already in title
+        assert result.startswith("# David Deutsch Interview")
+
+    def test_fix_interview_title_handles_no_extraction(self):
+        """Test graceful handling when speaker can't be extracted."""
+        from src.services.draft_service import _fix_interview_title
+
+        transcript = "Some random text without clear speaker attribution."
+        markdown = """# The Topic
+
+## Content
+"""
+
+        result = _fix_interview_title(markdown, transcript)
+
+        # Should return unchanged
+        assert result == markdown
+
+
+class TestPostprocessInterviewMarkdown:
+    """Tests for interview markdown post-processing (heading hierarchy, metadata, Thank you)."""
+
+    def test_downgrades_key_ideas_heading(self):
+        """Test that ## Key Ideas becomes ### Key Ideas."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# David Deutsch on *The Beginning of Infinity*
+
+## The Enlightenment
+
+## Key Ideas (Grounded)
+
+- **Idea one**: "quote"
+
+## The Conversation
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        assert "### Key Ideas (Grounded)" in result
+        # Check that the original ## Key Ideas line is gone (use line-level check)
+        assert "\n## Key Ideas" not in result
+
+    def test_downgrades_the_conversation_heading(self):
+        """Test that ## The Conversation becomes ### The Conversation."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# Title
+
+## Topic
+
+## Key Ideas (Grounded)
+
+- **Idea**: "quote"
+
+## The Conversation
+
+#### Question?
+**Speaker:** Answer.
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        assert "### The Conversation" in result
+        # Check that the original ## The Conversation line is gone
+        assert "\n## The Conversation" not in result
+
+    def test_converts_thank_you_heading(self):
+        """Test that #### Thank you... becomes *Interviewer:* Thank you..."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# Title
+
+## Topic
+
+### The Conversation
+
+#### Thank you so much for your time today.
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        assert "*Interviewer:* Thank you so much for your time today." in result
+        assert "#### Thank you" not in result
+
+    def test_converts_thank_you_with_different_heading_levels(self):
+        """Test Thank you conversion works for various heading levels."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# Title
+
+### Thank you for joining us!
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        assert "*Interviewer:* Thank you for joining us!" in result
+
+    def test_adds_metadata_block_after_h1(self):
+        """Test that metadata block is added after H1 title."""
+        from src.services.draft_service import postprocess_interview_markdown
+        from datetime import date
+
+        markdown = """# David Deutsch on *The Beginning of Infinity*
+
+## The Enlightenment
+
+Content here.
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=True)
+
+        assert "*Format:* Interview" in result
+        assert f"*Generated:* {date.today().isoformat()}" in result
+
+    def test_adds_source_url_to_metadata(self):
+        """Test that source URL is included in metadata when provided."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# Title
+
+## Content
+"""
+        result = postprocess_interview_markdown(
+            markdown,
+            source_url="https://example.com/interview",
+            include_metadata=True
+        )
+
+        assert "*Source:* https://example.com/interview" in result
+
+    def test_preserves_topic_heading(self):
+        """Test that the topic heading (first ## after H1) is preserved."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# David Deutsch on *The Beginning of Infinity*
+
+## The Enlightenment
+
+Some intro text.
+
+### Key Ideas (Grounded)
+
+- **Idea**: "quote"
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        # Topic heading should still be ##
+        assert "## The Enlightenment" in result
+
+    def test_removes_duplicate_topic_heading_in_conversation(self):
+        """Test that duplicate topic heading is removed from The Conversation section."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# Title
+
+## The Enlightenment
+
+Intro text.
+
+## Key Ideas (Grounded)
+
+- **Idea**: "quote"
+
+## The Conversation
+
+### The Enlightenment
+
+#### Question about enlightenment?
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        # First occurrence (topic) should remain, but second (in Conversation) should be removed
+        import re
+        heading_occurrences = len(re.findall(r'^#+\s+The Enlightenment', result, re.MULTILINE))
+        assert heading_occurrences == 1, f"Expected 1 heading, found {heading_occurrences}"
+
+    def test_full_postprocessing_integration(self):
+        """Test all post-processing fixes together."""
+        from src.services.draft_service import postprocess_interview_markdown
+        from datetime import date
+
+        markdown = """# David Deutsch on *The Beginning of Infinity*
+
+## The Enlightenment
+
+David Deutsch discusses the nature of the Enlightenment.
+
+## Key Ideas (Grounded)
+
+- **Progress is unlimited**: "Progress is not only possible but has no limit"
+
+## The Conversation
+
+### The Enlightenment
+
+#### What is the Enlightenment?
+
+**David Deutsch:** The Enlightenment was a pivotal moment.
+
+#### Thank you for your insights today.
+"""
+        result = postprocess_interview_markdown(
+            markdown,
+            source_url="https://example.com",
+            include_metadata=True
+        )
+
+        # Check all transformations:
+        # 1. Key Ideas downgraded
+        assert "### Key Ideas (Grounded)" in result
+        assert "\n## Key Ideas" not in result
+
+        # 2. The Conversation downgraded
+        assert "### The Conversation" in result
+        assert "\n## The Conversation" not in result
+
+        # 3. Duplicate topic heading removed (only heading occurrences, not prose)
+        import re
+        heading_occurrences = len(re.findall(r'^#+\s+The Enlightenment', result, re.MULTILINE))
+        assert heading_occurrences == 1, f"Expected 1 heading, found {heading_occurrences}"
+
+        # 4. Metadata added
+        assert "*Source:* https://example.com" in result
+        assert "*Format:* Interview" in result
+        assert f"*Generated:* {date.today().isoformat()}" in result
+
+        # 5. Thank you converted
+        assert "*Interviewer:* Thank you for your insights today." in result
+        assert "#### Thank you" not in result
+
+    def test_no_metadata_when_disabled(self):
+        """Test that metadata is not added when include_metadata=False."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """# Title
+
+## Content
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        assert "*Format:* Interview" not in result
+        assert "*Generated:*" not in result
+
+    def test_handles_missing_h1(self):
+        """Test graceful handling when no H1 title is present."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        markdown = """## Just Content
+
+Some text here.
+
+## Key Ideas (Grounded)
+
+- **Idea**: "quote"
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=True)
+
+        # Should still work, just no metadata insertion point
+        assert "### Key Ideas (Grounded)" in result
+
+    def test_downgrades_key_ideas_when_first_h2(self):
+        """Test Key Ideas is downgraded even when it's the first ## after H1 (no topic heading)."""
+        from src.services.draft_service import postprocess_interview_markdown
+
+        # This is the edge case from the bug - Key Ideas is the first ## after H1
+        markdown = """# The Beginning of Infinity
+
+## Key Ideas (Grounded)
+
+- **Idea**: "quote"
+
+## The Conversation
+
+#### Question?
+**Speaker:** Answer.
+"""
+        result = postprocess_interview_markdown(markdown, include_metadata=False)
+
+        # Key Ideas should be downgraded to ### even when first
+        assert "### Key Ideas (Grounded)" in result
+        assert "\n## Key Ideas" not in result
+        # The Conversation should also be downgraded
+        assert "### The Conversation" in result

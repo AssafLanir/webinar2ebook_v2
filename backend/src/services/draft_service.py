@@ -87,7 +87,8 @@ CHAPTER_MODEL = "gpt-4o-mini"   # Could use gpt-4o for higher quality
 
 # Best-of-N candidate selection for interview mode
 # When enabled, generates multiple candidates and picks the best based on scoring
-INTERVIEW_CANDIDATE_COUNT = int(os.environ.get("INTERVIEW_CANDIDATE_COUNT", "1"))  # Default off (1 = no selection)
+# Env var sets the MAX allowed; request param sets actual count (capped by env var)
+INTERVIEW_CANDIDATE_COUNT_MAX = int(os.environ.get("INTERVIEW_CANDIDATE_COUNT_MAX", "5"))  # Server-side cap
 
 # Generic titles that should be replaced
 GENERIC_TITLES = {
@@ -210,6 +211,235 @@ def _extract_book_title_from_transcript(transcript: str) -> Optional[str]:
     return None
 
 
+def _extract_speaker_name_from_transcript(transcript: str) -> Optional[str]:
+    """Extract the main speaker/guest name from transcript.
+
+    Looks for patterns like:
+    - "Today we have [title] John Smith"
+    - "our guest is John Smith"
+    - "welcome John Smith"
+    - Most frequent non-Host speaker in "Name:" attributions
+
+    Returns:
+        Speaker name if found, None otherwise.
+    """
+    import re
+    from collections import Counter
+
+    # Pattern 1: "Today we have [title] Name" or "Today we have Name"
+    today_pattern = r'[Tt]oday\s+we\s+have\s+(?:\w+\s+)?([A-Z][a-z]+\s+[A-Z][a-z]+)'
+    match = re.search(today_pattern, transcript)
+    if match:
+        return match.group(1).strip()
+
+    # Pattern 2: "our guest is Name" or "guest today is Name"
+    guest_pattern = r'(?:our\s+)?guest(?:\s+today)?\s+is\s+([A-Z][a-z]+\s+[A-Z][a-z]+)'
+    match = re.search(guest_pattern, transcript, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    # Pattern 3: "welcome Name" at start of sentence
+    welcome_pattern = r'[Ww]elcome[,]?\s+([A-Z][a-z]+\s+[A-Z][a-z]+)'
+    match = re.search(welcome_pattern, transcript)
+    if match:
+        return match.group(1).strip()
+
+    # Pattern 4: Find most common speaker attribution (Name:)
+    # Exclude common host labels
+    host_labels = {'host', 'interviewer', 'moderator', 'q', 'question'}
+    speaker_pattern = r'^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*:'
+    speakers = re.findall(speaker_pattern, transcript, re.MULTILINE)
+    if speakers:
+        # Filter out host-like names and count
+        non_host_speakers = [s for s in speakers if s.lower() not in host_labels]
+        if non_host_speakers:
+            counter = Counter(non_host_speakers)
+            # Return most common (likely the main guest)
+            most_common = counter.most_common(1)[0][0]
+            return most_common
+
+    return None
+
+
+def _format_interview_title(speaker: Optional[str], book_title: Optional[str]) -> Optional[str]:
+    """Format a proper interview ebook title.
+
+    Creates titles like:
+    - "David Deutsch on *The Beginning of Infinity*"
+    - "David Deutsch Interview" (if no book title)
+    - None (if no speaker name)
+
+    Args:
+        speaker: Speaker/guest name.
+        book_title: Book or topic title.
+
+    Returns:
+        Formatted title or None if insufficient info.
+    """
+    if not speaker:
+        return None
+
+    if book_title:
+        return f"{speaker} on *{book_title}*"
+    else:
+        return f"{speaker} Interview"
+
+
+def _fix_interview_title(markdown: str, transcript: str) -> str:
+    """Post-process markdown to fix the H1 title for interview mode.
+
+    Replaces generic/chapter-like titles with proper interview format:
+    "# The Enlightenment" -> "# David Deutsch on *The Beginning of Infinity*"
+
+    The original title becomes the first H2 section heading.
+
+    Args:
+        markdown: Generated markdown content.
+        transcript: Original transcript for extraction.
+
+    Returns:
+        Markdown with proper interview title format.
+    """
+    import re
+
+    # Extract speaker and book title from transcript
+    speaker = _extract_speaker_name_from_transcript(transcript)
+    book_title = _extract_book_title_from_transcript(transcript)
+
+    # Format the proper title
+    proper_title = _format_interview_title(speaker, book_title)
+
+    if not proper_title:
+        # Can't improve, return as-is
+        return markdown
+
+    # Find the current H1 title
+    h1_match = re.match(r'^#\s+(.+?)$', markdown, re.MULTILINE)
+    if not h1_match:
+        # No H1 found, prepend the proper title
+        return f"# {proper_title}\n\n{markdown}"
+
+    current_title = h1_match.group(1).strip()
+
+    # Check if current title is already good (contains speaker name)
+    if speaker and speaker.lower() in current_title.lower():
+        return markdown  # Already has speaker name, don't change
+
+    # Check if current title looks like a chapter heading (not a book title)
+    # Chapter headings are typically short and topical
+    chapter_indicators = [
+        len(current_title.split()) <= 4,  # Short titles
+        not any(word in current_title.lower() for word in ['interview', 'conversation', 'talk']),
+        current_title.lower() not in ['introduction', 'conclusion'],
+    ]
+
+    if all(chapter_indicators):
+        # Current title looks like a chapter/section heading
+        # Replace H1 with proper title, demote current to H2
+        lines = markdown.split('\n')
+
+        # Find and replace the H1 line
+        for i, line in enumerate(lines):
+            if re.match(r'^#\s+', line) and not re.match(r'^##', line):
+                # Insert proper title as H1, demote current to H2
+                lines[i] = f"# {proper_title}\n\n## {current_title}"
+                break
+
+        return '\n'.join(lines)
+
+    return markdown
+
+
+def postprocess_interview_markdown(
+    markdown: str,
+    source_url: Optional[str] = None,
+    include_metadata: bool = True,
+) -> str:
+    """Post-process interview markdown for proper structure and polish.
+
+    Applies deterministic fixes that improve "book feel" without changing content:
+    1. Fix heading hierarchy (## Key Ideas → ### Key Ideas)
+    2. Add metadata block under H1 (source, format, date)
+    3. Fix "Thank you" formatting (#### → *Interviewer:*)
+
+    Args:
+        markdown: Generated interview markdown.
+        source_url: Optional source URL for metadata block.
+        include_metadata: Whether to add metadata block (default True).
+
+    Returns:
+        Post-processed markdown with improved structure.
+    """
+    import re
+    from datetime import date
+
+    lines = markdown.split('\n')
+    result_lines = []
+    h1_index = None
+    topic_heading = None
+    inside_conversation = False
+    seen_topic_in_conversation = False
+
+    for i, line in enumerate(lines):
+        # Track H1 position for metadata insertion
+        if re.match(r'^#\s+[^#]', line) and h1_index is None:
+            h1_index = len(result_lines)
+            result_lines.append(line)
+            continue
+
+        # Fix #1: Downgrade ## Key Ideas (Grounded) to ### (check BEFORE topic_heading)
+        if re.match(r'^##\s+Key Ideas', line, re.IGNORECASE):
+            line = re.sub(r'^##\s+', '### ', line)
+            result_lines.append(line)
+            continue
+
+        # Fix #1: Downgrade ## The Conversation to ### (check BEFORE topic_heading)
+        if re.match(r'^##\s+The Conversation', line, re.IGNORECASE):
+            line = re.sub(r'^##\s+', '### ', line)
+            inside_conversation = True
+            result_lines.append(line)
+            continue
+
+        # Track the topic heading (first ## after H1, after excluding structural sections)
+        if re.match(r'^##\s+[^#]', line) and topic_heading is None:
+            # This is the topic heading (e.g., "## The Enlightenment")
+            topic_heading = re.sub(r'^##\s+', '', line).strip()
+            result_lines.append(line)
+            continue
+
+        # Fix #1: Remove duplicate topic heading inside The Conversation
+        if inside_conversation and topic_heading:
+            if re.match(rf'^###\s+{re.escape(topic_heading)}\s*$', line, re.IGNORECASE):
+                if not seen_topic_in_conversation:
+                    seen_topic_in_conversation = True
+                    # Skip this duplicate heading
+                    continue
+
+        # Fix #5: Convert "#### Thank you..." to "*Interviewer:* Thank you..."
+        thank_you_match = re.match(r'^#{1,4}\s+(Thank\s+you.*)$', line, re.IGNORECASE)
+        if thank_you_match:
+            thank_text = thank_you_match.group(1)
+            result_lines.append(f'*Interviewer:* {thank_text}')
+            continue
+
+        result_lines.append(line)
+
+    # Fix #4: Insert metadata block after H1
+    if include_metadata and h1_index is not None:
+        metadata_lines = []
+        if source_url:
+            metadata_lines.append(f'*Source:* {source_url}')
+        metadata_lines.append('*Format:* Interview')
+        metadata_lines.append(f'*Generated:* {date.today().isoformat()}')
+
+        # Insert after H1 (with blank line before and after)
+        insert_pos = h1_index + 1
+        metadata_block = [''] + metadata_lines + ['']
+        result_lines = result_lines[:insert_pos] + metadata_block + result_lines[insert_pos:]
+
+    return '\n'.join(result_lines)
+
+
 # ==============================================================================
 # Interview Candidate Scoring (Best-of-N selection)
 # ==============================================================================
@@ -277,8 +507,8 @@ def score_interview_draft(
     score += truncated_penalty
     breakdown["truncated_penalty"] = truncated_penalty
 
-    # 6. Penalize interview constraint violations
-    violations = check_interview_constraints(markdown)
+    # 6. Penalize interview constraint violations (pass transcript to avoid false positives)
+    violations = check_interview_constraints(markdown, transcript=transcript)
     violation_count = len(violations)
     breakdown["constraint_violations"] = violation_count
     violation_penalty = violation_count * -15
@@ -663,7 +893,8 @@ async def _generate_draft_task(
             forced_candidates_for_generation = None
 
             # Best-of-N candidate selection
-            candidate_count = INTERVIEW_CANDIDATE_COUNT
+            # Use request param, capped by server-side max
+            candidate_count = min(request.candidate_count, INTERVIEW_CANDIDATE_COUNT_MAX)
             runner_up_data = None  # Store runner-up for debugging
 
             if candidate_count > 1:
@@ -738,6 +969,13 @@ async def _generate_draft_task(
                         f"(matched: {coverage['matched_candidate']['keyword'] if coverage['matched_candidate'] else 'N/A'})"
                     )
 
+            # Fix title format: "# The Enlightenment" -> "# David Deutsch on *The Beginning of Infinity*"
+            final_markdown = _fix_interview_title(final_markdown, request.transcript)
+
+            # Post-process for structure polish (heading hierarchy, metadata, Thank you)
+            # Note: source_url could come from project metadata in future
+            final_markdown = postprocess_interview_markdown(final_markdown, source_url=None)
+
             # Quote validation checks
             key_ideas_text = _extract_key_ideas_section(final_markdown)
 
@@ -761,8 +999,8 @@ async def _generate_draft_task(
                         f"Truncated quote: ...{issue['quote'][-30:]}"
                     )
 
-            # Check for interview mode violations
-            violations = check_interview_constraints(final_markdown)
+            # Check for interview mode violations (pass transcript to avoid false positives)
+            violations = check_interview_constraints(final_markdown, transcript=request.transcript)
             if violations:
                 logger.warning(f"Job {job_id}: {len(violations)} interview mode violations in output")
                 constraint_warnings.extend([
@@ -817,7 +1055,7 @@ async def _generate_draft_task(
 
                 # Check for interview mode violations (Spec 009 US2)
                 if content_mode == ContentMode.interview:
-                    violations = check_interview_constraints(chapter_md)
+                    violations = check_interview_constraints(chapter_md, transcript=request.transcript)
                     if violations:
                         logger.warning(
                             f"Job {job_id}: Chapter {chapter_plan.chapter_number} has "

@@ -268,3 +268,84 @@ class TestConstraintEdgeCases:
 
         violations = check_interview_constraints(text)
         assert len(violations) >= 1
+
+
+class TestTranscriptExemption:
+    """Tests for verbatim transcript exemption (false positive fix)."""
+
+    def test_verbatim_quote_not_flagged_when_in_transcript(self):
+        """Test that 'I believe that' is NOT flagged when it's in the transcript."""
+        transcript = "David Deutsch: I believe that the Enlightenment has tried to happen several times."
+        draft = "**David Deutsch:** I believe that the Enlightenment has tried to happen several times."
+
+        violations = check_interview_constraints(draft, transcript=transcript)
+
+        assert len(violations) == 0, "Verbatim quotes from transcript should not be flagged"
+
+    def test_fabricated_phrase_still_flagged_when_not_in_transcript(self):
+        """Test that 'I believe that' IS flagged when NOT in transcript."""
+        transcript = "David Deutsch: The Enlightenment was a pivotal moment in history."
+        draft = "The speaker believes that progress is inevitable."
+
+        violations = check_interview_constraints(draft, transcript=transcript)
+
+        assert len(violations) >= 1, "Fabricated attribution phrases should be flagged"
+
+    def test_without_transcript_all_patterns_flagged(self):
+        """Test backward compatibility: without transcript, all patterns flagged."""
+        draft = "The speaker believes that we can achieve anything."
+
+        violations = check_interview_constraints(draft)  # No transcript
+
+        assert len(violations) >= 1, "Without transcript, should flag patterns"
+
+    def test_partial_match_not_exempt(self):
+        """Test that partial matches are not exempt (context must match)."""
+        transcript = "Host: Do you believe that? David: Yes, I do believe that."
+        # Draft uses same words but different context
+        draft = "The author believes that his methodology is superior."
+
+        violations = check_interview_constraints(draft, transcript=transcript)
+
+        # "believes that" appears in both but context differs
+        assert len(violations) >= 1, "Different context should still be flagged"
+
+    def test_case_insensitive_transcript_matching(self):
+        """Test that transcript matching is case-insensitive."""
+        transcript = "DAVID DEUTSCH: I BELIEVE THAT THE ENLIGHTENMENT..."
+        draft = "**David Deutsch:** I believe that the Enlightenment..."
+
+        violations = check_interview_constraints(draft, transcript=transcript)
+
+        assert len(violations) == 0, "Case should not affect transcript matching"
+
+    def test_whitespace_normalized_in_transcript_matching(self):
+        """Test that whitespace differences don't break matching."""
+        transcript = "David   Deutsch:   I   believe   that   the   Enlightenment..."
+        draft = "**David Deutsch:** I believe that the Enlightenment..."
+
+        violations = check_interview_constraints(draft, transcript=transcript)
+
+        assert len(violations) == 0, "Whitespace differences should be normalized"
+
+    def test_multiple_patterns_some_verbatim_some_not(self):
+        """Test mixed case: some patterns verbatim, some fabricated."""
+        # Transcript has both "I believe that" and "the key to success"
+        # but draft only quotes "I believe that" verbatim
+        transcript = "David: I believe that progress is important. We must keep trying."
+        draft = """
+        **David:** I believe that progress is important.
+        The key to success is never giving up.
+        """
+
+        violations = check_interview_constraints(draft, transcript=transcript)
+
+        # "I believe that" is verbatim (context matches) - not flagged
+        # "key to success" is fabricated - should be flagged
+        # Check that at least one violation exists (the fabricated one)
+        assert len(violations) >= 1
+
+        # Verify the verbatim one is NOT in violations
+        violation_texts = [v["matched_text"].lower() for v in violations]
+        assert not any("i believe that" in v for v in violation_texts), \
+            "Verbatim 'I believe that' should not appear in violations"
