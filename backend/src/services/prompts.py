@@ -825,6 +825,7 @@ Format each Q&A with speaker labels. Quote blocks are OPTIONAL - use sparingly f
 def build_interview_grounded_system_prompt(
     book_title: str,
     speaker_name: str,
+    target_words: int = 5000,
 ) -> str:
     """Build system prompt for grounded interview generation (P0 format).
 
@@ -835,12 +836,49 @@ def build_interview_grounded_system_prompt(
     Args:
         book_title: Title of the ebook.
         speaker_name: Name of the interview subject/speaker.
+        target_words: Target word count for the entire ebook.
 
     Returns:
         Formatted system prompt string.
     """
-    return f"""{INTERVIEW_GROUNDED_SYSTEM_PROMPT}
+    # Calculate guidance based on target length
+    if target_words <= 2500:
+        length_tier = "brief"
+        qa_guidance = "15-20 Q&A exchanges"
+        answer_guidance = "1-2 paragraphs per answer"
+        key_ideas_count = "5-7"
+    elif target_words <= 5000:
+        length_tier = "standard"
+        qa_guidance = "25-35 Q&A exchanges"
+        answer_guidance = "2-3 paragraphs per answer"
+        key_ideas_count = "7-10"
+    elif target_words <= 10000:
+        length_tier = "detailed"
+        qa_guidance = "40-55 Q&A exchanges"
+        answer_guidance = "3-4 paragraphs per answer"
+        key_ideas_count = "10-12"
+    else:
+        length_tier = "comprehensive"
+        qa_guidance = "60+ Q&A exchanges"
+        answer_guidance = "4-5 paragraphs per answer"
+        key_ideas_count = "12-15"
 
+    length_guidance = f"""
+## Length Requirements (IMPORTANT)
+
+**Target: approximately {target_words:,} words total** ({length_tier} depth)
+
+- **Key Ideas section**: {key_ideas_count} bullet points
+- **The Conversation section**: {qa_guidance} covering ALL major topics from the transcript
+- **Answer depth**: {answer_guidance} - develop each answer fully, don't truncate
+- **Coverage**: Extract the FULL richness of the conversation, not just highlights
+
+**DO NOT produce a summary or outline.** This should feel like reading a complete interview, not cliff notes.
+Each answer should capture the speaker's full thought, including examples and nuances they provided.
+"""
+
+    return f"""{INTERVIEW_GROUNDED_SYSTEM_PROMPT}
+{length_guidance}
 ## Book Context
 
 - **Book title (USE THIS AS H1)**: "{book_title}"

@@ -39,6 +39,7 @@ from src.models.style_config import (
     TotalLengthPreset,
     DetailLevel,
     ContentMode,
+    TOTAL_LENGTH_WORD_TARGETS,
 )
 from src.models.evidence_map import EvidenceMap, ChapterEvidence
 
@@ -525,6 +526,7 @@ async def _generate_and_score_candidate(
     evidence_map: dict,
     forced_candidates: Optional[list] = None,
     candidate_num: int = 1,
+    target_words: int = 5000,
 ) -> tuple[str, dict]:
     """Generate a single interview draft candidate and score it.
 
@@ -534,6 +536,7 @@ async def _generate_and_score_candidate(
         evidence_map: Evidence mapping for grounding.
         forced_candidates: Optional definitional candidates to force into Key Ideas.
         candidate_num: Candidate number for logging.
+        target_words: Target word count for the draft.
 
     Returns:
         Tuple of (markdown, score_breakdown).
@@ -543,6 +546,7 @@ async def _generate_and_score_candidate(
         book_title=book_title,
         evidence_map=evidence_map,
         forced_candidates=forced_candidates,
+        target_words=target_words,
     )
     markdown = _clean_markdown_title(markdown)
 
@@ -846,7 +850,7 @@ async def _generate_draft_task(
         # Phase 3: Generate content
         await update_job(job_id, status=JobStatus.generating)
 
-        # Compute words per chapter based on style config and chapter count
+        # Compute target word counts based on style config
         style_dict = request.style_config.get("style", request.style_config) if isinstance(request.style_config, dict) else {}
         total_length_preset_str = style_dict.get("total_length_preset", "standard")
         try:
@@ -855,6 +859,14 @@ async def _generate_draft_task(
             total_length_preset = TotalLengthPreset.standard
         # Get custom word count if preset is 'custom'
         custom_total_words = style_dict.get("total_target_words")
+
+        # Compute total target words (for interview single-pass mode)
+        if total_length_preset == TotalLengthPreset.custom and custom_total_words:
+            total_target_words = custom_total_words
+        else:
+            total_target_words = TOTAL_LENGTH_WORD_TARGETS.get(total_length_preset, 5000)
+
+        # Compute words per chapter (for chapter-by-chapter mode)
         words_per_chapter = compute_words_per_chapter(
             total_length_preset,
             len(draft_plan.chapters),
@@ -908,6 +920,7 @@ async def _generate_draft_task(
                         evidence_map=evidence_map,
                         forced_candidates=forced_candidates_for_generation,
                         candidate_num=i + 1,
+                        target_words=total_target_words,
                     )
                     candidates.append((markdown, score))
 
@@ -938,6 +951,7 @@ async def _generate_draft_task(
                     transcript=request.transcript,
                     book_title=interview_book_title,
                     evidence_map=evidence_map,
+                    target_words=total_target_words,
                 )
                 # Clean up any trailing punctuation in H1 title
                 final_markdown = _clean_markdown_title(final_markdown)
@@ -957,6 +971,7 @@ async def _generate_draft_task(
                         book_title=interview_book_title,
                         evidence_map=evidence_map,
                         forced_candidates=coverage["missing_candidates"],
+                        target_words=total_target_words,
                     )
                     # Clean up any trailing punctuation in H1 title
                     final_markdown = _clean_markdown_title(final_markdown)
@@ -1497,6 +1512,7 @@ async def generate_interview_single_pass(
     book_title: str,
     evidence_map: EvidenceMap,
     forced_candidates: Optional[list[dict]] = None,
+    target_words: int = 5000,
 ) -> str:
     """Generate interview ebook using single-pass approach (P0).
 
@@ -1509,6 +1525,7 @@ async def generate_interview_single_pass(
         book_title: Title of the ebook.
         evidence_map: Evidence Map with extracted claims.
         forced_candidates: Optional list of definitional candidates to force into Key Ideas.
+        target_words: Target word count for the entire ebook.
 
     Returns:
         Generated markdown with Key Ideas + Conversation structure.
@@ -1527,10 +1544,11 @@ async def generate_interview_single_pass(
     # Sort by confidence to prioritize strongest claims
     all_claims.sort(key=lambda c: c.get("confidence", 0), reverse=True)
 
-    # Build prompts
+    # Build prompts with length guidance
     system_prompt = build_interview_grounded_system_prompt(
         book_title=book_title,
         speaker_name=speaker_name,
+        target_words=target_words,
     )
 
     user_prompt = build_interview_grounded_user_prompt(
@@ -1545,6 +1563,14 @@ async def generate_interview_single_pass(
         user_prompt = f"{forced_text}\n\n---\n\n{user_prompt}"
         logger.info(f"Re-running with {len(forced_candidates)} forced definitional candidates")
 
+    # Calculate max_tokens based on target words (roughly 1.3 tokens per word)
+    # Add buffer for formatting/structure
+    max_tokens = max(8000, int(target_words * 1.5) + 2000)
+    # Cap at model limits
+    max_tokens = min(max_tokens, 16000)
+
+    logger.info(f"Interview generation: target_words={target_words}, max_tokens={max_tokens}")
+
     request = LLMRequest(
         model=CHAPTER_MODEL,
         messages=[
@@ -1552,7 +1578,7 @@ async def generate_interview_single_pass(
             ChatMessage(role="user", content=user_prompt),
         ],
         temperature=0.7,
-        max_tokens=8000,  # Larger for single-pass
+        max_tokens=max_tokens,
     )
 
     response = await client.generate(request)

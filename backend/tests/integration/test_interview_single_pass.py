@@ -179,6 +179,51 @@ class TestInterviewGroundedPrompts:
         # Should contain truncation indicator
         assert "..." in prompt
 
+    def test_build_system_prompt_brief_length_guidance(self):
+        """Brief length (2000 words) should have compact guidance."""
+        prompt = build_interview_grounded_system_prompt(
+            book_title="Test Book",
+            speaker_name="Sarah Chen",
+            target_words=2000,
+        )
+        assert "2,000 words" in prompt
+        assert "brief" in prompt.lower()
+        assert "15-20 Q&A exchanges" in prompt
+        assert "5-7" in prompt  # Key ideas count
+
+    def test_build_system_prompt_standard_length_guidance(self):
+        """Standard length (5000 words) should have standard guidance."""
+        prompt = build_interview_grounded_system_prompt(
+            book_title="Test Book",
+            speaker_name="Sarah Chen",
+            target_words=5000,
+        )
+        assert "5,000 words" in prompt
+        assert "standard" in prompt.lower()
+        assert "25-35 Q&A exchanges" in prompt
+        assert "7-10" in prompt  # Key ideas count
+
+    def test_build_system_prompt_comprehensive_length_guidance(self):
+        """Comprehensive length (10000 words) should have detailed guidance."""
+        prompt = build_interview_grounded_system_prompt(
+            book_title="Test Book",
+            speaker_name="Sarah Chen",
+            target_words=10000,
+        )
+        assert "10,000 words" in prompt
+        assert "detailed" in prompt.lower()
+        assert "40-55 Q&A exchanges" in prompt
+        assert "10-12" in prompt  # Key ideas count
+
+    def test_build_system_prompt_default_target_words(self):
+        """Default target words should be 5000 (standard)."""
+        prompt = build_interview_grounded_system_prompt(
+            book_title="Test Book",
+            speaker_name="Sarah Chen",
+        )
+        # Default should use standard guidance
+        assert "5,000 words" in prompt
+
 
 class TestForbiddenPatterns:
     """Test the P1 forbidden patterns."""
@@ -329,6 +374,66 @@ Sarah Chen founded DataFlow in 2019 after observing...
             system_content = request.messages[0].content
             assert "Key Ideas (Grounded)" in system_content
             assert "The Conversation" in system_content
+
+    @pytest.mark.asyncio
+    async def test_target_words_affects_max_tokens(self, sample_evidence_map):
+        """Target words should scale max_tokens in LLM request."""
+        mock_response = MagicMock()
+        mock_response.text = "Content..."
+
+        with patch("src.services.draft_service.LLMClient") as MockClient:
+            mock_client = MockClient.return_value
+            mock_client.generate = AsyncMock(return_value=mock_response)
+
+            # Test with brief (2000 words) - should use lower max_tokens
+            await generate_interview_single_pass(
+                transcript=SAMPLE_INTERVIEW_TRANSCRIPT,
+                book_title="Test",
+                evidence_map=sample_evidence_map,
+                target_words=2000,
+            )
+            brief_request = mock_client.generate.call_args[0][0]
+            brief_max_tokens = brief_request.max_tokens
+
+            mock_client.generate.reset_mock()
+
+            # Test with comprehensive (10000 words) - should use higher max_tokens
+            await generate_interview_single_pass(
+                transcript=SAMPLE_INTERVIEW_TRANSCRIPT,
+                book_title="Test",
+                evidence_map=sample_evidence_map,
+                target_words=10000,
+            )
+            comprehensive_request = mock_client.generate.call_args[0][0]
+            comprehensive_max_tokens = comprehensive_request.max_tokens
+
+            # Comprehensive should have higher max_tokens than brief
+            assert comprehensive_max_tokens > brief_max_tokens, \
+                f"Expected comprehensive ({comprehensive_max_tokens}) > brief ({brief_max_tokens})"
+
+    @pytest.mark.asyncio
+    async def test_target_words_in_prompt(self, sample_evidence_map):
+        """Target words should appear in the system prompt."""
+        mock_response = MagicMock()
+        mock_response.text = "Content..."
+
+        with patch("src.services.draft_service.LLMClient") as MockClient:
+            mock_client = MockClient.return_value
+            mock_client.generate = AsyncMock(return_value=mock_response)
+
+            await generate_interview_single_pass(
+                transcript=SAMPLE_INTERVIEW_TRANSCRIPT,
+                book_title="Test",
+                evidence_map=sample_evidence_map,
+                target_words=10000,
+            )
+
+            request = mock_client.generate.call_args[0][0]
+            system_content = request.messages[0].content
+
+            # Should contain the word count and tier
+            assert "10,000 words" in system_content
+            assert "detailed" in system_content.lower()
 
 
 class TestOutputStructureValidation:
