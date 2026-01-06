@@ -764,10 +764,13 @@ The speaker is sharing their experience and insights - present them directly.
 
 ## Structure Template
 
-IMPORTANT: Do NOT include a top-level H1 heading (like "# Interview"). Start directly with "## Key Ideas".
-The document title will be added separately.
+**IMPORTANT**: Start with an H1 title using the BOOK TITLE provided in the Book Context section below.
+Do NOT use generic titles like "# Interview" or "# Interview Transcript".
+Use the actual book title: "# {book_title}" (the title will be provided in Book Context).
 
 ```markdown
+# {Book Title from Context}
+
 ## Key Ideas (Grounded)
 
 - **[INTELLECTUAL SPINE #1: The speaker's central METHOD/CRITERION for evaluating ideas]**: "[verbatim quote defining or explaining this method]"
@@ -822,8 +825,10 @@ def build_interview_grounded_system_prompt(
 
 ## Book Context
 
-- Book title: "{book_title}"
+- **Book title (USE THIS AS H1)**: "{book_title}"
 - Primary speaker: {speaker_name}
+
+**START YOUR OUTPUT WITH**: # {book_title}
 
 All quotes should be from {speaker_name} unless otherwise indicated.
 Use {speaker_name}'s name naturally in the text for attribution."""
