@@ -433,3 +433,149 @@ class TestTopPriorityCandidateRequired:
 
         assert result["covered"] is True, \
             "Should pass coverage when top-priority candidate is present"
+
+
+class TestDeterministicInsertion:
+    """Test the deterministic insertion of top candidate into Key Ideas.
+
+    This is the final safety net that guarantees the core criterion is present,
+    regardless of whether the model included it.
+    """
+
+    def test_import_insert_function(self):
+        """Should be able to import insert_top_candidate_deterministically."""
+        from src.services.evidence_service import insert_top_candidate_deterministically
+        assert insert_top_candidate_deterministically is not None
+
+    def test_inserts_missing_candidate(self):
+        """Should insert the top candidate when it's missing from Key Ideas."""
+        from src.services.evidence_service import insert_top_candidate_deterministically
+
+        markdown = """# The Beginning of Infinity
+
+### Key Ideas (Grounded)
+
+- **The Enlightenment changed everything**: "This line is the most important thing that's ever happened."
+- **Progress is unlimited**: "The scope of understanding and controlling the world has to be limitless."
+
+### The Conversation
+
+**Host:** Welcome to the show.
+"""
+
+        top_candidate = {
+            "sentence": "We discovered this method—the scientific method—which I think is essentially trying to find good explanations of what happens rather than bad explanations that could apply to absolutely anything.",
+            "keyword": "good explanations",
+            "start": 0,
+            "end": 200,
+        }
+
+        result = insert_top_candidate_deterministically(markdown, top_candidate)
+
+        # Should now contain the core criterion
+        assert "Good explanations vs bad explanations" in result
+        assert "good explanations" in result.lower()
+        assert "bad explanations" in result.lower()
+
+        # Should be inserted as the first bullet (after the header)
+        key_ideas_start = result.find("### Key Ideas")
+        first_bullet = result.find("- **", key_ideas_start)
+        assert "Good explanations" in result[first_bullet:first_bullet + 100]
+
+    def test_skips_insertion_when_already_present(self):
+        """Should NOT insert when the candidate is already in Key Ideas."""
+        from src.services.evidence_service import insert_top_candidate_deterministically
+
+        markdown = """# The Beginning of Infinity
+
+### Key Ideas (Grounded)
+
+- **Good explanations vs bad explanations**: "trying to find good explanations of what happens rather than bad explanations"
+- **The Enlightenment changed everything**: "This line is the most important thing that's ever happened."
+
+### The Conversation
+
+**Host:** Welcome to the show.
+"""
+
+        top_candidate = {
+            "sentence": "We discovered this method—the scientific method—which I think is essentially trying to find good explanations of what happens rather than bad explanations that could apply to absolutely anything.",
+            "keyword": "good explanations",
+            "start": 0,
+            "end": 200,
+        }
+
+        result = insert_top_candidate_deterministically(markdown, top_candidate)
+
+        # Should be unchanged (no duplicate insertion)
+        assert result == markdown
+
+    def test_handles_empty_candidate(self):
+        """Should return unchanged markdown when candidate is None."""
+        from src.services.evidence_service import insert_top_candidate_deterministically
+
+        markdown = "# Title\n\n### Key Ideas\n\n- **Idea**: \"quote\""
+
+        result = insert_top_candidate_deterministically(markdown, None)
+
+        assert result == markdown
+
+    def test_extracts_best_quote_span(self):
+        """Should extract a concise quote span from the sentence."""
+        from src.services.evidence_service import _extract_best_quote_span
+
+        sentence = "We discovered this method—the scientific method—which I think is essentially trying to find good explanations of what happens rather than bad explanations that could apply to absolutely anything."
+
+        quote = _extract_best_quote_span(sentence)
+
+        # Should contain the core criterion phrase
+        assert "good explanations" in quote.lower()
+        assert "bad explanations" in quote.lower()
+        # Should not be the entire 200+ char sentence
+        assert len(quote) < 150
+
+    def test_generates_correct_label(self):
+        """Should generate a concise, plain-English label."""
+        from src.services.evidence_service import _generate_bullet_label
+
+        sentence = "We discovered this method which is essentially trying to find good explanations of what happens rather than bad explanations."
+
+        label = _generate_bullet_label(sentence)
+
+        assert label == "Good explanations vs bad explanations"
+
+    def test_handles_different_header_levels(self):
+        """Should work with both ## and ### Key Ideas headers."""
+        from src.services.evidence_service import insert_top_candidate_deterministically
+
+        markdown_h2 = """# Title
+
+## Key Ideas (Grounded)
+
+- **Old idea**: "quote"
+
+## The Conversation
+"""
+
+        markdown_h3 = """# Title
+
+### Key Ideas (Grounded)
+
+- **Old idea**: "quote"
+
+### The Conversation
+"""
+
+        top_candidate = {
+            "sentence": "The method is about finding good explanations rather than bad explanations.",
+            "keyword": "good explanations",
+            "start": 0,
+            "end": 100,
+        }
+
+        result_h2 = insert_top_candidate_deterministically(markdown_h2, top_candidate)
+        result_h3 = insert_top_candidate_deterministically(markdown_h3, top_candidate)
+
+        # Both should have the insertion
+        assert "Good explanations vs bad explanations" in result_h2
+        assert "Good explanations vs bad explanations" in result_h3

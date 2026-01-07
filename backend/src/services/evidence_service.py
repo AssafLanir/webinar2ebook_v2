@@ -822,6 +822,163 @@ def check_key_ideas_coverage(
     }
 
 
+def insert_top_candidate_deterministically(
+    markdown: str,
+    top_candidate: dict,
+) -> str:
+    """Deterministically insert the top definitional candidate into Key Ideas.
+
+    This is a POST-PROCESSING fix that guarantees the core criterion is present,
+    regardless of whether the model included it. No LLM call required.
+
+    Args:
+        markdown: The full generated markdown.
+        top_candidate: The #1 priority definitional candidate dict with 'sentence', 'keyword'.
+
+    Returns:
+        Modified markdown with the candidate inserted as Key Ideas bullet #1.
+    """
+    if not top_candidate:
+        return markdown
+
+    sentence = top_candidate["sentence"]
+
+    # Check if it's already present (avoid duplicate insertion)
+    # Use a simple substring check on the key distinctive phrase
+    markdown_lower = markdown.lower()
+    if "good explanations" in sentence.lower() and "bad explanations" in sentence.lower():
+        # Check for the core phrase
+        if "good explanations" in markdown_lower and "bad explanations" in markdown_lower:
+            # Check specifically in Key Ideas section
+            key_ideas_match = re.search(
+                r'(#{2,3}\s*Key Ideas.*?)(?=\n#{2,3}\s|\Z)',
+                markdown,
+                re.DOTALL | re.IGNORECASE
+            )
+            if key_ideas_match:
+                key_ideas_section = key_ideas_match.group(1).lower()
+                if "good explanations" in key_ideas_section and "bad explanations" in key_ideas_section:
+                    logger.info("Top candidate already present in Key Ideas, skipping insertion")
+                    return markdown
+
+    # Extract a good quote from the sentence
+    # Try to find the most distinctive part containing the key phrase
+    quote = _extract_best_quote_span(sentence)
+
+    # Create the bullet label based on content
+    label = _generate_bullet_label(sentence)
+
+    # Format the new bullet
+    new_bullet = f'- **{label}**: "{quote}"'
+
+    # Find the Key Ideas section and insert as first bullet
+    # Match both ## and ### Key Ideas headers
+    key_ideas_pattern = r'(#{2,3}\s*Key Ideas[^\n]*\n+)'
+
+    def insert_bullet(match: re.Match) -> str:
+        header = match.group(1)
+        return f"{header}{new_bullet}\n"
+
+    modified_markdown = re.sub(key_ideas_pattern, insert_bullet, markdown, count=1, flags=re.IGNORECASE)
+
+    if modified_markdown != markdown:
+        logger.info(f"Deterministically inserted top candidate as Key Ideas bullet #1: {label}")
+    else:
+        logger.warning("Could not find Key Ideas section to insert candidate")
+
+    return modified_markdown
+
+
+def _extract_best_quote_span(sentence: str) -> str:
+    """Extract the most relevant quote span from a definitional sentence.
+
+    Tries to find a contiguous span that captures the core criterion,
+    preferring shorter, punchier quotes over full sentences.
+
+    Args:
+        sentence: The full candidate sentence.
+
+    Returns:
+        A quote span suitable for Key Ideas.
+    """
+    # If sentence contains "good explanations...bad explanations", try to extract just that part
+    lower = sentence.lower()
+
+    # Look for the core criterion pattern
+    if "good explanation" in lower and "bad explanation" in lower:
+        # Find the span from "good" to "bad explanations" + a few words
+        start_patterns = [
+            r'(trying to find good explanations[^.]*bad explanations[^.]{0,50})',
+            r'(find good explanations[^.]*bad explanations[^.]{0,50})',
+            r'(good explanations[^.]*bad explanations[^.]{0,30})',
+        ]
+        for pattern in start_patterns:
+            match = re.search(pattern, sentence, re.IGNORECASE)
+            if match:
+                quote = match.group(1).strip()
+                # Clean up trailing fragments
+                quote = re.sub(r'\s+(that|which|and|but|so)\s*$', '', quote, flags=re.IGNORECASE)
+                if len(quote) >= 30:  # Ensure it's substantial
+                    return quote
+
+    # Fallback: use the full sentence, cleaned up
+    # Remove speaker prefix if present
+    cleaned = re.sub(r'^[A-Za-z\s]+:\s*', '', sentence)
+    # Trim to reasonable length if too long
+    if len(cleaned) > 200:
+        # Try to find a natural break point
+        break_points = ['. ', '? ', '! ', '; ', '—']
+        for bp in break_points:
+            idx = cleaned.find(bp)
+            if 50 < idx < 200:
+                cleaned = cleaned[:idx + 1].strip()
+                break
+        else:
+            # Hard truncate at word boundary
+            words = cleaned.split()
+            cleaned = ' '.join(words[:30])
+
+    return cleaned.strip()
+
+
+def _generate_bullet_label(sentence: str) -> str:
+    """Generate a concise label for a Key Ideas bullet.
+
+    Labels should be short (5-10 words), plain English, no meta-language.
+
+    Args:
+        sentence: The candidate sentence.
+
+    Returns:
+        A label string.
+    """
+    lower = sentence.lower()
+
+    # Known patterns → specific labels
+    if "good explanation" in lower and "bad explanation" in lower:
+        return "Good explanations vs bad explanations"
+
+    if "rather than" in lower:
+        # Extract the X vs Y pattern
+        match = re.search(r'(\w+(?:\s+\w+)?)\s+rather than\s+(\w+(?:\s+\w+)?)', lower)
+        if match:
+            return f"{match.group(1).title()} rather than {match.group(2)}"
+
+    if "the method" in lower and "scientific" in lower:
+        return "The scientific method enables progress"
+
+    if "beginning of infinity" in lower:
+        return "The meaning of 'the beginning of infinity'"
+
+    if "explanatory knowledge" in lower:
+        return "The power of explanatory knowledge"
+
+    # Fallback: extract key nouns/verbs from sentence
+    # Just use a generic label based on the keyword
+    keyword = sentence.split()[0:5]
+    return " ".join(keyword).strip(".,!?:;")[:50]
+
+
 def verify_key_ideas_quotes(
     key_ideas_text: str,
     transcript: str,

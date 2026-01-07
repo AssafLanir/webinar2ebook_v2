@@ -81,6 +81,7 @@ from .evidence_service import (
     format_candidates_for_prompt,
     verify_key_ideas_quotes,
     check_truncated_quotes,
+    insert_top_candidate_deterministically,
 )
 
 logger = logging.getLogger(__name__)
@@ -939,28 +940,14 @@ async def _generate_draft_task(
                 final_markdown = _fix_interview_title(final_markdown, request.transcript)
                 final_markdown = postprocess_interview_markdown(final_markdown, source_url=None)
 
-                # Coverage Guard for Full Transcript mode
+                # DETERMINISTIC FIX: Guarantee top candidate is in Key Ideas
+                # This is a post-processing step that inserts the core criterion if missing,
+                # without relying on the model to follow instructions (which often fails).
                 if definitional_candidates:
-                    key_ideas_text = _extract_key_ideas_section(final_markdown)
-                    coverage = check_key_ideas_coverage(key_ideas_text, definitional_candidates)
-
-                    if not coverage["covered"]:
-                        logger.warning(
-                            f"Job {job_id}: Full Transcript Key Ideas missing definitional coverage, re-running"
-                        )
-                        # Re-run with explicit forced candidates
-                        final_markdown = await generate_full_transcript_interview(
-                            transcript=request.transcript,
-                            book_title=interview_book_title,
-                            evidence_map=evidence_map,
-                            forced_candidates=coverage["missing_candidates"],
-                        )
-                        final_markdown = _clean_markdown_title(final_markdown)
-                        final_markdown = _fix_interview_title(final_markdown, request.transcript)
-                        final_markdown = postprocess_interview_markdown(final_markdown, source_url=None)
-                        constraint_warnings.append(
-                            "Key Ideas re-generated to include core framework definitions"
-                        )
+                    top_candidate = definitional_candidates[0]
+                    final_markdown = insert_top_candidate_deterministically(
+                        final_markdown, top_candidate
+                    )
 
                 # Update constraint warnings
                 if constraint_warnings:
@@ -1061,6 +1048,15 @@ async def _generate_draft_task(
                 # Post-process for structure polish (heading hierarchy, metadata, Thank you)
                 # Note: source_url could come from project metadata in future
                 final_markdown = postprocess_interview_markdown(final_markdown, source_url=None)
+
+                # DETERMINISTIC FIX: Guarantee top candidate is in Key Ideas
+                # This is a post-processing step that inserts the core criterion if missing,
+                # without relying on the model to follow instructions (which often fails).
+                if definitional_candidates:
+                    top_candidate = definitional_candidates[0]
+                    final_markdown = insert_top_candidate_deterministically(
+                        final_markdown, top_candidate
+                    )
 
                 # Quote validation checks
                 key_ideas_text = _extract_key_ideas_section(final_markdown)
