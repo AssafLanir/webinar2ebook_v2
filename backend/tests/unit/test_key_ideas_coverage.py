@@ -327,3 +327,109 @@ class TestIntegrationWithDeutschTranscript:
         result = check_key_ideas_coverage(good_key_ideas, candidates)
 
         assert result["covered"] is True
+
+
+class TestTopPriorityCandidateRequired:
+    """Test that coverage guard requires THE TOP PRIORITY candidate, not just any candidate.
+
+    ChatGPT feedback: If transcript contains both "beginning of infinity means..."
+    and "good explanations rather than bad explanations", the coverage guard should
+    require the latter (higher priority) specifically, not pass if only the former is present.
+    """
+
+    MULTI_CANDIDATE_TRANSCRIPT = """
+    Host: What does "the beginning of infinity" mean?
+
+    David Deutsch: The phrase "the beginning of infinity" primarily means the universal
+    power of explanatory knowledge. It turned out that in every chapter, there were
+    several different senses in which there was a beginning of infinity.
+
+    Host: How does science enable this?
+
+    David Deutsch: We discovered this method—the scientific method—which I think is
+    essentially trying to find good explanations of what happens rather than bad
+    explanations that could apply to absolutely anything. Once one has this method,
+    the scope of understanding and controlling the world has to be limitless.
+    """
+
+    def test_extracts_both_candidates(self):
+        """Should extract both 'beginning of infinity' and 'good explanations' as candidates."""
+        candidates = extract_definitional_candidates(self.MULTI_CANDIDATE_TRANSCRIPT)
+
+        # Should find multiple candidates
+        assert len(candidates) >= 2, f"Found only {len(candidates)} candidates"
+
+        # Should find 'beginning of infinity' sentence
+        boi_found = any(
+            "beginning of infinity" in c["sentence"].lower()
+            for c in candidates
+        )
+        assert boi_found, "Should find 'beginning of infinity' sentence"
+
+        # Should find 'good explanations' sentence
+        ge_found = any(
+            "good explanations" in c["sentence"].lower()
+            for c in candidates
+        )
+        assert ge_found, "Should find 'good explanations' sentence"
+
+    def test_good_explanations_ranked_higher_than_beginning_of_infinity(self):
+        """'good explanations' should be ranked higher priority than 'beginning of infinity'."""
+        candidates = extract_definitional_candidates(self.MULTI_CANDIDATE_TRANSCRIPT)
+
+        # Find indices
+        ge_index = None
+        boi_index = None
+        for i, c in enumerate(candidates):
+            if "good explanations" in c["sentence"].lower() and "rather than" in c["sentence"].lower():
+                ge_index = i
+            if "beginning of infinity" in c["sentence"].lower() and "means" in c["keyword"].lower():
+                boi_index = i
+
+        # 'good explanations' should appear BEFORE 'beginning of infinity' in sorted list
+        if ge_index is not None and boi_index is not None:
+            assert ge_index < boi_index, \
+                f"'good explanations' (index {ge_index}) should rank before 'beginning of infinity' (index {boi_index})"
+
+    def test_coverage_fails_when_only_lower_priority_candidate_present(self):
+        """Should FAIL coverage when only 'beginning of infinity' is in Key Ideas (lower priority).
+
+        This is the critical test: even though 'beginning of infinity' IS a definitional
+        candidate, if 'good explanations rather than bad' exists and is higher priority,
+        the coverage guard should require THAT specific candidate.
+        """
+        candidates = extract_definitional_candidates(self.MULTI_CANDIDATE_TRANSCRIPT)
+
+        # Key Ideas that includes ONLY "beginning of infinity" but MISSES "good explanations"
+        key_ideas_with_lower_priority_only = """
+        - **The beginning of infinity defined**: "The phrase 'the beginning of infinity' primarily means the universal power of explanatory knowledge"
+        - **Progress is unlimited**: "The scope of understanding and controlling the world has to be limitless."
+        """
+
+        result = check_key_ideas_coverage(key_ideas_with_lower_priority_only, candidates)
+
+        # Should FAIL because 'good explanations rather than bad' (the #1 priority) is missing
+        assert result["covered"] is False, \
+            "Should fail coverage when top-priority candidate is missing, even if other candidates present"
+
+        # The missing candidate should be the 'good explanations' one
+        assert len(result["missing_candidates"]) > 0
+        top_missing = result["missing_candidates"][0]
+        assert "good explanations" in top_missing["sentence"].lower() or \
+               "rather than" in top_missing["sentence"].lower(), \
+            f"Missing candidate should be the 'good explanations' sentence, got: {top_missing['sentence'][:60]}..."
+
+    def test_coverage_passes_when_top_priority_candidate_present(self):
+        """Should PASS coverage when 'good explanations' (top priority) IS in Key Ideas."""
+        candidates = extract_definitional_candidates(self.MULTI_CANDIDATE_TRANSCRIPT)
+
+        # Key Ideas that includes the TOP PRIORITY candidate
+        key_ideas_with_top_priority = """
+        - **Good vs bad explanations**: "trying to find good explanations of what happens rather than bad explanations that could apply to absolutely anything"
+        - **Progress is unlimited**: "The scope of understanding and controlling the world has to be limitless."
+        """
+
+        result = check_key_ideas_coverage(key_ideas_with_top_priority, candidates)
+
+        assert result["covered"] is True, \
+            "Should pass coverage when top-priority candidate is present"

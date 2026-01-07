@@ -705,12 +705,14 @@ def extract_definitional_candidates(
         current_pos += len(sentence) + 1
 
     # Sort by keyword importance (good explanations > means > others)
+    # Check SENTENCE content, not just matched keyword, to properly prioritize
     priority_keywords = ["good explanation", "bad explanation", "rather than", "the method", "criterion"]
 
     def priority_score(candidate: dict) -> int:
-        keyword_lower = candidate["keyword"].lower()
+        """Score based on highest-priority keyword found IN THE SENTENCE."""
+        sentence_lower = candidate["sentence"].lower()
         for i, pk in enumerate(priority_keywords):
-            if pk in keyword_lower:
+            if pk in sentence_lower:
                 return i
         return len(priority_keywords)
 
@@ -774,22 +776,32 @@ def check_key_ideas_coverage(
                 must_match_candidates.append(candidate)
                 break
 
-    # If we have must-match candidates, we MUST match at least one of them
+    # If we have must-match candidates, we MUST match the TOP PRIORITY one
+    # (not just "any" must-match candidate)
     if must_match_candidates:
-        for candidate in must_match_candidates:
-            if candidate_matches_key_ideas(candidate):
-                logger.info(f"Coverage check: Found must-match candidate (keyword: {candidate['keyword']})")
-                return {
-                    "covered": True,
-                    "missing_candidates": [],
-                    "matched_candidate": candidate,
-                }
+        # The #1 must-match candidate is the one that MUST be covered
+        top_must_match = must_match_candidates[0]
 
-        # Must-match candidates exist but none are covered - FAIL
-        logger.warning(f"Coverage check: {len(must_match_candidates)} must-match candidates not found in Key Ideas")
+        if candidate_matches_key_ideas(top_must_match):
+            logger.info(
+                f"Coverage check: Found top must-match candidate "
+                f"(keyword: {top_must_match['keyword']})"
+            )
+            return {
+                "covered": True,
+                "missing_candidates": [],
+                "matched_candidate": top_must_match,
+            }
+
+        # Top must-match candidate not covered - FAIL
+        # Even if other must-match candidates are present, the #1 is required
+        logger.warning(
+            f"Coverage check: Top must-match candidate not found in Key Ideas "
+            f"(keyword: {top_must_match['keyword']}, sentence: {top_must_match['sentence'][:60]}...)"
+        )
         return {
             "covered": False,
-            "missing_candidates": must_match_candidates[:5],  # Return must-match candidates
+            "missing_candidates": [top_must_match],  # Return THE top candidate
             "matched_candidate": None,
         }
 
