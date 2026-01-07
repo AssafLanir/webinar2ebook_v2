@@ -864,21 +864,38 @@ def build_interview_grounded_system_prompt(
         key_ideas_count = "12-15"
 
     length_guidance = f"""
-## Length Requirements (IMPORTANT)
+## CRITICAL LENGTH REQUIREMENTS - READ CAREFULLY
 
-**Target: approximately {target_words:,} words total** ({length_tier} depth)
+⚠️ **MINIMUM OUTPUT: {target_words:,} words** ⚠️
 
-- **Key Ideas section**: {key_ideas_count} bullet points
-- **The Conversation section**: {qa_guidance} covering ALL major topics from the transcript
-- **Answer depth**: {answer_guidance} - develop each answer fully, don't truncate
-- **Coverage**: Extract the FULL richness of the conversation, not just highlights
+This is a {length_tier} depth document. You MUST produce substantial content:
 
-**DO NOT produce a summary or outline.** This should feel like reading a complete interview, not cliff notes.
-Each answer should capture the speaker's full thought, including examples and nuances they provided.
+| Section | MINIMUM Required |
+|---------|------------------|
+| Key Ideas | {key_ideas_count} bullet points (each with 2-3 sentence explanation + quote) |
+| The Conversation | **{qa_guidance}** - this is NOT optional |
+| Each Answer | {answer_guidance} - FULLY develop each response |
+
+### Why This Matters
+- A short summary is UNACCEPTABLE - the user is paying for comprehensive coverage
+- Every major topic in the transcript MUST have its own Q&A section
+- Answers must include the speaker's examples, anecdotes, and nuances - not just main points
+
+### Quality Check Before Finishing
+Before completing, verify you have:
+1. At least {key_ideas_count.split('-')[0]} Key Ideas with inline quotes
+2. At least {qa_guidance.split('-')[0].split()[0]} Q&A exchanges in The Conversation
+3. Multi-paragraph answers that capture full context
+
+**If your output is under {target_words // 2:,} words, you have NOT followed instructions.**
 """
 
-    return f"""{INTERVIEW_GROUNDED_SYSTEM_PROMPT}
-{length_guidance}
+    return f"""{length_guidance}
+
+---
+
+{INTERVIEW_GROUNDED_SYSTEM_PROMPT}
+
 ## Book Context
 
 - **Book title (USE THIS AS H1)**: "{book_title}"
@@ -887,7 +904,11 @@ Each answer should capture the speaker's full thought, including examples and nu
 **START YOUR OUTPUT WITH**: # {book_title}
 
 All quotes should be from {speaker_name} unless otherwise indicated.
-Use {speaker_name}'s name naturally in the text for attribution."""
+Use {speaker_name}'s name naturally in the text for attribution.
+
+---
+
+**REMINDER: Your output MUST be at least {target_words:,} words with {qa_guidance}. Do not stop early.**"""
 
 
 def build_interview_grounded_user_prompt(
@@ -951,6 +972,159 @@ def build_interview_grounded_user_prompt(
         f"- Do NOT invent {speaker_name}'s biography",
         "",
         "Begin generating the ebook:",
+    ])
+
+    return "\n".join(parts)
+
+
+# ==============================================================================
+# Full Transcript Mode (Option A - for maximizing grounded content)
+# ==============================================================================
+
+FULL_TRANSCRIPT_SYSTEM_PROMPT = """You are transforming an interview transcript into an ebook.
+
+## Your Task
+
+Create an ebook with TWO parts:
+
+### Part 1: Key Ideas (Grounded)
+A summary of 8-12 bullet points capturing the speaker's most important ideas.
+Each bullet MUST include an inline quote (verbatim from transcript) as evidence.
+
+Format each bullet as:
+- **[Idea label]**: "[exact quote from transcript]"
+
+### Part 2: The Full Conversation
+The COMPLETE interview transcript, cleaned and formatted for readability.
+
+**CRITICAL**: Include ALL questions and answers from the transcript. Do not skip or summarize.
+
+Cleaning rules:
+- Remove filler words (um, uh, you know, like)
+- Fix obvious grammatical errors
+- Normalize punctuation
+- Keep speaker attributions clear (Host:, Speaker Name:, or similar)
+- Organize into topic sections with ### headers where natural breaks occur
+- Keep the FULL content of each answer - do not truncate
+
+## Output Structure
+
+```
+# [Book Title]
+
+## Key Ideas (Grounded)
+
+- **[Idea]**: "[quote]"
+- **[Idea]**: "[quote]"
+...
+
+## The Conversation
+
+### [Topic 1]
+
+**Host:** [Question]
+
+**[Speaker]:** [Full answer, cleaned but complete]
+
+**Host:** [Question]
+
+**[Speaker]:** [Full answer, cleaned but complete]
+
+### [Topic 2]
+...
+```
+
+## Rules
+- Include EVERY Q&A exchange from the transcript
+- Do NOT summarize answers - include full content
+- Do NOT add information not in the transcript
+- Do NOT add "Key Takeaways", "Action Steps", or how-to content
+"""
+
+
+def build_full_transcript_system_prompt(
+    book_title: str,
+    speaker_name: str,
+) -> str:
+    """Build system prompt for full transcript mode.
+
+    This mode includes Key Ideas + the complete cleaned transcript,
+    maximizing grounded content when target length exceeds source.
+
+    Args:
+        book_title: Title of the ebook.
+        speaker_name: Name of the interview subject/speaker.
+
+    Returns:
+        Formatted system prompt string.
+    """
+    return f"""{FULL_TRANSCRIPT_SYSTEM_PROMPT}
+
+## Book Context
+
+- **Book title**: "{book_title}"
+- Primary speaker: {speaker_name}
+
+**START YOUR OUTPUT WITH**: # {book_title}
+
+All quotes should be from {speaker_name} unless otherwise indicated."""
+
+
+def build_full_transcript_user_prompt(
+    transcript: str,
+    speaker_name: str,
+    evidence_claims: list[dict],
+) -> str:
+    """Build user prompt for full transcript mode.
+
+    Args:
+        transcript: Full transcript text.
+        speaker_name: Name of the speaker.
+        evidence_claims: List of extracted claims for Key Ideas.
+
+    Returns:
+        Formatted user prompt string.
+    """
+    parts = [
+        "## Source Transcript (INCLUDE ALL OF THIS)",
+        "",
+        "Clean and format the ENTIRE transcript below. Do not skip any Q&A exchanges.",
+        "",
+        "```",
+        transcript,
+        "```",
+        "",
+        "## Evidence Map (for Key Ideas section)",
+        "",
+        "Use these verified claims for the Key Ideas bullets:",
+        "",
+    ]
+
+    # Include evidence claims with their quotes
+    for i, claim in enumerate(evidence_claims[:12], 1):
+        claim_text = claim.get("claim", "")
+        parts.append(f"{i}. **{claim_text}**")
+        for quote in claim.get("support", [])[:1]:
+            quote_text = quote.get("quote", "")
+            if quote_text:
+                words = quote_text.split()
+                if len(words) > 40:
+                    quote_text = " ".join(words[:40]) + "..."
+                parts.append(f'   - Quote: "{quote_text}"')
+        parts.append("")
+
+    parts.extend([
+        "## Instructions",
+        "",
+        f"Generate the ebook about this conversation with {speaker_name}.",
+        "",
+        "1. Create **Key Ideas (Grounded)** section with 8-12 bullets from the Evidence Map",
+        "2. Create **The Conversation** section with the FULL cleaned transcript",
+        "",
+        "**IMPORTANT**: The Conversation must include EVERY question and answer.",
+        "Do not summarize or skip content. Clean it, format it, but keep it complete.",
+        "",
+        "Begin:",
     ])
 
     return "\n".join(parts)

@@ -65,6 +65,9 @@ from .prompts import (
     # P0: Interview grounded single-pass generation
     build_interview_grounded_system_prompt,
     build_interview_grounded_user_prompt,
+    # Full transcript mode (Option A)
+    build_full_transcript_system_prompt,
+    build_full_transcript_user_prompt,
 )
 from .evidence_service import (
     generate_evidence_map,
@@ -84,7 +87,7 @@ logger = logging.getLogger(__name__)
 
 # Default LLM models
 PLANNING_MODEL = "gpt-4o-mini"  # Faster, cheaper for structured planning
-CHAPTER_MODEL = "gpt-4o-mini"   # Could use gpt-4o for higher quality
+CHAPTER_MODEL = "gpt-4o"   # Using gpt-4o for better instruction following
 
 # Best-of-N candidate selection for interview mode
 # When enabled, generates multiple candidates and picks the best based on scoring
@@ -866,6 +869,23 @@ async def _generate_draft_task(
         else:
             total_target_words = TOTAL_LENGTH_WORD_TARGETS.get(total_length_preset, 5000)
 
+        # Feasibility Guard: Check if target exceeds what's possible with strict grounding
+        transcript_word_count = len(request.transcript.split())
+        max_grounded_words = int(transcript_word_count * 1.2)  # ~20% overhead for structure/formatting
+        use_full_transcript_mode = False
+
+        if strict_grounded and total_target_words > max_grounded_words:
+            feasibility_warning = (
+                f"Target length ({total_target_words:,} words) exceeds transcript source "
+                f"({transcript_word_count:,} words). Switching to Full Transcript mode "
+                f"to maximize grounded content."
+            )
+            constraint_warnings.append(feasibility_warning)
+            logger.info(f"Job {job_id}: {feasibility_warning}")
+            use_full_transcript_mode = True
+
+        logger.info(f"Job {job_id}: transcript={transcript_word_count} words, target={total_target_words} words, full_transcript_mode={use_full_transcript_mode}")
+
         # Compute words per chapter (for chapter-by-chapter mode)
         words_per_chapter = compute_words_per_chapter(
             total_length_preset,
@@ -886,7 +906,6 @@ async def _generate_draft_task(
 
         if use_interview_single_pass:
             # Single-pass interview generation (P0: Key Ideas + Conversation)
-            logger.info(f"Job {job_id}: Using single-pass interview generation")
             await update_job(job_id, current_chapter=1, total_chapters=1)
 
             # Title guardrail: prevent generic titles like "Interview"
@@ -896,137 +915,160 @@ async def _generate_draft_task(
                 transcript=request.transcript,
             )
 
-            # Extract definitional candidates BEFORE generation for coverage check
-            definitional_candidates = extract_definitional_candidates(request.transcript)
-            if definitional_candidates:
-                logger.info(f"Job {job_id}: Found {len(definitional_candidates)} definitional candidates")
-
-            # Determine forced candidates based on coverage requirements
-            forced_candidates_for_generation = None
-
-            # Best-of-N candidate selection
-            # Use request param, capped by server-side max
-            candidate_count = min(request.candidate_count, INTERVIEW_CANDIDATE_COUNT_MAX)
-            runner_up_data = None  # Store runner-up for debugging
-
-            if candidate_count > 1:
-                logger.info(f"Job {job_id}: Generating {candidate_count} candidates for best-of-N selection")
-
-                candidates = []
-                for i in range(candidate_count):
-                    markdown, score = await _generate_and_score_candidate(
-                        transcript=request.transcript,
-                        book_title=interview_book_title,
-                        evidence_map=evidence_map,
-                        forced_candidates=forced_candidates_for_generation,
-                        candidate_num=i + 1,
-                        target_words=total_target_words,
-                    )
-                    candidates.append((markdown, score))
-
-                # Sort by score (highest first)
-                candidates.sort(key=lambda x: x[1]["total"], reverse=True)
-
-                # Pick the best
-                final_markdown, best_score = candidates[0]
-                logger.info(
-                    f"Job {job_id}: Selected candidate 1 with score {best_score['total']:.0f}"
-                )
-
-                # Store runner-up for debugging (if we have more than one)
-                if len(candidates) > 1:
-                    runner_up_markdown, runner_up_score = candidates[1]
-                    runner_up_data = {
-                        "score": runner_up_score,
-                        "markdown_preview": runner_up_markdown[:500] + "..." if len(runner_up_markdown) > 500 else runner_up_markdown,
-                    }
-                    logger.info(
-                        f"Job {job_id}: Runner-up score: {runner_up_score['total']:.0f} "
-                        f"(diff: {best_score['total'] - runner_up_score['total']:.0f})"
-                    )
-
-            else:
-                # Single candidate (default behavior)
-                final_markdown = await generate_interview_single_pass(
+            # Check if we should use full transcript mode (Option A)
+            if use_full_transcript_mode:
+                logger.info(f"Job {job_id}: Using FULL TRANSCRIPT mode (target exceeds source)")
+                final_markdown = await generate_full_transcript_interview(
                     transcript=request.transcript,
                     book_title=interview_book_title,
                     evidence_map=evidence_map,
-                    target_words=total_target_words,
                 )
-                # Clean up any trailing punctuation in H1 title
+                # Apply post-processing
                 final_markdown = _clean_markdown_title(final_markdown)
+                final_markdown = _fix_interview_title(final_markdown, request.transcript)
+                final_markdown = postprocess_interview_markdown(final_markdown, source_url=None)
 
-            # Key Ideas Coverage Guard: Check if core framework is surfaced
-            if definitional_candidates:
-                key_ideas_text = _extract_key_ideas_section(final_markdown)
-                coverage = check_key_ideas_coverage(key_ideas_text, definitional_candidates)
+                # Update constraint warnings
+                if constraint_warnings:
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
 
-                if not coverage["covered"]:
-                    logger.warning(
-                        f"Job {job_id}: Key Ideas missing definitional coverage, re-running with forced candidates"
+                chapters_completed = [final_markdown]
+
+            else:
+                # Standard single-pass generation (curated excerpt mode)
+                logger.info(f"Job {job_id}: Using single-pass interview generation (curated mode)")
+
+                # Extract definitional candidates BEFORE generation for coverage check
+                definitional_candidates = extract_definitional_candidates(request.transcript)
+                if definitional_candidates:
+                    logger.info(f"Job {job_id}: Found {len(definitional_candidates)} definitional candidates")
+
+                # Determine forced candidates based on coverage requirements
+                forced_candidates_for_generation = None
+
+                # Best-of-N candidate selection
+                # Use request param, capped by server-side max
+                candidate_count = min(request.candidate_count, INTERVIEW_CANDIDATE_COUNT_MAX)
+                runner_up_data = None  # Store runner-up for debugging
+
+                if candidate_count > 1:
+                    logger.info(f"Job {job_id}: Generating {candidate_count} candidates for best-of-N selection")
+
+                    candidates = []
+                    for i in range(candidate_count):
+                        markdown, score = await _generate_and_score_candidate(
+                            transcript=request.transcript,
+                            book_title=interview_book_title,
+                            evidence_map=evidence_map,
+                            forced_candidates=forced_candidates_for_generation,
+                            candidate_num=i + 1,
+                            target_words=total_target_words,
+                        )
+                        candidates.append((markdown, score))
+
+                    # Sort by score (highest first)
+                    candidates.sort(key=lambda x: x[1]["total"], reverse=True)
+
+                    # Pick the best
+                    final_markdown, best_score = candidates[0]
+                    logger.info(
+                        f"Job {job_id}: Selected candidate 1 with score {best_score['total']:.0f}"
                     )
-                    # Re-run with forced candidates (single pass, not best-of-N)
+
+                    # Store runner-up for debugging (if we have more than one)
+                    if len(candidates) > 1:
+                        runner_up_markdown, runner_up_score = candidates[1]
+                        runner_up_data = {
+                            "score": runner_up_score,
+                            "markdown_preview": runner_up_markdown[:500] + "..." if len(runner_up_markdown) > 500 else runner_up_markdown,
+                        }
+                        logger.info(
+                            f"Job {job_id}: Runner-up score: {runner_up_score['total']:.0f} "
+                            f"(diff: {best_score['total'] - runner_up_score['total']:.0f})"
+                        )
+
+                else:
+                    # Single candidate (default behavior)
                     final_markdown = await generate_interview_single_pass(
                         transcript=request.transcript,
                         book_title=interview_book_title,
                         evidence_map=evidence_map,
-                        forced_candidates=coverage["missing_candidates"],
                         target_words=total_target_words,
                     )
                     # Clean up any trailing punctuation in H1 title
                     final_markdown = _clean_markdown_title(final_markdown)
-                    constraint_warnings.append(
-                        "Key Ideas re-generated to include core framework definitions"
+
+                # Key Ideas Coverage Guard: Check if core framework is surfaced
+                if definitional_candidates:
+                    key_ideas_text = _extract_key_ideas_section(final_markdown)
+                    coverage = check_key_ideas_coverage(key_ideas_text, definitional_candidates)
+
+                    if not coverage["covered"]:
+                        logger.warning(
+                            f"Job {job_id}: Key Ideas missing definitional coverage, re-running with forced candidates"
+                        )
+                        # Re-run with forced candidates (single pass, not best-of-N)
+                        final_markdown = await generate_interview_single_pass(
+                            transcript=request.transcript,
+                            book_title=interview_book_title,
+                            evidence_map=evidence_map,
+                            forced_candidates=coverage["missing_candidates"],
+                            target_words=total_target_words,
+                        )
+                        # Clean up any trailing punctuation in H1 title
+                        final_markdown = _clean_markdown_title(final_markdown)
+                        constraint_warnings.append(
+                            "Key Ideas re-generated to include core framework definitions"
+                        )
+                    else:
+                        logger.info(
+                            f"Job {job_id}: Key Ideas coverage check passed "
+                            f"(matched: {coverage['matched_candidate']['keyword'] if coverage['matched_candidate'] else 'N/A'})"
+                        )
+
+                # Fix title format: "# The Enlightenment" -> "# David Deutsch on *The Beginning of Infinity*"
+                final_markdown = _fix_interview_title(final_markdown, request.transcript)
+
+                # Post-process for structure polish (heading hierarchy, metadata, Thank you)
+                # Note: source_url could come from project metadata in future
+                final_markdown = postprocess_interview_markdown(final_markdown, source_url=None)
+
+                # Quote validation checks
+                key_ideas_text = _extract_key_ideas_section(final_markdown)
+
+                # Check for fabricated quotes (not in transcript)
+                quote_validation = verify_key_ideas_quotes(key_ideas_text, request.transcript)
+                if not quote_validation["valid"]:
+                    logger.warning(
+                        f"Job {job_id}: {len(quote_validation['invalid_quotes'])} potentially invalid quotes in Key Ideas"
                     )
-                else:
-                    logger.info(
-                        f"Job {job_id}: Key Ideas coverage check passed "
-                        f"(matched: {coverage['matched_candidate']['keyword'] if coverage['matched_candidate'] else 'N/A'})"
-                    )
+                    for invalid in quote_validation["invalid_quotes"][:3]:
+                        constraint_warnings.append(
+                            f"Quote issue: {invalid['reason'][:50]}"
+                        )
 
-            # Fix title format: "# The Enlightenment" -> "# David Deutsch on *The Beginning of Infinity*"
-            final_markdown = _fix_interview_title(final_markdown, request.transcript)
+                # Check for truncated quotes
+                truncated = check_truncated_quotes(key_ideas_text)
+                if truncated:
+                    logger.warning(f"Job {job_id}: {len(truncated)} truncated quotes in Key Ideas")
+                    for issue in truncated[:2]:
+                        constraint_warnings.append(
+                            f"Truncated quote: ...{issue['quote'][-30:]}"
+                        )
 
-            # Post-process for structure polish (heading hierarchy, metadata, Thank you)
-            # Note: source_url could come from project metadata in future
-            final_markdown = postprocess_interview_markdown(final_markdown, source_url=None)
+                # Check for interview mode violations (pass transcript to avoid false positives)
+                violations = check_interview_constraints(final_markdown, transcript=request.transcript)
+                if violations:
+                    logger.warning(f"Job {job_id}: {len(violations)} interview mode violations in output")
+                    constraint_warnings.extend([
+                        f"{v['matched_text'][:50]}..." for v in violations[:5]
+                    ])
 
-            # Quote validation checks
-            key_ideas_text = _extract_key_ideas_section(final_markdown)
+                # Update job with any constraint warnings
+                if constraint_warnings:
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
 
-            # Check for fabricated quotes (not in transcript)
-            quote_validation = verify_key_ideas_quotes(key_ideas_text, request.transcript)
-            if not quote_validation["valid"]:
-                logger.warning(
-                    f"Job {job_id}: {len(quote_validation['invalid_quotes'])} potentially invalid quotes in Key Ideas"
-                )
-                for invalid in quote_validation["invalid_quotes"][:3]:
-                    constraint_warnings.append(
-                        f"Quote issue: {invalid['reason'][:50]}"
-                    )
-
-            # Check for truncated quotes
-            truncated = check_truncated_quotes(key_ideas_text)
-            if truncated:
-                logger.warning(f"Job {job_id}: {len(truncated)} truncated quotes in Key Ideas")
-                for issue in truncated[:2]:
-                    constraint_warnings.append(
-                        f"Truncated quote: ...{issue['quote'][-30:]}"
-                    )
-
-            # Check for interview mode violations (pass transcript to avoid false positives)
-            violations = check_interview_constraints(final_markdown, transcript=request.transcript)
-            if violations:
-                logger.warning(f"Job {job_id}: {len(violations)} interview mode violations in output")
-                constraint_warnings.extend([
-                    f"{v['matched_text'][:50]}..." for v in violations[:5]
-                ])
-
-            # Update job with any constraint warnings
-            if constraint_warnings:
-                await update_job(job_id, constraint_warnings=constraint_warnings)
-
-            chapters_completed = [final_markdown]
+                chapters_completed = [final_markdown]
 
         else:
             # Standard chapter-by-chapter generation
@@ -1569,7 +1611,7 @@ async def generate_interview_single_pass(
     # Cap at model limits
     max_tokens = min(max_tokens, 16000)
 
-    logger.info(f"Interview generation: target_words={target_words}, max_tokens={max_tokens}")
+    logger.debug(f"generate_interview_single_pass: target_words={target_words}, max_tokens={max_tokens}")
 
     request = LLMRequest(
         model=CHAPTER_MODEL,
@@ -1602,6 +1644,94 @@ async def generate_interview_single_pass(
     final_markdown = f"# {book_title}\n\n{content}"
 
     logger.info(f"Generated interview single-pass: {len(content)} chars")
+    return final_markdown
+
+
+async def generate_full_transcript_interview(
+    transcript: str,
+    book_title: str,
+    evidence_map: EvidenceMap,
+) -> str:
+    """Generate interview ebook using full transcript mode (Option A).
+
+    Used when target length exceeds transcript source length.
+    Produces:
+    - ## Key Ideas (Grounded) - with inline supporting quotes
+    - ## The Conversation - COMPLETE cleaned transcript (all Q&A)
+
+    This maximizes grounded content by including the full transcript
+    rather than curating/summarizing.
+
+    Args:
+        transcript: Full transcript text.
+        book_title: Title of the ebook.
+        evidence_map: Evidence Map with extracted claims.
+
+    Returns:
+        Generated markdown with Key Ideas + Full Conversation structure.
+    """
+    client = LLMClient()
+
+    # Extract speaker name
+    speaker_name = _extract_speaker_name(transcript)
+
+    # Collect all claims for Key Ideas section
+    all_claims: list[dict] = []
+    for chapter in evidence_map.chapters:
+        for claim in chapter.claims:
+            all_claims.append(claim.model_dump())
+
+    # Sort by confidence to prioritize strongest claims
+    all_claims.sort(key=lambda c: c.get("confidence", 0), reverse=True)
+
+    # Build prompts for full transcript mode
+    system_prompt = build_full_transcript_system_prompt(
+        book_title=book_title,
+        speaker_name=speaker_name,
+    )
+
+    user_prompt = build_full_transcript_user_prompt(
+        transcript=transcript,
+        speaker_name=speaker_name,
+        evidence_claims=all_claims,
+    )
+
+    # Full transcript mode needs more tokens (entire transcript + Key Ideas)
+    # Estimate: transcript words * 1.5 (for formatting overhead) + 2000 for Key Ideas
+    transcript_words = len(transcript.split())
+    max_tokens = min(16000, int(transcript_words * 1.5) + 2000)
+
+    logger.info(f"Full transcript mode: transcript={transcript_words} words, max_tokens={max_tokens}")
+
+    request = LLMRequest(
+        model=CHAPTER_MODEL,
+        messages=[
+            ChatMessage(role="system", content=system_prompt),
+            ChatMessage(role="user", content=user_prompt),
+        ],
+        temperature=0.5,  # Lower temperature for more faithful transcription
+        max_tokens=max_tokens,
+    )
+
+    response = await client.generate(request)
+
+    # Strip any H1 heading the LLM might have generated (we add our own)
+    content = response.text.strip()
+    if content.startswith("# "):
+        lines = content.split("\n")
+        start_idx = 0
+        for i, line in enumerate(lines):
+            if line.strip() and not line.startswith("# "):
+                start_idx = i
+                break
+            elif line.startswith("# "):
+                start_idx = i + 1
+        content = "\n".join(lines[start_idx:]).strip()
+
+    # Assemble final output with proper book title
+    final_markdown = f"# {book_title}\n\n{content}"
+
+    logger.info(f"Generated full transcript interview: {len(content)} chars")
     return final_markdown
 
 
