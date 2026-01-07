@@ -941,17 +941,14 @@ def build_interview_grounded_user_prompt(
         "",
     ]
 
-    # Include evidence claims with their quotes
+    # Include evidence claims with their quotes (NO truncation - verbatim only)
     for i, claim in enumerate(evidence_claims[:15], 1):  # Limit to top 15 claims
         claim_text = claim.get("claim", "")
         parts.append(f"{i}. **{claim_text}**")
         for quote in claim.get("support", [])[:1]:  # First supporting quote
             quote_text = quote.get("quote", "")
             if quote_text:
-                # Truncate to ~40 words for inline use
-                words = quote_text.split()
-                if len(words) > 40:
-                    quote_text = " ".join(words[:40]) + "..."
+                # Keep full quote - model will select appropriate span
                 parts.append(f'   - Quote: "{quote_text}"')
         parts.append("")
 
@@ -962,11 +959,16 @@ def build_interview_grounded_user_prompt(
         "",
         "Your output MUST follow this exact structure:",
         "",
-        "1. **## Key Ideas (Grounded)** - 5-10 bullets, each with an inline quote",
-        "2. **## The Conversation** - The full interview as readable Q&A",
+        "1. **### Key Ideas (Grounded)** - 8-12 bullets, each with an inline quote",
+        "2. **### The Conversation** - The full interview as readable Q&A",
         "",
-        "Remember:",
-        "- Every Key Idea bullet needs a supporting quote (use the Evidence Map above)",
+        "**CRITICAL - Quote Rules:**",
+        "- Every Key Idea bullet MUST include a verbatim quote from the transcript",
+        "- Quotes must be EXACT contiguous spans - NO ellipses (...), NO truncation",
+        "- If a quote is too long, pick a shorter contiguous phrase that captures the idea",
+        "- Format: **[Idea label]**: \"[exact verbatim quote]\"",
+        "",
+        "Other rules:",
         "- No chapter headings like 'Chapter 1'",
         "- No 'Key Takeaways', 'Action Steps', or how-to content",
         f"- Do NOT invent {speaker_name}'s biography",
@@ -1100,16 +1102,14 @@ def build_full_transcript_user_prompt(
         "",
     ]
 
-    # Include evidence claims with their quotes
+    # Include evidence claims with their quotes (NO truncation - verbatim only)
     for i, claim in enumerate(evidence_claims[:12], 1):
         claim_text = claim.get("claim", "")
         parts.append(f"{i}. **{claim_text}**")
         for quote in claim.get("support", [])[:1]:
             quote_text = quote.get("quote", "")
             if quote_text:
-                words = quote_text.split()
-                if len(words) > 40:
-                    quote_text = " ".join(words[:40]) + "..."
+                # Keep full quote - model will select appropriate span
                 parts.append(f'   - Quote: "{quote_text}"')
         parts.append("")
 
@@ -1118,8 +1118,13 @@ def build_full_transcript_user_prompt(
         "",
         f"Generate the ebook about this conversation with {speaker_name}.",
         "",
-        "1. Create **Key Ideas (Grounded)** section with 8-12 bullets from the Evidence Map",
-        "2. Create **The Conversation** section with the FULL cleaned transcript",
+        "1. Create **### Key Ideas (Grounded)** section with 8-12 bullets from the Evidence Map",
+        "2. Create **### The Conversation** section with the FULL cleaned transcript",
+        "",
+        "**CRITICAL - Quote Rules for Key Ideas:**",
+        "- Every bullet MUST include a verbatim quote from the transcript",
+        "- Quotes must be EXACT contiguous spans - NO ellipses (...), NO truncation",
+        "- If a quote is too long, pick a shorter contiguous phrase that captures the idea",
         "",
         "**IMPORTANT**: The Conversation must include EVERY question and answer.",
         "Do not summarize or skip content. Clean it, format it, but keep it complete.",

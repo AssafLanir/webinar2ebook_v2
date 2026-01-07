@@ -915,6 +915,16 @@ async def _generate_draft_task(
                 transcript=request.transcript,
             )
 
+            # Extract definitional candidates BEFORE generation for coverage check
+            # These are the "intellectual spine" - core framework concepts that MUST be in Key Ideas
+            definitional_candidates = extract_definitional_candidates(request.transcript)
+            if definitional_candidates:
+                logger.info(f"Job {job_id}: Found {len(definitional_candidates)} definitional candidates")
+                # Log top-priority candidate for debugging
+                if definitional_candidates:
+                    top_candidate = definitional_candidates[0]
+                    logger.info(f"Job {job_id}: Top-priority candidate: '{top_candidate['keyword']}' - {top_candidate['sentence'][:80]}...")
+
             # Check if we should use full transcript mode (Option A)
             if use_full_transcript_mode:
                 logger.info(f"Job {job_id}: Using FULL TRANSCRIPT mode (target exceeds source)")
@@ -922,11 +932,35 @@ async def _generate_draft_task(
                     transcript=request.transcript,
                     book_title=interview_book_title,
                     evidence_map=evidence_map,
+                    forced_candidates=definitional_candidates[:3] if definitional_candidates else None,
                 )
                 # Apply post-processing
                 final_markdown = _clean_markdown_title(final_markdown)
                 final_markdown = _fix_interview_title(final_markdown, request.transcript)
                 final_markdown = postprocess_interview_markdown(final_markdown, source_url=None)
+
+                # Coverage Guard for Full Transcript mode
+                if definitional_candidates:
+                    key_ideas_text = _extract_key_ideas_section(final_markdown)
+                    coverage = check_key_ideas_coverage(key_ideas_text, definitional_candidates)
+
+                    if not coverage["covered"]:
+                        logger.warning(
+                            f"Job {job_id}: Full Transcript Key Ideas missing definitional coverage, re-running"
+                        )
+                        # Re-run with explicit forced candidates
+                        final_markdown = await generate_full_transcript_interview(
+                            transcript=request.transcript,
+                            book_title=interview_book_title,
+                            evidence_map=evidence_map,
+                            forced_candidates=coverage["missing_candidates"],
+                        )
+                        final_markdown = _clean_markdown_title(final_markdown)
+                        final_markdown = _fix_interview_title(final_markdown, request.transcript)
+                        final_markdown = postprocess_interview_markdown(final_markdown, source_url=None)
+                        constraint_warnings.append(
+                            "Key Ideas re-generated to include core framework definitions"
+                        )
 
                 # Update constraint warnings
                 if constraint_warnings:
@@ -937,11 +971,6 @@ async def _generate_draft_task(
             else:
                 # Standard single-pass generation (curated excerpt mode)
                 logger.info(f"Job {job_id}: Using single-pass interview generation (curated mode)")
-
-                # Extract definitional candidates BEFORE generation for coverage check
-                definitional_candidates = extract_definitional_candidates(request.transcript)
-                if definitional_candidates:
-                    logger.info(f"Job {job_id}: Found {len(definitional_candidates)} definitional candidates")
 
                 # Determine forced candidates based on coverage requirements
                 forced_candidates_for_generation = None
@@ -1651,6 +1680,7 @@ async def generate_full_transcript_interview(
     transcript: str,
     book_title: str,
     evidence_map: EvidenceMap,
+    forced_candidates: Optional[list[dict]] = None,
 ) -> str:
     """Generate interview ebook using full transcript mode (Option A).
 
@@ -1666,6 +1696,7 @@ async def generate_full_transcript_interview(
         transcript: Full transcript text.
         book_title: Title of the ebook.
         evidence_map: Evidence Map with extracted claims.
+        forced_candidates: Optional list of definitional candidates to force into Key Ideas.
 
     Returns:
         Generated markdown with Key Ideas + Full Conversation structure.
@@ -1695,6 +1726,12 @@ async def generate_full_transcript_interview(
         speaker_name=speaker_name,
         evidence_claims=all_claims,
     )
+
+    # If we have forced candidates (intellectual spine), inject them prominently
+    if forced_candidates:
+        forced_text = format_candidates_for_prompt(forced_candidates)
+        user_prompt = f"{forced_text}\n\n---\n\n{user_prompt}"
+        logger.info(f"Full transcript mode: Injecting {len(forced_candidates)} forced candidates")
 
     # Full transcript mode needs more tokens (entire transcript + Key Ideas)
     # Estimate: transcript words * 1.5 (for formatting overhead) + 2000 for Key Ideas
