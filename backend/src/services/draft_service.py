@@ -1622,6 +1622,7 @@ async def generate_interview_single_pass(
         transcript=transcript,
         speaker_name=speaker_name,
         evidence_claims=all_claims,
+        target_words=target_words,
     )
 
     # If we have forced candidates (re-run), inject them into the prompt

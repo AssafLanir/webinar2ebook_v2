@@ -915,6 +915,7 @@ def build_interview_grounded_user_prompt(
     transcript: str,
     speaker_name: str,
     evidence_claims: list[dict],
+    target_words: int = 5000,
 ) -> str:
     """Build user prompt for grounded interview generation.
 
@@ -925,10 +926,25 @@ def build_interview_grounded_user_prompt(
         transcript: Full transcript text.
         speaker_name: Name of the speaker.
         evidence_claims: List of extracted claims with supporting quotes.
+        target_words: Target word count for the output.
 
     Returns:
         Formatted user prompt string.
     """
+    # Calculate Q&A guidance based on target
+    if target_words <= 2500:
+        qa_count = "15-20"
+        answer_length = "1-2 paragraphs"
+    elif target_words <= 5000:
+        qa_count = "25-35"
+        answer_length = "2-3 paragraphs"
+    elif target_words <= 10000:
+        qa_count = "40-55"
+        answer_length = "3-4 paragraphs"
+    else:
+        qa_count = "60+"
+        answer_length = "4-5 paragraphs"
+
     parts = [
         "## Source Transcript",
         "```",
@@ -955,12 +971,18 @@ def build_interview_grounded_user_prompt(
     parts.extend([
         "## Instructions",
         "",
-        f"Generate an ebook about this conversation with {speaker_name}.",
+        f"Generate a **{target_words:,} word** ebook about this conversation with {speaker_name}.",
         "",
         "Your output MUST follow this exact structure:",
         "",
         "1. **### Key Ideas (Grounded)** - 8-12 bullets, each with an inline quote",
-        "2. **### The Conversation** - The full interview as readable Q&A",
+        f"2. **### The Conversation** - **{qa_count} Q&A exchanges**, each answer {answer_length}",
+        "",
+        f"⚠️ **LENGTH REQUIREMENT: {target_words:,} words minimum** ⚠️",
+        f"- The Conversation section must have AT LEAST {qa_count.split('-')[0]} Q&A exchanges",
+        f"- Each answer must be {answer_length} - not one-sentence summaries",
+        "- Cover ALL major topics from the transcript",
+        "- Include the speaker's examples, anecdotes, and nuances",
         "",
         "**CRITICAL - Quote Rules:**",
         "- Every Key Idea bullet MUST include a verbatim quote from the transcript",
@@ -973,7 +995,7 @@ def build_interview_grounded_user_prompt(
         "- No 'Key Takeaways', 'Action Steps', or how-to content",
         f"- Do NOT invent {speaker_name}'s biography",
         "",
-        "Begin generating the ebook:",
+        f"Begin generating the {target_words:,} word ebook (minimum {qa_count.split('-')[0]} Q&A exchanges):",
     ])
 
     return "\n".join(parts)
