@@ -239,6 +239,101 @@ class TestClipDetection:
         assert "**CLIP (Stephen Hawking):** You say don't fear" not in result
         assert "**CLIP (Stephen Hawking):** But what if" not in result
 
+    def test_backward_clip_reference_not_intro(self):
+        """Backward references to clips should NOT set clip context.
+
+        Regression test: "We played the clip from Stephen Hawking" is a backward
+        reference, not an intro. Headers after it should NOT become CLIPs.
+        """
+        markdown = """### We played the clip from Stephen Hawking. He talked about survival genes.
+
+**GUEST:** The idea of an aggression gene is a misunderstanding.
+
+### But our wars just got bigger after. Our wars just got larger, more deadly.
+
+**GUEST:** If you think about the kind of things built into our genes...
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # The backward reference should stay as header
+        assert "### We played the clip from Stephen Hawking" in result
+        # The next header should NOT become a CLIP (no clip context from backward ref)
+        assert "### But our wars just got bigger" in result
+        assert "**CLIP (Stephen Hawking):** But our wars" not in result
+
+
+class TestHostInterjections:
+    """Test that short HOST interjections are detected and converted to headers."""
+
+    def test_short_question_becomes_header(self):
+        """Short questions labeled as GUEST should become headers."""
+        markdown = """**GUEST:** The avoidance of hubris is what kept us suffering.
+
+**GUEST:** But what about the environment?
+
+**GUEST:** Well, I think that is not comparing like with like.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # The short question should become a header
+        assert "### But what about the environment?" in result
+        # Long answers should stay as GUEST
+        assert "**GUEST:** The avoidance of hubris" in result
+        assert "**GUEST:** Well, I think that is not comparing" in result
+
+    def test_short_but_pushback_becomes_header(self):
+        """Very short 'But...' pushback should become headers."""
+        markdown = """**GUEST:** Yes, that is because we have to understand universality.
+
+**GUEST:** But our wars got bigger.
+
+**GUEST:** If you think about the kind of things built into our genes...
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Very short "But" pushback = host
+        assert "### But our wars got bigger." in result
+        # Regular GUEST stays
+        assert "**GUEST:** Yes, that is because" in result
+
+    def test_addressing_guest_becomes_header(self):
+        """Lines addressing the guest directly should become headers."""
+        markdown = """**GUEST:** Hi, I'm Dana.
+
+**GUEST:** Professor Deutsch, what do you say to that?
+
+**GUEST:** The avoidance of hubris is the thing that kept us suffering.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Addressing guest = host
+        assert "### Professor Deutsch, what do you say to that?" in result
+        # Others stay as GUEST
+        assert "**GUEST:** Hi, I'm Dana" in result
+
+    def test_long_response_stays_guest(self):
+        """Long responses should stay as GUEST even with host-like patterns."""
+        markdown = """**GUEST:** But the environment certainly looked better 50 years ago than it does today, and many species are going extinct because of human activity.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Long response stays GUEST (even though starts with "But")
+        assert "**GUEST:** But the environment certainly" in result
+        assert "### But the environment" not in result
+
+    def test_you_mean_clarification_becomes_header(self):
+        """Short 'You mean X' clarifications should become headers."""
+        markdown = """**GUEST:** There can only be ones that have made more progress.
+
+**GUEST:** You mean knowledge makers?
+
+**GUEST:** Yes, broadly, exactly.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Short "You mean" = host
+        assert "### You mean knowledge makers?" in result
+
 
 class TestEdgeCases:
     """Test edge cases and safety."""

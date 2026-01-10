@@ -517,8 +517,9 @@ def fix_speaker_attribution(markdown: str) -> str:
 
     Applies deterministic fixes:
     1. Caller detection and persistence until explicit Deutsch handoff
-    2. CLIP detection for external audio/video clips
-    3. Header sanity: demote non-question headers to text
+    2. Header sanity: demote non-question headers to text
+    3. CLIP detection for external audio/video clips
+    4. HOST detection for short interjections mislabeled as GUEST
 
     Args:
         markdown: Interview markdown with potentially wrong speaker labels.
@@ -528,7 +529,7 @@ def fix_speaker_attribution(markdown: str) -> str:
     """
     import re
 
-    # First pass: fix speaker labels
+    # First pass: fix speaker labels (CALLER detection)
     markdown = _fix_speaker_labels(markdown)
 
     # Second pass: fix malformed headers (non-? headers that should be text)
@@ -536,6 +537,9 @@ def fix_speaker_attribution(markdown: str) -> str:
 
     # Third pass: detect and label clips
     markdown = _fix_clip_headers(markdown)
+
+    # Fourth pass: detect HOST interjections mislabeled as GUEST
+    markdown = _fix_host_interjections(markdown)
 
     return markdown
 
@@ -732,8 +736,8 @@ def _fix_clip_headers(markdown: str) -> str:
     """Convert clip content to CLIP labels.
 
     When a header introduces a clip (mentions Carl Sagan, Stephen Hawking, etc.),
-    the following header(s) that don't end with ? become CLIP labels.
-    Clip context ends when we encounter a question or a new topic.
+    ONLY the immediate next non-? header becomes a CLIP label.
+    No persistence - clip context is used once then reset.
 
     IMPORTANT: Only headers AFTER a clip intro become CLIPs.
     Headers that just mention a speaker name (e.g., "Stephen Hawking says...")
@@ -743,21 +747,26 @@ def _fix_clip_headers(markdown: str) -> str:
 
     lines = markdown.split('\n')
     result_lines = []
-    in_clip_context = False
-    clip_speaker = None
+    clip_speaker_for_next = None  # Only applies to the IMMEDIATE next header
 
-    # Phrases that indicate a clip intro (host introducing an audio/video clip)
+    # Phrases that indicate a clip intro (host ABOUT TO play a clip)
+    # Must be forward-looking, not backward references like "we played"
     INTRO_PHRASES = [
         "here's", "here is", "let's hear", "here he", "here she",
-        "listen to", "we'll hear", "we played", "played the clip",
-        "physicist", "author", "series", "cosmos", "speaks at",
-        "speaking at", "in the", "from the", "warning about",
+        "listen to", "we'll hear", "speaks at", "speaking at",
+        "warning about", "in the cosmos", "in the series",
+    ]
+
+    # Backward references - host referring to a PAST clip, not introducing one
+    BACKWARD_PHRASES = [
+        "we played", "played the clip", "the clip from", "that clip",
     ]
 
     for i, line in enumerate(lines):
         # Only process ### headers
         if line.startswith('### '):
             header_text = line[4:].strip()
+            header_lower = header_text.lower()
 
             # Check if this header mentions a clip speaker
             mentioned_speaker = None
@@ -767,45 +776,112 @@ def _fix_clip_headers(markdown: str) -> str:
                     break
 
             if mentioned_speaker:
-                # Check if this is a clip INTRO (host introducing a clip)
-                is_intro = any(phrase in header_text.lower() for phrase in INTRO_PHRASES)
+                # Check for backward references first - these are NOT intros
+                is_backward_ref = any(phrase in header_lower for phrase in BACKWARD_PHRASES)
+
+                if is_backward_ref:
+                    # Host referring to a past clip - NOT an intro
+                    clip_speaker_for_next = None
+                    result_lines.append(line)
+                    continue
+
+                # Check if this is a clip INTRO (host about to play a clip)
+                is_intro = any(phrase in header_lower for phrase in INTRO_PHRASES)
 
                 if is_intro:
-                    # This is the intro - set context for next header(s)
-                    in_clip_context = True
-                    clip_speaker = mentioned_speaker
+                    # This is the intro - next non-? header is clip content
+                    clip_speaker_for_next = mentioned_speaker
                     result_lines.append(line)
                     continue
                 else:
                     # Just mentions the speaker but NOT an intro
-                    # This is the host commenting (e.g., "Stephen Hawking says fear them")
+                    # (e.g., "Stephen Hawking says fear them")
                     # Do NOT convert to CLIP - leave as header
-                    # Also ends any active clip context
-                    in_clip_context = False
-                    clip_speaker = None
+                    clip_speaker_for_next = None
                     result_lines.append(line)
                     continue
 
-            # If we're in clip context (after a clip intro), check if this is clip content
-            if in_clip_context and clip_speaker:
-                # Questions end clip context
+            # If we have a pending clip speaker from previous intro
+            if clip_speaker_for_next:
+                # Questions are NOT clip content - reset
                 if header_text.endswith('?'):
-                    in_clip_context = False
-                    clip_speaker = None
+                    clip_speaker_for_next = None
                     result_lines.append(line)
                     continue
 
                 # Non-question header after intro = clip content
                 # But not if it mentions Deutsch (that's back to the interview)
-                if 'deutsch' not in header_text.lower():
-                    result_lines.append(f'**CLIP ({clip_speaker}):** {header_text}')
-                    in_clip_context = False
-                    clip_speaker = None
+                if 'deutsch' not in header_lower:
+                    result_lines.append(f'**CLIP ({clip_speaker_for_next}):** {header_text}')
+                    clip_speaker_for_next = None  # Used once, reset immediately
                     continue
                 else:
                     # Mentions Deutsch = back to interview
-                    in_clip_context = False
-                    clip_speaker = None
+                    clip_speaker_for_next = None
+
+        result_lines.append(line)
+
+    return '\n'.join(result_lines)
+
+
+def _fix_host_interjections(markdown: str) -> str:
+    """Convert short GUEST interjections that are actually HOST to ### headers.
+
+    The LLM sometimes mislabels short host comments as GUEST. These are typically:
+    - Very short (< 15 words)
+    - Questions (end with ?)
+    - Pushback/clarification that's clearly conversational
+
+    We're conservative here - better to leave a host comment as GUEST than
+    to wrongly convert a guest answer to a header.
+    """
+    import re
+
+    lines = markdown.split('\n')
+    result_lines = []
+
+    # Maximum word count for a host interjection (very conservative)
+    MAX_HOST_WORDS = 15
+
+    for line in lines:
+        # Check if this is a GUEST line (not CALLER or CLIP)
+        guest_match = re.match(r'^\*\*GUEST:\*\*\s*(.*)$', line)
+        if guest_match:
+            content = guest_match.group(1)
+            word_count = len(content.split())
+
+            # Only consider very short responses
+            if word_count <= MAX_HOST_WORDS:
+                is_likely_host = False
+
+                # Rule 1: Short questions are almost always host
+                if content.rstrip().endswith('?'):
+                    is_likely_host = True
+
+                # Rule 2: Very short pushback (< 10 words) starting with "But"
+                elif word_count < 10 and re.match(r'^But\s+', content):
+                    is_likely_host = True
+
+                # Rule 3: Addressing the guest directly at start
+                elif re.match(r'^(?:Professor|Mr\.?|Dr\.?)\s+Deutsch', content, re.IGNORECASE):
+                    is_likely_host = True
+                elif re.match(r'^David\s+Deutsch,', content, re.IGNORECASE):
+                    is_likely_host = True
+
+                # Rule 4: Meta-comments about the conversation
+                elif re.match(r'^Maybe\s+I\s+misunderstood', content, re.IGNORECASE):
+                    is_likely_host = True
+                elif re.match(r'^If\s+I\s+(?:may|understand)', content, re.IGNORECASE):
+                    is_likely_host = True
+
+                # Rule 5: "You mean X" clarification questions (without ?)
+                elif re.match(r'^You\s+mean\s+', content, re.IGNORECASE) and word_count < 10:
+                    is_likely_host = True
+
+                if is_likely_host:
+                    # Convert back to a ### header (host question/comment)
+                    result_lines.append(f'### {content}')
+                    continue
 
         result_lines.append(line)
 
