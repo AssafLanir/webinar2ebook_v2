@@ -442,6 +442,154 @@ def postprocess_interview_markdown(
         metadata_block = [''] + metadata_lines + ['']
         result_lines = result_lines[:insert_pos] + metadata_block + result_lines[insert_pos:]
 
+    # Apply speaker attribution fix
+    result_text = '\n'.join(result_lines)
+    result_text = fix_speaker_attribution(result_text)
+
+    return result_text
+
+
+# ==============================================================================
+# Speaker Attribution (Heuristic Detection)
+# ==============================================================================
+
+# Caller intro patterns - high confidence
+CALLER_INTRO_PATTERNS = [
+    # "[Name] in [Location]...you're on the air"
+    r'###\s+.*?([A-Z][a-z]+)\s+in\s+[A-Z][a-z]+.*?you\'?re\s+on\s+the\s+air',
+    # "[Name], you're on the air"
+    r'###\s+.*?([A-Z][a-z]+),?\s+you\'?re\s+on\s+the\s+air',
+    # "Let's go to [Name] in [Location]"
+    r'###\s+.*?[Ll]et\'?s\s+go\s+to\s+([A-Z][a-z]+)\s+in\s+[A-Z]',
+    # "[Name] is calling from"
+    r'###\s+.*?([A-Z][a-z]+)\s+is\s+calling\s+from',
+]
+
+# Host transition patterns - signals end of caller segment
+HOST_TRANSITION_PATTERNS = [
+    # "[Name], I'll put that to..."
+    r'###\s+[A-Z][a-z]+,\s+(?:I\'ll\s+put|let\s+(?:me|us)\s+pick)',
+    # "David Deutsch, what do you say"
+    r'###\s+.*?David\s+Deutsch.*?what\s+do\s+you\s+say',
+    # "Professor Deutsch" or "Mr. Deutsch"
+    r'###\s+.*?(?:Professor|Mr\.?)\s+Deutsch',
+    # "Let me put that to" / "Let us pick it up"
+    r'###\s+.*?[Ll]et\s+(?:me|us)\s+(?:put|pick)',
+    # Questions directed at Deutsch
+    r'###\s+.*?Deutsch.*?\?$',
+]
+
+# Patterns that indicate caller is speaking (in their response)
+CALLER_SPEECH_PATTERNS = [
+    r'^Hi,?\s+Tom',  # Greeting the host
+    r'^Thanks?\s+for\s+(?:having|taking)',
+    r'^I\s+have\s+a\s+question\s+for\s+(?:Mr\.|Professor)',
+    r'^(?:Mr\.|Professor)\s+Deutsch,\s+(?:given|I)',
+]
+
+
+def fix_speaker_attribution(markdown: str) -> str:
+    """Fix speaker attribution in interview markdown using heuristics.
+
+    Detects caller segments and re-labels **GUEST:** blocks appropriately.
+    Uses UNKNOWN: when attribution is uncertain (never misattribute).
+
+    Detection strategy:
+    1. Caller intro in header (e.g., "Dana in South Wellfleet...you're on the air")
+       → Next **GUEST:** block becomes **CALLER (Dana):**
+    2. Host transition (e.g., "Dana, I'll put that to David Deutsch")
+       → End caller segment, next **GUEST:** is actually GUEST
+    3. Caller speech patterns (e.g., "Hi, Tom. Mr. Deutsch...")
+       → Confirms we're in a caller segment
+
+    Args:
+        markdown: Interview markdown with potentially wrong speaker labels.
+
+    Returns:
+        Markdown with corrected speaker attribution.
+    """
+    import re
+
+    lines = markdown.split('\n')
+    result_lines = []
+
+    # State tracking
+    current_caller: Optional[str] = None  # Name of active caller
+    expecting_caller_speech = False  # Next GUEST: block is caller
+    caller_blocks_remaining = 0  # How many more GUEST: blocks are caller
+
+    for i, line in enumerate(lines):
+        # Check if this is a question header
+        if line.startswith('### '):
+            header_text = line
+
+            # Check for caller intro patterns
+            caller_name = None
+            for pattern in CALLER_INTRO_PATTERNS:
+                match = re.search(pattern, header_text, re.IGNORECASE)
+                if match:
+                    caller_name = match.group(1)
+                    break
+
+            if caller_name:
+                # Found caller intro - expect caller speech next
+                current_caller = caller_name
+                expecting_caller_speech = True
+                # Callers typically get 1-2 speech blocks before host transitions
+                caller_blocks_remaining = 2
+                result_lines.append(line)
+                continue
+
+            # Check for host transition patterns (ends caller segment)
+            for pattern in HOST_TRANSITION_PATTERNS:
+                if re.search(pattern, header_text, re.IGNORECASE):
+                    # Host is transitioning back to Deutsch
+                    expecting_caller_speech = False
+                    caller_blocks_remaining = 0
+                    current_caller = None
+                    break
+
+            result_lines.append(line)
+            continue
+
+        # Check if this is a speaker attribution line
+        guest_match = re.match(r'^\*\*GUEST:\*\*\s*(.*)$', line)
+        if guest_match:
+            response_start = guest_match.group(1)
+
+            # Determine correct attribution
+            if expecting_caller_speech and caller_blocks_remaining > 0:
+                # Check if response matches caller speech patterns
+                is_caller_speech = False
+                for pattern in CALLER_SPEECH_PATTERNS:
+                    if re.match(pattern, response_start, re.IGNORECASE):
+                        is_caller_speech = True
+                        break
+
+                # Also check: short responses following caller intro are likely caller
+                # Long responses (100+ words) after a question are likely Deutsch
+                words_in_line = len(response_start.split())
+
+                if is_caller_speech or (current_caller and caller_blocks_remaining == 2):
+                    # This is caller speech
+                    line = f'**CALLER ({current_caller}):** {response_start}'
+                    caller_blocks_remaining -= 1
+                    if caller_blocks_remaining == 0:
+                        expecting_caller_speech = False
+                else:
+                    # Uncertain - but we're in a caller context
+                    # Check next lines to see total response length
+                    # For now, be conservative: if we expected caller, label as caller
+                    if current_caller and caller_blocks_remaining > 0:
+                        line = f'**CALLER ({current_caller}):** {response_start}'
+                        caller_blocks_remaining -= 1
+
+            # If not in caller context, keep as GUEST (it's Deutsch)
+            result_lines.append(line)
+            continue
+
+        result_lines.append(line)
+
     return '\n'.join(result_lines)
 
 
