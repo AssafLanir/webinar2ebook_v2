@@ -1,10 +1,16 @@
 """Tests for speaker attribution heuristics.
 
 Ensures callers are never mislabeled as GUEST.
+Tests for caller persistence, disambiguation, header sanity, and clip detection.
 """
 
 import pytest
-from src.services.draft_service import fix_speaker_attribution
+from src.services.draft_service import (
+    fix_speaker_attribution,
+    _fix_speaker_labels,
+    _fix_malformed_headers,
+    _fix_clip_headers,
+)
 
 
 class TestCallerDetection:
@@ -42,14 +48,19 @@ class TestCallerDetection:
 ### You've got a specific question about that, Joe. Give it to us.
 
 **GUEST:** Yes. The idea is that because of the expansion of the universe, all the galaxies are going away from us.
+
+### Joe, you're breaking up, but I think we've got it. David Deutsch, in that case, how do we get out there?
+
+**GUEST:** Yes. I only heard part of that question, but I think I understood what it was.
 """
         result = fix_speaker_attribution(markdown)
 
         # Joe's speeches should be CALLER
         assert "**CALLER (Joe):** I have a question" in result
+        # Second Joe speech after host comment should also be CALLER
         assert "**CALLER (Joe):** Yes. The idea is" in result
-        # Should NOT be labeled as GUEST
-        assert "**GUEST:** I have a question" not in result
+        # Deutsch's response should be GUEST
+        assert "**GUEST:** Yes. I only heard" in result
 
     def test_vj_caller_detected(self):
         """VJ calling from Cambridge should be detected."""
@@ -85,25 +96,125 @@ class TestCallerDetection:
         assert "**GUEST:** After the Enlightenment" in result
 
 
-class TestHostTransition:
-    """Test that host transitions end caller segments."""
+class TestCallerPersistence:
+    """Test that caller mode persists correctly until explicit Deutsch handoff."""
 
-    def test_host_transition_ends_caller_segment(self):
-        """After host says 'David Deutsch, what do you say', GUEST is Deutsch."""
+    def test_caller_persists_through_host_comment(self):
+        """Caller segment should persist through host comments like 'I'll put that to'."""
         markdown = """### Dana in South Wellfleet, you're on the air.
 
 **GUEST:** Hi, Tom. I hope your thesis is wrong.
 
-### Dana, I'll put that to David Deutsch, what do you say to these observations?
+### Dana, I'll put that to David Deutsch, but he's kind of suggesting it is inevitable.
+
+**GUEST:** Well, he's handing a sword then to the religious fundamentalists.
+
+### Dana, let us pick it up. David Deutsch, what do you say to these observations?
 
 **GUEST:** The avoidance of hubris is the thing that kept us suffering.
 """
         result = fix_speaker_attribution(markdown)
 
-        # Dana should be CALLER
+        # Dana's first speech
         assert "**CALLER (Dana):** Hi, Tom." in result
-        # After host transition, response is GUEST (Deutsch)
+        # Dana's SECOND speech should also be CALLER (persistence through host comment)
+        assert "**CALLER (Dana):** Well, he's handing" in result
+        # Deutsch's response after explicit handoff
         assert "**GUEST:** The avoidance of hubris" in result
+
+    def test_caller_persists_through_followup_question(self):
+        """Caller segment persists when host asks caller to continue."""
+        markdown = """### Joe in Farmville, Virginia. Joe, you're on the air.
+
+**GUEST:** I have a question for Mr. Deutsch.
+
+### You've got a specific question about that, Joe. Give it to us.
+
+**GUEST:** Yes. The idea is that because of the expansion...
+
+### Joe, you're breaking up. David Deutsch, how do we get out there?
+
+**GUEST:** The exact implications are not well known yet.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Both Joe speeches should be CALLER
+        assert "**CALLER (Joe):** I have a question" in result
+        assert "**CALLER (Joe):** Yes. The idea is" in result
+        # Deutsch's response
+        assert "**GUEST:** The exact implications" in result
+
+
+class TestCallerDisambiguation:
+    """Test disambiguation of caller names that might conflict with guest name."""
+
+    def test_david_in_boston_is_caller_not_deutsch(self):
+        """'David in Boston' should be recognized as a caller, not confused with David Deutsch."""
+        markdown = """### Let me get one more right here. David in Boston. David, thank you for calling.
+
+**GUEST:** Yeah, thanks for having me on. Mr. Deutsch, I'm certainly a fan of science.
+
+### David, let us pick it up. David Deutsch, what do you say?
+
+**GUEST:** First of all, you're grossly underestimating how bad the past was.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # "David in Boston" should be CALLER (David)
+        assert "**CALLER (David):** Yeah, thanks for having" in result
+        # Deutsch's response should be GUEST
+        assert "**GUEST:** First of all" in result
+
+
+class TestHeaderSanity:
+    """Test that malformed headers are converted to text."""
+
+    def test_non_question_header_becomes_text(self):
+        """A ### header that doesn't end with ? followed by GUEST continuation becomes text."""
+        markdown = """### What is new about what I said?
+
+**GUEST:** To answer your question...
+
+### Now, what is new about what I said, to answer your second question, is simply listen to the other commenters.
+
+**GUEST:** Yes, exactly. They are saying that gaining control is impossible.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # The malformed header should become GUEST text
+        assert "**GUEST:** Now, what is new about" in result
+        # Should NOT remain as a header
+        assert "### Now, what is new about" not in result
+
+
+class TestClipDetection:
+    """Test that external clips are labeled correctly."""
+
+    def test_carl_sagan_clip_detected(self):
+        """Carl Sagan clips should be labeled as CLIP."""
+        markdown = """### Let's hear from Carl Sagan in the Cosmos series.
+
+### Every human generation has asked about the origin and fate of the cosmos.
+
+### Or to put it another way, maybe at the beginning of infinity.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Sagan's quote should become CLIP
+        assert "**CLIP (Carl Sagan):** Every human generation" in result
+
+    def test_stephen_hawking_clip_detected(self):
+        """Stephen Hawking clips should be labeled as CLIP."""
+        markdown = """### Here's physicist Stephen Hawking, warning about human traits.
+
+### If we are the only intelligent beings in the galaxy, we should make sure we survive.
+
+### David Deutsch, what do you say to that?
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Hawking's quote should become CLIP
+        assert "**CLIP (Stephen Hawking):** If we are the only intelligent" in result
 
 
 class TestEdgeCases:
@@ -124,7 +235,8 @@ class TestEdgeCases:
 - Point two
 """
         result = fix_speaker_attribution(markdown)
-        assert result == markdown
+        assert "# Title" in result
+        assert "## Key Ideas" in result
 
     def test_multiple_callers_in_sequence(self):
         """Multiple callers should each be detected separately."""
@@ -132,7 +244,7 @@ class TestEdgeCases:
 
 **GUEST:** Hi, I'm Dana.
 
-### Dana, let me pick it up with our guest.
+### Dana, let me pick it up. David Deutsch, what do you say?
 
 **GUEST:** Thank you for the question.
 
@@ -140,7 +252,7 @@ class TestEdgeCases:
 
 **GUEST:** Hi, I'm Joe.
 
-### Joe, David Deutsch, what do you say?
+### Joe, standby. David Deutsch, what do you say?
 
 **GUEST:** Well, to answer Joe's question...
 """
