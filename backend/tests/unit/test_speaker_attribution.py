@@ -216,6 +216,29 @@ class TestClipDetection:
         # Hawking's quote should become CLIP
         assert "**CLIP (Stephen Hawking):** If we are the only intelligent" in result
 
+    def test_host_mentioning_speaker_not_clip(self):
+        """Host mentioning a clip speaker should NOT become a CLIP.
+
+        Regression test: Headers like "Stephen Hawking says fear them" are the
+        host commenting, not actual Hawking clips.
+        """
+        markdown = """### You say don't fear them. Stephen Hawking says fear them.
+
+**GUEST:** Yes, that is because we have to understand the lesson of universality.
+
+### But what if the error is, to Stephen Hawking's fear, the destruction of our planet?
+
+**GUEST:** Okay, I entirely agree with Stephen Hawking that we should hedge our bets.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # These should remain as headers, NOT become CLIPs
+        assert "### You say don't fear them. Stephen Hawking says fear them." in result
+        assert "### But what if the error is" in result
+        # Should NOT have CLIP labels for these host comments
+        assert "**CLIP (Stephen Hawking):** You say don't fear" not in result
+        assert "**CLIP (Stephen Hawking):** But what if" not in result
+
 
 class TestEdgeCases:
     """Test edge cases and safety."""

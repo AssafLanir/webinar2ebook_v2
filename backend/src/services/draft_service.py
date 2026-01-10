@@ -733,7 +733,11 @@ def _fix_clip_headers(markdown: str) -> str:
 
     When a header introduces a clip (mentions Carl Sagan, Stephen Hawking, etc.),
     the following header(s) that don't end with ? become CLIP labels.
-    Clip context ends when we encounter a question to Deutsch or a new topic.
+    Clip context ends when we encounter a question or a new topic.
+
+    IMPORTANT: Only headers AFTER a clip intro become CLIPs.
+    Headers that just mention a speaker name (e.g., "Stephen Hawking says...")
+    are NOT converted - they're just the host referencing that person.
     """
     import re
 
@@ -742,49 +746,66 @@ def _fix_clip_headers(markdown: str) -> str:
     in_clip_context = False
     clip_speaker = None
 
+    # Phrases that indicate a clip intro (host introducing an audio/video clip)
+    INTRO_PHRASES = [
+        "here's", "here is", "let's hear", "here he", "here she",
+        "listen to", "we'll hear", "we played", "played the clip",
+        "physicist", "author", "series", "cosmos", "speaks at",
+        "speaking at", "in the", "from the", "warning about",
+    ]
+
     for i, line in enumerate(lines):
-        # Check if header introduces a clip
+        # Only process ### headers
         if line.startswith('### '):
             header_text = line[4:].strip()
 
-            # Check if this introduces a clip speaker
-            matched_clip = False
+            # Check if this header mentions a clip speaker
+            mentioned_speaker = None
             for pattern, speaker_name in CLIP_PATTERNS:
                 if re.search(pattern, line, re.IGNORECASE):
-                    matched_clip = True
-                    # Check if this is the intro or the clip content itself
-                    is_intro = any(x in header_text.lower() for x in [
-                        "here's", "here is", "let's hear", "here he",
-                        "here she", "listen to", "we'll hear", "physicist",
-                        "author", "series", "cosmos"
-                    ])
-                    if is_intro:
-                        # This is the intro - set context for next header
-                        in_clip_context = True
-                        clip_speaker = speaker_name
-                        result_lines.append(line)
-                    else:
-                        # This header IS the clip content
-                        result_lines.append(f'**CLIP ({speaker_name}):** {header_text}')
-                        in_clip_context = False
-                        clip_speaker = None
+                    mentioned_speaker = speaker_name
                     break
 
-            if matched_clip:
-                continue
+            if mentioned_speaker:
+                # Check if this is a clip INTRO (host introducing a clip)
+                is_intro = any(phrase in header_text.lower() for phrase in INTRO_PHRASES)
 
-            # If we're in clip context and this is a non-question header, it's clip content
+                if is_intro:
+                    # This is the intro - set context for next header(s)
+                    in_clip_context = True
+                    clip_speaker = mentioned_speaker
+                    result_lines.append(line)
+                    continue
+                else:
+                    # Just mentions the speaker but NOT an intro
+                    # This is the host commenting (e.g., "Stephen Hawking says fear them")
+                    # Do NOT convert to CLIP - leave as header
+                    # Also ends any active clip context
+                    in_clip_context = False
+                    clip_speaker = None
+                    result_lines.append(line)
+                    continue
+
+            # If we're in clip context (after a clip intro), check if this is clip content
             if in_clip_context and clip_speaker:
-                if not header_text.endswith('?'):
-                    # Check if this looks like a quote (not a question to Deutsch)
-                    if 'deutsch' not in header_text.lower():
-                        result_lines.append(f'**CLIP ({clip_speaker}):** {header_text}')
-                        in_clip_context = False
-                        clip_speaker = None
-                        continue
-                # Question header ends clip context
-                in_clip_context = False
-                clip_speaker = None
+                # Questions end clip context
+                if header_text.endswith('?'):
+                    in_clip_context = False
+                    clip_speaker = None
+                    result_lines.append(line)
+                    continue
+
+                # Non-question header after intro = clip content
+                # But not if it mentions Deutsch (that's back to the interview)
+                if 'deutsch' not in header_text.lower():
+                    result_lines.append(f'**CLIP ({clip_speaker}):** {header_text}')
+                    in_clip_context = False
+                    clip_speaker = None
+                    continue
+                else:
+                    # Mentions Deutsch = back to interview
+                    in_clip_context = False
+                    clip_speaker = None
 
         result_lines.append(line)
 
