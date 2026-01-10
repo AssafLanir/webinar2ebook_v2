@@ -358,7 +358,7 @@ def postprocess_interview_markdown(
     """Post-process interview markdown for proper structure and polish.
 
     Applies deterministic fixes that improve "book feel" without changing content:
-    1. Fix heading hierarchy (## Key Ideas → ### Key Ideas)
+    1. Fix heading hierarchy (### Key Ideas → ## Key Ideas, ### The Conversation → ##)
     2. Add metadata block under H1 (source, format, date)
     3. Fix "Thank you" formatting (#### → *Interviewer:*)
 
@@ -387,15 +387,15 @@ def postprocess_interview_markdown(
             result_lines.append(line)
             continue
 
-        # Fix #1: Downgrade ## Key Ideas (Grounded) to ### (check BEFORE topic_heading)
-        if re.match(r'^##\s+Key Ideas', line, re.IGNORECASE):
-            line = re.sub(r'^##\s+', '### ', line)
+        # Fix #1: Ensure Key Ideas is ## (upgrade from ### if needed)
+        if re.match(r'^#{2,3}\s+Key Ideas', line, re.IGNORECASE):
+            line = re.sub(r'^#{2,3}\s+', '## ', line)
             result_lines.append(line)
             continue
 
-        # Fix #1: Downgrade ## The Conversation to ### (check BEFORE topic_heading)
-        if re.match(r'^##\s+The Conversation', line, re.IGNORECASE):
-            line = re.sub(r'^##\s+', '### ', line)
+        # Fix #1: Ensure The Conversation is ## (upgrade from ### if needed)
+        if re.match(r'^#{2,3}\s+The Conversation', line, re.IGNORECASE):
+            line = re.sub(r'^#{2,3}\s+', '## ', line)
             inside_conversation = True
             result_lines.append(line)
             continue
@@ -426,10 +426,15 @@ def postprocess_interview_markdown(
 
     # Fix #4: Insert metadata block after H1
     if include_metadata and h1_index is not None:
+        # Compute actual word count from the content
+        content_text = '\n'.join(result_lines)
+        word_count = len(content_text.split())
+
         metadata_lines = []
         if source_url:
             metadata_lines.append(f'*Source:* {source_url}')
         metadata_lines.append('*Format:* Interview')
+        metadata_lines.append(f'*Word count:* ~{word_count:,}')
         metadata_lines.append(f'*Generated:* {date.today().isoformat()}')
 
         # Insert after H1 (with blank line before and after)
