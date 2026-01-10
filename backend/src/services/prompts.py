@@ -799,26 +799,24 @@ Use the actual book title: "# {book_title}" (the title will be provided in Book 
 
 ## The Conversation
 
-Format each Q&A with speaker labels. Quote blocks are OPTIONAL - use sparingly for the most memorable moments (1-2 per major section, not after every answer).
+Format as Q&A preserving the EXACT questions and COMPLETE answers from the transcript.
 
 ```markdown
-### The Enlightenment
+### You draw an enormous line through human history at the Enlightenment and Scientific Revolution. Describe the before and after a little bit for us in broad strokes.
 
-#### What changed after the Scientific Revolution?
+**GUEST:** This line is the most important thing that's ever happened because prior to it, the world was static in terms of ideas. Things did improve, but from the point of view of any individual, the technology, the economics, the ways of life—everything they could notice about the world—would not have changed and would not have improved. After the Enlightenment, it was the exact opposite. We have learned to live with the fact that everything improves in every generation. What's more, previous ways of life become unviable as better ways of life appear. This staticity was a horrible practical joke played on the human race by nature because, for hundreds of thousands of years, we had the capacity to improve, to reduce human suffering, to increase our knowledge of the world, but almost none of that happened. Then suddenly, there was this explosion where it has happened.
 
-**David Deutsch:** This line is the most important thing that's ever happened because prior to it, the world was static in terms of ideas. Things did improve, but from the point of view of any individual, the technology, the economics, the ways of life—everything they could notice about the world—would not have changed.
+### It's not just a matter of us then going on to develop all kinds of technology from microwave ovens to high-speed cars. You say that this change introduced us or created the beginning of infinity, the title of your book. What do you mean by that?
 
-#### How does progress continue?
-
-**David Deutsch:** After the Enlightenment, it was the exact opposite. We have learned to live with the fact that everything improves in every generation.
-
-> "We have learned to live with the fact that everything improves in every generation."
-
-### Human Potential
-...
+**GUEST:** The phrase "the beginning of infinity" primarily means the universal power of explanatory knowledge. It turned out—and I didn't really plan this when I wrote the book—but it turned out that in every chapter, there were several different meanings, several different senses in which there was a beginning of infinity, which hadn't happened before: either a condition for unlimited progress or a beginning of unlimited progress or the sense in which progress can be unlimited.
 ```
 
-**IMPORTANT**: Every answer MUST start with the speaker's name in bold (e.g., "**David Deutsch:**"). Quote blocks (> "...") are highlights only - do NOT repeat every answer as a quote block.
+**CRITICAL RULES**:
+1. Use `### [EXACT question from transcript]` - copy the host's question VERBATIM, do not paraphrase
+2. Use `**GUEST:**` for ALL answers (not the speaker's name)
+3. Include the COMPLETE answer - do NOT summarize or truncate
+4. NO topic grouping headers (no "### The Enlightenment" section headers) - just Q&A pairs
+5. Quote blocks (> "...") are optional highlights only
 """
 
 
@@ -904,7 +902,14 @@ def build_interview_grounded_user_prompt(
         "Your output MUST follow this exact structure:",
         "",
         "1. **## Key Ideas (Grounded)** - 5-10 bullets, each with an inline quote",
-        "2. **## The Conversation** - The full interview as readable Q&A",
+        "2. **## The Conversation** - The COMPLETE interview as Q&A",
+        "",
+        "CRITICAL RULES FOR THE CONVERSATION SECTION:",
+        "- Use **GUEST:** for all speaker answers (not the speaker's name)",
+        "- Copy each question VERBATIM from the transcript as a ### header",
+        "- Include the COMPLETE answer - do NOT summarize, truncate, or paraphrase",
+        "- NO topic grouping headers - just direct Q&A pairs",
+        "- Include ALL Q&A exchanges from the transcript",
         "",
         "Remember:",
         "- Every Key Idea bullet needs a supporting quote (use the Evidence Map above)",
