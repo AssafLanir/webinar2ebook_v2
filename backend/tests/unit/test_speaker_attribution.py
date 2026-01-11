@@ -261,6 +261,126 @@ class TestClipDetection:
         assert "### But our wars just got bigger" in result
         assert "**CLIP (Stephen Hawking):** But our wars" not in result
 
+    def test_guest_lines_after_clip_intro_become_clip(self):
+        """GUEST lines after a clip intro should become CLIP labels.
+
+        Critical: Prevents clip quotes from being attributed to Deutsch.
+        """
+        markdown = """### Here's the late astronomer Carl Sagan in the Cosmos series.
+
+**GUEST:** Every human generation has asked about the origin and fate of the cosmos.
+
+### David Deutsch, what do you say to that?
+
+**GUEST:** I agree with Sagan's sentiment about cosmic curiosity.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Sagan's quote should become CLIP, not stay as GUEST
+        assert "**CLIP (Carl Sagan):** Every human generation" in result
+        assert "**GUEST:** Every human generation" not in result
+        # Deutsch's response after the question should stay GUEST
+        assert "**GUEST:** I agree with Sagan's" in result
+
+    def test_multiple_guest_lines_in_clip_context(self):
+        """Multiple GUEST lines after clip intro should all become CLIP."""
+        markdown = """### Here's physicist Stephen Hawking speaking at Big Think.
+
+**GUEST:** If we are the only intelligent beings in the galaxy, we should make sure we survive.
+
+**GUEST:** But we are entering an increasingly dangerous period of our history.
+
+### David Deutsch, what do you say?
+
+**GUEST:** I disagree with Hawking's pessimism.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Both Hawking lines should become CLIP
+        assert "**CLIP (Stephen Hawking):** If we are the only" in result
+        assert "**CLIP (Stephen Hawking):** But we are entering" in result
+        # Deutsch's response should stay GUEST
+        assert "**GUEST:** I disagree with Hawking's" in result
+
+    def test_clip_context_ends_at_caller(self):
+        """Clip context should end when a CALLER line is encountered."""
+        markdown = """### Here's Carl Sagan from Cosmos.
+
+**GUEST:** The cosmos is all that is or was or ever will be.
+
+### Dana in Boston, you're on the air.
+
+**CALLER (Dana):** I loved that Sagan quote.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Sagan should be CLIP
+        assert "**CLIP (Carl Sagan):** The cosmos is all" in result
+        # Caller should stay as CALLER
+        assert "**CALLER (Dana):** I loved that" in result
+
+
+class TestClipGuestRegression:
+    """Regression tests: GUEST must never contain clip speaker content."""
+
+    def test_guest_never_contains_sagan_clip_content(self):
+        """GUEST lines must not contain Carl Sagan clip quotes.
+
+        This is a semantic error - it implies Deutsch said Sagan's words.
+        """
+        markdown = """### Let's hear from Carl Sagan in Cosmos.
+
+**GUEST:** Every human generation has asked about the origin and fate of the cosmos. Ours is the first generation with a real chance of finding some of the answers.
+
+### What do you think, David Deutsch?
+
+**GUEST:** I find Sagan's optimism inspiring.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Extract all GUEST lines
+        guest_lines = [line for line in result.split('\n') if line.startswith('**GUEST:**')]
+
+        # No GUEST line should contain Sagan's famous clip quotes
+        sagan_quotes = [
+            "Every human generation has asked",
+            "origin and fate of the cosmos",
+            "edge of forever",
+        ]
+        for guest_line in guest_lines:
+            for quote in sagan_quotes:
+                assert quote not in guest_line, \
+                    f"GUEST contains Sagan quote '{quote}': {guest_line}"
+
+    def test_guest_never_contains_hawking_clip_content(self):
+        """GUEST lines must not contain Stephen Hawking clip quotes.
+
+        This is a semantic error - it implies Deutsch said Hawking's words.
+        """
+        markdown = """### Here's Stephen Hawking warning about human traits.
+
+**GUEST:** If we are the only intelligent beings in the galaxy, we should make sure we survive and continue. But we are entering an increasingly dangerous period.
+
+### David Deutsch, what do you say?
+
+**GUEST:** I agree we should hedge our bets by colonizing space.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Extract all GUEST lines
+        guest_lines = [line for line in result.split('\n') if line.startswith('**GUEST:**')]
+
+        # No GUEST line should contain Hawking's famous clip quotes
+        hawking_quotes = [
+            "only intelligent beings in the galaxy",
+            "increasingly dangerous period",
+            "selfish and aggressive instincts",
+        ]
+        for guest_line in guest_lines:
+            for quote in hawking_quotes:
+                assert quote not in guest_line, \
+                    f"GUEST contains Hawking quote '{quote}': {guest_line}"
+
 
 class TestHostInterjections:
     """Test that short HOST interjections are detected and converted to headers."""
