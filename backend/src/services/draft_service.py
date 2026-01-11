@@ -660,12 +660,40 @@ def _fix_malformed_headers(markdown: str) -> str:
     """Fix headers that should be text (non-? headers followed by GUEST continuation).
 
     Excludes host comments and clip intros from conversion.
+
+    Also detects first-person continuation markers in the header itself:
+    - "what I said", "I'm saying", "I said" → indicates Deutsch speaking, not a header
     """
     import re
 
     lines = markdown.split('\n')
     result_lines = []
     i = 0
+
+    # First-person markers that indicate the header is actually Deutsch speaking
+    # These should be converted to GUEST even without a following continuation
+    FIRST_PERSON_PATTERNS = [
+        r'\bwhat I said\b',
+        r'\bwhat I\'m saying\b',
+        r'\bwhat I am saying\b',
+        r'\bI\'m saying\b',
+        r'\bI am saying\b',
+        r'\bI said\b',
+        r'\bI think\b',
+        r'\bI believe\b',
+        r'\bI would say\b',
+        r'\bI\'d say\b',
+        r'\bI mean\b',
+        r'\bI\'ve been\b',
+        r'\bI have been\b',
+        r'\bI was\b',
+        r'\bI\'ve said\b',
+        r'\bI have said\b',
+        r'\bmy point\b',
+        r'\bmy view\b',
+        r'\bmy argument\b',
+        r'\bmy position\b',
+    ]
 
     while i < len(lines):
         line = lines[i]
@@ -690,6 +718,20 @@ def _fix_malformed_headers(markdown: str) -> str:
 
             if is_host_comment or is_clip_intro:
                 result_lines.append(line)
+                i += 1
+                continue
+
+            # Check if the header ITSELF contains first-person markers
+            # This indicates Deutsch speaking, not a host question/transition
+            is_first_person = False
+            for pattern in FIRST_PERSON_PATTERNS:
+                if re.search(pattern, header_text, re.IGNORECASE):
+                    is_first_person = True
+                    break
+
+            if is_first_person:
+                # This header is actually Deutsch speaking
+                result_lines.append(f'**GUEST:** {header_text}')
                 i += 1
                 continue
 
@@ -858,23 +900,22 @@ def _fix_clip_headers(markdown: str) -> str:
 
 
 def _fix_host_interjections(markdown: str) -> str:
-    """Convert short GUEST interjections that are actually HOST to ### headers.
+    """Convert GUEST interjections that are actually HOST to ### headers.
 
-    The LLM sometimes mislabels short host comments as GUEST. These are typically:
-    - Very short (< 15 words)
-    - Questions (end with ?)
-    - Pushback/clarification that's clearly conversational
+    The LLM sometimes mislabels host comments as GUEST. We use two tiers:
+    - STRONG patterns: Apply up to 40 words (specific phrasings)
+    - WEAK patterns: Apply up to 15 words (general patterns)
 
-    We're conservative here - better to leave a host comment as GUEST than
-    to wrongly convert a guest answer to a header.
+    Strong patterns are structural indicators that almost certainly mean HOST.
     """
     import re
 
     lines = markdown.split('\n')
     result_lines = []
 
-    # Maximum word count for a host interjection (very conservative)
-    MAX_HOST_WORDS = 15
+    # Thresholds for different pattern strengths
+    MAX_STRONG_WORDS = 40  # Strong patterns can be longer
+    MAX_WEAK_WORDS = 15    # Weak patterns need word count restriction
 
     for line in lines:
         # Check if this is a GUEST line (not CALLER or CLIP)
@@ -882,39 +923,64 @@ def _fix_host_interjections(markdown: str) -> str:
         if guest_match:
             content = guest_match.group(1)
             word_count = len(content.split())
+            is_likely_host = False
 
-            # Only consider very short responses
-            if word_count <= MAX_HOST_WORDS:
-                is_likely_host = False
+            # === STRONG PATTERNS (up to 40 words) ===
+            if word_count <= MAX_STRONG_WORDS:
 
-                # Rule 1: Short questions are almost always host
-                if content.rstrip().endswith('?'):
+                # Host transition to guest: "[Name], let us pick it up"
+                if re.search(r',\s*let\s+us\s+pick\s+it\s+up', content, re.IGNORECASE):
                     is_likely_host = True
 
-                # Rule 2: Very short pushback (< 10 words) starting with "But"
-                elif word_count < 10 and re.match(r'^But\s+', content):
+                # Host transition: "[Name], let me put that to"
+                elif re.search(r',\s*let\s+me\s+put\s+that\s+to', content, re.IGNORECASE):
                     is_likely_host = True
 
-                # Rule 3: Addressing the guest directly at start
+                # Host meta-comment: "Maybe I misunderstood you"
+                elif re.match(r'^Maybe\s+I\s+misunderstood', content, re.IGNORECASE):
+                    is_likely_host = True
+
+                # Host pushback: "Well, so you say, but"
+                elif re.match(r'^Well,?\s+so\s+you\s+say', content, re.IGNORECASE):
+                    is_likely_host = True
+
+                # Questions are almost always host (up to 40 words)
+                elif content.rstrip().endswith('?'):
+                    is_likely_host = True
+
+                # Addressing guest by name with question/transition
                 elif re.match(r'^(?:Professor|Mr\.?|Dr\.?)\s+Deutsch', content, re.IGNORECASE):
                     is_likely_host = True
                 elif re.match(r'^David\s+Deutsch,', content, re.IGNORECASE):
                     is_likely_host = True
 
-                # Rule 4: Meta-comments about the conversation
-                elif re.match(r'^Maybe\s+I\s+misunderstood', content, re.IGNORECASE):
-                    is_likely_host = True
-                elif re.match(r'^If\s+I\s+(?:may|understand)', content, re.IGNORECASE):
+                # Host addressing caller: "[Name], standby" or "[Name], let me"
+                elif re.match(r'^[A-Z][a-z]+,\s+(?:standby|let\s+me|let\s+us)', content):
                     is_likely_host = True
 
-                # Rule 5: "You mean X" clarification questions (without ?)
+            # === WEAK PATTERNS (up to 15 words only) ===
+            if not is_likely_host and word_count <= MAX_WEAK_WORDS:
+
+                # Very short pushback starting with "But" (under 10 words)
+                if word_count < 10 and re.match(r'^But\s+', content):
+                    is_likely_host = True
+
+                # "But the environment" pushback (up to 15 words)
+                elif re.match(r'^But\s+the\s+environment', content, re.IGNORECASE):
+                    is_likely_host = True
+
+                # "You mean X" clarification
                 elif re.match(r'^You\s+mean\s+', content, re.IGNORECASE) and word_count < 10:
                     is_likely_host = True
 
-                if is_likely_host:
-                    # Convert back to a ### header (host question/comment)
-                    result_lines.append(f'### {content}')
-                    continue
+                # "If I may" / "If I understand"
+                elif re.match(r'^If\s+I\s+(?:may|understand)', content, re.IGNORECASE):
+                    is_likely_host = True
+
+            if is_likely_host:
+                # Convert back to a ### header (host question/comment)
+                result_lines.append(f'### {content}')
+                continue
 
         result_lines.append(line)
 

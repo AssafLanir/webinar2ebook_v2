@@ -503,3 +503,62 @@ class TestEdgeCases:
         # Deutsch's responses should be GUEST
         assert "**GUEST:** Thank you for the question" in result
         assert "**GUEST:** Well, to answer Joe's" in result
+
+
+class TestFirstPersonContinuation:
+    """Test that headers with first-person markers are converted to GUEST."""
+
+    def test_what_i_said_becomes_guest(self):
+        """Headers with 'what I said' should become GUEST."""
+        markdown = """### Now, what is new about what I said, to answer your second question, is simply listen to the other commenters.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Should be GUEST, not a header
+        assert "**GUEST:** Now, what is new about what I said" in result
+        assert "### Now, what is new about what I said" not in result
+
+    def test_i_think_becomes_guest(self):
+        """Headers with 'I think' should become GUEST."""
+        markdown = """### Well, I think that is not comparing like with like.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        assert "**GUEST:** Well, I think that is not" in result
+        assert "### Well, I think" not in result
+
+    def test_im_saying_becomes_guest(self):
+        """Headers with 'I'm saying' should become GUEST."""
+        markdown = """### What I'm saying is that knowledge is the basis of progress.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        assert "**GUEST:** What I'm saying is that knowledge" in result
+        assert "### What I'm saying" not in result
+
+    def test_my_point_becomes_guest(self):
+        """Headers with 'my point' should become GUEST."""
+        markdown = """### My point is that optimism is the way forward.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        assert "**GUEST:** My point is that optimism" in result
+        assert "### My point" not in result
+
+    def test_question_stays_header(self):
+        """Questions should stay as headers even with first-person words."""
+        markdown = """### What do you mean by that?
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Questions should stay headers
+        assert "### What do you mean by that?" in result
+
+    def test_clip_intro_not_affected(self):
+        """Clip intros should stay as headers even if they have first-person-like patterns."""
+        markdown = """### Here's physicist Stephen Hawking on why I believe we should fear AI.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Clip intros should stay as headers
+        assert "### Here's physicist Stephen Hawking" in result
