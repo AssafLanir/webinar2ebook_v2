@@ -902,87 +902,170 @@ def _fix_clip_headers(markdown: str) -> str:
 def _fix_host_interjections(markdown: str) -> str:
     """Convert GUEST interjections that are actually HOST to ### headers.
 
-    The LLM sometimes mislabels host comments as GUEST. We use two tiers:
+    The LLM sometimes mislabels host comments as GUEST. We use three tiers:
+    - HARD patterns: Apply regardless of length (unambiguous HOST phrases)
     - STRONG patterns: Apply up to 40 words (specific phrasings)
     - WEAK patterns: Apply up to 15 words (general patterns)
 
-    Strong patterns are structural indicators that almost certainly mean HOST.
+    Additionally, we use look-ahead confirmation:
+    - If a GUEST line is followed by another GUEST starting with an affirmation
+      ("Yes,", "Exactly,", "That's right,"), the first line is likely HOST.
     """
     import re
 
     lines = markdown.split('\n')
-    result_lines = []
 
     # Thresholds for different pattern strengths
     MAX_STRONG_WORDS = 40  # Strong patterns can be longer
     MAX_WEAK_WORDS = 15    # Weak patterns need word count restriction
 
-    for line in lines:
-        # Check if this is a GUEST line (not CALLER or CLIP)
-        guest_match = re.match(r'^\*\*GUEST:\*\*\s*(.*)$', line)
-        if guest_match:
-            content = guest_match.group(1)
-            word_count = len(content.split())
-            is_likely_host = False
+    # === HARD PATTERNS (no length limit) ===
+    # These phrases are almost exclusively HOST, regardless of length
+    HARD_HOST_PATTERNS = [
+        r'^Maybe\s+I\s+misunderstood',           # Host seeking clarification
+        r'^I\'m\s+trying\s+to\s+get\s+my\s+mind\s+around',  # Host processing
+        r'^Let\s+me\s+push\s+back',              # Host challenge
+        r'^Our\s+listeners',                      # Host referencing audience
+        r'^Let\'s\s+go\s+to',                    # Host transitioning to callers
+        r'^Let\s+me\s+bring',                    # Host bringing in callers
+        r'^It\'s\s+hard\s+to\s+grapple\s+with',  # Host expressing difficulty
+        r'^I\s+didn\'t\s+think\s+simply\s+of',   # Host clarifying understanding
+    ]
 
-            # === STRONG PATTERNS (up to 40 words) ===
-            if word_count <= MAX_STRONG_WORDS:
+    # === AFFIRMATION PATTERNS for look-ahead ===
+    # If next GUEST line starts with these, previous GUEST is likely HOST
+    AFFIRMATION_PATTERNS = [
+        r'^Yes[,.\s]',
+        r'^Exactly[,.\s]',
+        r'^That\'s\s+right',
+        r'^Right[,.\s]',
+        r'^Correct[,.\s]',
+        r'^Certainly[,.\s]',
+        r'^Absolutely[,.\s]',
+        r'^Indeed[,.\s]',
+    ]
 
-                # Host transition to guest: "[Name], let us pick it up"
-                if re.search(r',\s*let\s+us\s+pick\s+it\s+up', content, re.IGNORECASE):
+    # === HOST-LIKE PATTERNS for look-ahead confirmation ===
+    # These patterns, when followed by affirmation, confirm HOST
+    HOST_LIKE_PATTERNS = [
+        r'\bwhat\s+you\'re\s+(?:saying|describing|suggesting)\b',
+        r'\byou\'re\s+(?:saying|describing|suggesting|talking\s+about)\b',
+        r'\byou\s+seem\s+to\s+be\s+(?:saying|describing|suggesting)\b',
+        r'\bif\s+I\s+understand\s+(?:you|correctly)\b',
+        r'\bso\s+you\'re\s+saying\b',
+        r'\bwhat\s+you\s+mean\b',
+        r'\bwhat\s+would\s+(?:that|it)\s+mean\b',
+        r'\bis\s+that\s+really\s+what\b',
+    ]
+
+    def is_guest_line(line: str) -> tuple[bool, str]:
+        """Check if line is GUEST and return (is_guest, content)."""
+        match = re.match(r'^\*\*GUEST:\*\*\s*(.*)$', line)
+        if match:
+            return True, match.group(1)
+        return False, ""
+
+    def find_next_guest_content(lines: list, start_idx: int) -> str | None:
+        """Find the content of the next GUEST line after start_idx."""
+        for j in range(start_idx + 1, len(lines)):
+            is_guest, content = is_guest_line(lines[j])
+            if is_guest:
+                return content
+            # Stop at headers or other speaker labels
+            if lines[j].startswith('###') or lines[j].startswith('**CALLER') or lines[j].startswith('**CLIP'):
+                return None
+        return None
+
+    def matches_any_pattern(text: str, patterns: list) -> bool:
+        """Check if text matches any pattern in the list."""
+        for pattern in patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                return True
+        return False
+
+    # First pass: identify which lines should be converted to HOST
+    convert_to_host = set()
+
+    for i, line in enumerate(lines):
+        is_guest, content = is_guest_line(line)
+        if not is_guest:
+            continue
+
+        word_count = len(content.split())
+        is_likely_host = False
+
+        # === HARD PATTERNS (no length limit) ===
+        if matches_any_pattern(content, HARD_HOST_PATTERNS):
+            is_likely_host = True
+
+        # === STRONG PATTERNS (up to 40 words) ===
+        if not is_likely_host and word_count <= MAX_STRONG_WORDS:
+
+            # Host transition to guest: "[Name], let us pick it up"
+            if re.search(r',\s*let\s+us\s+pick\s+it\s+up', content, re.IGNORECASE):
+                is_likely_host = True
+
+            # Host transition: "[Name], let me put that to"
+            elif re.search(r',\s*let\s+me\s+put\s+that\s+to', content, re.IGNORECASE):
+                is_likely_host = True
+
+            # Host pushback: "Well, so you say, but"
+            elif re.match(r'^Well,?\s+so\s+you\s+say', content, re.IGNORECASE):
+                is_likely_host = True
+
+            # Questions are almost always host (up to 40 words)
+            elif content.rstrip().endswith('?'):
+                is_likely_host = True
+
+            # Addressing guest by name with question/transition
+            elif re.match(r'^(?:Professor|Mr\.?|Dr\.?)\s+Deutsch', content, re.IGNORECASE):
+                is_likely_host = True
+            elif re.match(r'^David\s+Deutsch,', content, re.IGNORECASE):
+                is_likely_host = True
+
+            # Host addressing caller: "[Name], standby" or "[Name], let me"
+            elif re.match(r'^[A-Z][a-z]+,\s+(?:standby|let\s+me|let\s+us)', content):
+                is_likely_host = True
+
+        # === WEAK PATTERNS (up to 15 words only) ===
+        if not is_likely_host and word_count <= MAX_WEAK_WORDS:
+
+            # Very short pushback starting with "But" (under 10 words)
+            if word_count < 10 and re.match(r'^But\s+', content):
+                is_likely_host = True
+
+            # "But the environment" pushback (up to 15 words)
+            elif re.match(r'^But\s+the\s+environment', content, re.IGNORECASE):
+                is_likely_host = True
+
+            # "You mean X" clarification
+            elif re.match(r'^You\s+mean\s+', content, re.IGNORECASE) and word_count < 10:
+                is_likely_host = True
+
+            # "If I may" / "If I understand"
+            elif re.match(r'^If\s+I\s+(?:may|understand)', content, re.IGNORECASE):
+                is_likely_host = True
+
+        # === LOOK-AHEAD CONFIRMATION ===
+        # If next GUEST starts with affirmation AND current has host-like patterns
+        if not is_likely_host:
+            next_guest = find_next_guest_content(lines, i)
+            if next_guest and matches_any_pattern(next_guest, AFFIRMATION_PATTERNS):
+                # Next response is an affirmation - check if current has host-like patterns
+                if matches_any_pattern(content, HOST_LIKE_PATTERNS):
                     is_likely_host = True
 
-                # Host transition: "[Name], let me put that to"
-                elif re.search(r',\s*let\s+me\s+put\s+that\s+to', content, re.IGNORECASE):
-                    is_likely_host = True
+        if is_likely_host:
+            convert_to_host.add(i)
 
-                # Host meta-comment: "Maybe I misunderstood you"
-                elif re.match(r'^Maybe\s+I\s+misunderstood', content, re.IGNORECASE):
-                    is_likely_host = True
-
-                # Host pushback: "Well, so you say, but"
-                elif re.match(r'^Well,?\s+so\s+you\s+say', content, re.IGNORECASE):
-                    is_likely_host = True
-
-                # Questions are almost always host (up to 40 words)
-                elif content.rstrip().endswith('?'):
-                    is_likely_host = True
-
-                # Addressing guest by name with question/transition
-                elif re.match(r'^(?:Professor|Mr\.?|Dr\.?)\s+Deutsch', content, re.IGNORECASE):
-                    is_likely_host = True
-                elif re.match(r'^David\s+Deutsch,', content, re.IGNORECASE):
-                    is_likely_host = True
-
-                # Host addressing caller: "[Name], standby" or "[Name], let me"
-                elif re.match(r'^[A-Z][a-z]+,\s+(?:standby|let\s+me|let\s+us)', content):
-                    is_likely_host = True
-
-            # === WEAK PATTERNS (up to 15 words only) ===
-            if not is_likely_host and word_count <= MAX_WEAK_WORDS:
-
-                # Very short pushback starting with "But" (under 10 words)
-                if word_count < 10 and re.match(r'^But\s+', content):
-                    is_likely_host = True
-
-                # "But the environment" pushback (up to 15 words)
-                elif re.match(r'^But\s+the\s+environment', content, re.IGNORECASE):
-                    is_likely_host = True
-
-                # "You mean X" clarification
-                elif re.match(r'^You\s+mean\s+', content, re.IGNORECASE) and word_count < 10:
-                    is_likely_host = True
-
-                # "If I may" / "If I understand"
-                elif re.match(r'^If\s+I\s+(?:may|understand)', content, re.IGNORECASE):
-                    is_likely_host = True
-
-            if is_likely_host:
-                # Convert back to a ### header (host question/comment)
-                result_lines.append(f'### {content}')
-                continue
-
-        result_lines.append(line)
+    # Second pass: build result with conversions
+    result_lines = []
+    for i, line in enumerate(lines):
+        if i in convert_to_host:
+            is_guest, content = is_guest_line(line)
+            result_lines.append(f'### {content}')
+        else:
+            result_lines.append(line)
 
     return '\n'.join(result_lines)
 

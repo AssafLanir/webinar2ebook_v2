@@ -455,6 +455,116 @@ class TestHostInterjections:
         assert "### You mean knowledge makers?" in result
 
 
+class TestHardHostPatterns:
+    """Test HARD patterns that apply regardless of length."""
+
+    def test_maybe_i_misunderstood_long_line(self):
+        """'Maybe I misunderstood you' should become HOST even with >40 words."""
+        markdown = """**GUEST:** That's right. Both on the largest scale and the smallest scale.
+
+**GUEST:** Maybe I misunderstood you, but when you describe this almost infinite or infinitely expanding knowledge and, with that, control, I didn't think simply of zipping around the universe or space travel. It seemed to me you were describing something even more profound than that, kind of almost the ability to reshape, as we have in many ways reshaped Earth.
+
+**GUEST:** Yes, it's all part of the same thing.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # Hard pattern should trigger regardless of length
+        assert "### Maybe I misunderstood you" in result
+        # Deutsch's response stays GUEST
+        assert "**GUEST:** Yes, it's all part of the same thing" in result
+
+    def test_im_trying_to_get_my_mind_around(self):
+        """'I'm trying to get my mind around' should become HOST."""
+        markdown = """**GUEST:** The universe makes sense.
+
+**GUEST:** I'm trying to get my mind around that. By the world, you don't just mean this earthly planet; you mean the universe. Really, humans have no limit to their understanding and controlling the universe?
+
+**GUEST:** That's right.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        assert "### I'm trying to get my mind around" in result
+
+    def test_our_listeners(self):
+        """'Our listeners' should become HOST (referencing audience)."""
+        markdown = """**GUEST:** That is the scientific worldview.
+
+**GUEST:** Our listeners are paying close attention. We have lots of questions coming in.
+
+**GUEST:** I appreciate the engagement.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        assert "### Our listeners are paying close attention" in result
+
+    def test_lets_go_to(self):
+        """'Let's go to' should become HOST (transitioning to callers)."""
+        markdown = """**GUEST:** That's the key insight.
+
+**GUEST:** Let's go to the phones. Dana in South Wellfleet.
+
+**CALLER (Dana):** Hi, thanks for taking my call.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        assert "### Let's go to the phones" in result
+
+
+class TestLookAheadConfirmation:
+    """Test look-ahead confirmation with affirmative responses."""
+
+    def test_host_like_pattern_with_yes_response(self):
+        """Host-like pattern followed by 'Yes,' confirms HOST."""
+        markdown = """**GUEST:** We can understand universal laws.
+
+**GUEST:** So you're saying that there's no limit to what we can understand?
+
+**GUEST:** Yes, that's exactly right.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # The question with host-like pattern + "Yes" response = HOST
+        assert "### So you're saying that there's no limit" in result
+
+    def test_host_like_pattern_with_exactly_response(self):
+        """Host-like pattern followed by 'Exactly' confirms HOST."""
+        markdown = """**GUEST:** Knowledge is the basis of all progress.
+
+**GUEST:** What you're describing sounds like unlimited potential for humanity.
+
+**GUEST:** Exactly. That's the beginning of infinity.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        assert "### What you're describing sounds like unlimited" in result
+
+    def test_host_like_pattern_with_thats_right_response(self):
+        """Host-like pattern followed by 'That's right' confirms HOST."""
+        markdown = """**GUEST:** The laws of physics are universal.
+
+**GUEST:** If I understand you correctly, you're saying aliens would have the same capabilities?
+
+**GUEST:** That's right. The same laws apply everywhere.
+"""
+        result = fix_speaker_attribution(markdown)
+
+        assert "### If I understand you correctly" in result
+
+    def test_no_confirmation_without_affirmation(self):
+        """Host-like pattern without affirmation stays GUEST."""
+        markdown = """**GUEST:** The universe makes sense.
+
+**GUEST:** What you're describing is fascinating to me.
+
+**GUEST:** The thing is, there can't be such a limit because...
+"""
+        result = fix_speaker_attribution(markdown)
+
+        # No affirmation follows, so this stays GUEST
+        assert "**GUEST:** What you're describing is fascinating" in result
+        assert "### What you're describing" not in result
+
+
 class TestEdgeCases:
     """Test edge cases and safety."""
 
