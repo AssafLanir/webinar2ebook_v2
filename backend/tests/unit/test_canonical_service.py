@@ -94,6 +94,24 @@ class TestCanonicalize:
         text = "hello\u00a0world"
         assert canonicalize(text) == "hello world"
 
+    def test_unicode_nfc_normalization(self):
+        """Composed and decomposed Unicode characters should normalize identically.
+
+        NFC normalization ensures that:
+        - 'cafe' (composed e with acute) and 'cafe\u0301' (e + combining acute)
+          produce the same canonical result.
+        """
+        # Composed form: e with acute accent as single character (\u00e9)
+        composed = "caf\u00e9"
+        # Decomposed form: e + combining acute accent (\u0301)
+        decomposed = "cafe\u0301"
+
+        # Both should produce identical canonical output
+        assert canonicalize(composed) == canonicalize(decomposed)
+
+        # Verify the result is the NFC form (composed)
+        assert canonicalize(decomposed) == "caf\u00e9"
+
 
 class TestNormalizeForComparison:
     """Tests for comparison-ready normalization."""

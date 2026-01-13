@@ -9,18 +9,29 @@ The canonical transcript is the reference text for all SegmentRef offsets.
 
 import hashlib
 import re
+import unicodedata
 
 
 def canonicalize(text: str) -> str:
     """Normalize text for consistent character offsets.
 
-    Normalization:
-    - Collapse multiple whitespace (including newlines) to single space
-    - Normalize smart quotes (\u201c, \u201d) to straight quotes (")
-    - Normalize curly apostrophes (\u2018, \u2019) to straight apostrophes (')
-    - Normalize em/en dashes (\u2014, \u2013) to hyphens (-)
-    - Normalize non-breaking spaces (\u00a0) to regular spaces
-    - Strip leading/trailing whitespace
+    Normalization steps (in order):
+    1. Apply Unicode NFC normalization (ensures composed/decomposed equivalence)
+    2. Collapse multiple whitespace (including newlines) to single space
+    3. Normalize smart quotes (\u201c, \u201d) to straight quotes (")
+    4. Normalize curly apostrophes (\u2018, \u2019) to straight apostrophes (')
+    5. Normalize em/en dashes (\u2014, \u2013) to hyphens (-)
+    6. Normalize non-breaking spaces (\u00a0) to regular spaces
+    7. Strip leading/trailing whitespace
+
+    Supported character scope:
+    - Smart/curly double quotes: \u201c, \u201d -> "
+    - Curly single quotes/apostrophes: \u2018, \u2019 -> '
+    - Em dash (\u2014), en dash (\u2013) -> -
+    - Non-breaking space (\u00a0) -> regular space
+
+    Not normalized (out of scope for typical webinar transcripts):
+    - Angle quotes/guillemets: << >> (U+00AB, U+00BB), < > (U+2039, U+203A)
 
     Returns canonicalized text suitable for offset references.
 
@@ -30,7 +41,9 @@ def canonicalize(text: str) -> str:
     if not text:
         return ""
 
-    result = text
+    # Apply NFC normalization first to ensure composed/decomposed characters
+    # produce the same result (e.g., 'cafe\u0301' -> 'cafe')
+    result = unicodedata.normalize('NFC', text)
 
     # Normalize smart/curly double quotes to straight quotes
     # \u201c = left double quote, \u201d = right double quote
