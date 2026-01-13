@@ -163,7 +163,8 @@ class Coverage(str, Enum):
 class SegmentRef(BaseModel):
     start_offset: int  # Character offset into canonical transcript
     end_offset: int
-    text_preview: str  # First ~100 chars for display
+    token_count: int   # Actual token count for coverage scoring
+    text_preview: str  # First ~100 chars for display only
 
 class Theme(BaseModel):
     id: str
@@ -191,6 +192,8 @@ class Project(BaseModel):
     themes: list[Theme] = []  # Ideas only
     drafts: list[Draft] = []  # Multiple drafts, different editions
     current_draft_id: str | None = None
+    canonical_transcript: str | None = None  # Frozen transcript for offset validity
+    canonical_transcript_hash: str | None = None  # SHA256 hash for verification
 ```
 
 ### New Endpoints
@@ -243,7 +246,7 @@ Deterministic scoring based on:
 ```python
 def score_coverage(segments: list[SegmentRef], transcript_length: int) -> Coverage:
     num_segments = len(segments)
-    total_tokens = sum(len(s.text_preview.split()) for s in segments)
+    total_tokens = sum(s.token_count for s in segments)  # Use actual token count
     spread = calculate_spread(segments, transcript_length)  # How distributed
 
     score = (
@@ -451,6 +454,55 @@ GET /api/jobs/{job_id}
 // Update project edition
 PATCH /api/projects/{id}
 { edition, fidelity?, themes? }
+```
+
+## Implementation Notes
+
+### Critical: Canonical Transcript Contract
+
+SegmentRef offsets depend on a stable transcript. If the transcript is modified after themes are proposed, offsets become invalid.
+
+**Contract:**
+1. When themes are first proposed, freeze the transcript as `canonical_transcript`
+2. Store SHA256 hash as `canonical_transcript_hash` for verification
+3. All SegmentRef offsets refer to the canonical version
+4. If user modifies transcript after themes exist, warn and offer to re-propose themes
+5. Quote validation must use the canonical transcript, not any post-processed version
+
+**Implementation:**
+```python
+def freeze_canonical_transcript(project: Project) -> Project:
+    canonical = canonicalize(project.transcript)
+    project.canonical_transcript = canonical
+    project.canonical_transcript_hash = hashlib.sha256(canonical.encode()).hexdigest()
+    return project
+
+def verify_canonical(project: Project) -> bool:
+    """Check if canonical transcript is still valid."""
+    current_hash = hashlib.sha256(
+        canonicalize(project.transcript).encode()
+    ).hexdigest()
+    return current_hash == project.canonical_transcript_hash
+```
+
+### Critical: Coverage Scoring Accuracy
+
+Coverage scoring uses `token_count` stored in each SegmentRef, not derived from `text_preview`.
+
+**Why this matters:**
+- `text_preview` is truncated (~100 chars) for display
+- Using `text_preview.split()` would systematically undercount tokens
+- Real coverage requires the actual segment token count
+
+**Implementation:**
+```python
+# When creating SegmentRef, calculate real token count
+segment_ref = SegmentRef(
+    start_offset=start,
+    end_offset=end,
+    token_count=len(tokenizer.encode(full_segment_text)),  # Real count
+    text_preview=full_segment_text[:100]  # Truncated for display
+)
 ```
 
 ## Validation Plan
