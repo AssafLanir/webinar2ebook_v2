@@ -9,6 +9,7 @@ import { GenerateProgress } from './GenerateProgress'
 import { DraftPreviewModal } from './DraftPreviewModal'
 import { useDraftGeneration } from '../../hooks/useDraftGeneration'
 import { QAPanel } from './QAPanel'
+import { EditionMirror } from './EditionMirror'
 import { STYLE_PRESETS } from '../../constants/stylePresets'
 import { downloadAsMarkdown, downloadAsText } from '../../utils/draftExport'
 import type { StyleConfig, StyleConfigEnvelope, TotalLengthPreset } from '../../types/style'
@@ -308,6 +309,13 @@ export function Tab3Content() {
 
   return (
     <div className="space-y-6">
+      {/* Edition indicator */}
+      <EditionMirror
+        edition={project.edition}
+        fidelity={project.fidelity}
+        onChangeClick={() => dispatch({ type: 'SET_ACTIVE_TAB', payload: 1 })}
+      />
+
       <Card title="Style Configuration">
         <p className="text-sm text-slate-400 mb-4">
           Select a preset or customize the style settings for your ebook generation.
