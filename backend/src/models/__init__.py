@@ -142,11 +142,13 @@ from .rewrite_plan import (
     IssueReference,
     IssueTypeEnum,
 )
-# Edition enums (Editions feature)
+# Edition enums and models (Editions feature)
 from .edition import (
     Edition,
     Fidelity,
     Coverage,
+    SegmentRef,
+    Theme,
 )
 
 __all__ = [
@@ -279,8 +281,10 @@ __all__ = [
     "IssueTypeEnum",
     # Content Mode (Spec 009)
     "ContentMode",
-    # Edition enums (Editions feature)
+    # Edition enums and models (Editions feature)
     "Edition",
     "Fidelity",
     "Coverage",
+    "SegmentRef",
+    "Theme",
 ]
