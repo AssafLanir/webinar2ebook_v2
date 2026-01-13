@@ -358,7 +358,8 @@ def postprocess_interview_markdown(
     """Post-process interview markdown for proper structure and polish.
 
     Applies deterministic fixes that improve "book feel" without changing content:
-    1. Fix heading hierarchy (### Key Ideas → ## Key Ideas, ### The Conversation → ##)
+    1. Fix heading hierarchy (## Key Ideas → ### Key Ideas, ## The Conversation → ###)
+       This makes them subordinate to the topic heading.
     2. Add metadata block under H1 (source, format, date)
     3. Fix "Thank you" formatting (#### → *Interviewer:*)
 
@@ -387,15 +388,15 @@ def postprocess_interview_markdown(
             result_lines.append(line)
             continue
 
-        # Fix #1: Ensure Key Ideas is ## (upgrade from ### if needed)
+        # Fix #1: Ensure Key Ideas is ### (downgrade from ## to be subordinate to topic)
         if re.match(r'^#{2,3}\s+Key Ideas', line, re.IGNORECASE):
-            line = re.sub(r'^#{2,3}\s+', '## ', line)
+            line = re.sub(r'^#{2,3}\s+', '### ', line)
             result_lines.append(line)
             continue
 
-        # Fix #1: Ensure The Conversation is ## (upgrade from ### if needed)
+        # Fix #1: Ensure The Conversation is ### (downgrade from ## to be subordinate to topic)
         if re.match(r'^#{2,3}\s+The Conversation', line, re.IGNORECASE):
-            line = re.sub(r'^#{2,3}\s+', '## ', line)
+            line = re.sub(r'^#{2,3}\s+', '### ', line)
             inside_conversation = True
             result_lines.append(line)
             continue
