@@ -150,6 +150,10 @@ from .edition import (
     SegmentRef,
     Theme,
 )
+from .theme_job import (
+    ThemeJob,
+    ThemeJobStatus,
+)
 
 __all__ = [
     # Project models
@@ -287,4 +291,7 @@ __all__ = [
     "Coverage",
     "SegmentRef",
     "Theme",
+    # Theme job models (Editions feature)
+    "ThemeJob",
+    "ThemeJobStatus",
 ]
