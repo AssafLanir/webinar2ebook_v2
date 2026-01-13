@@ -6,6 +6,7 @@ The canonical transcript is the reference text for all SegmentRef offsets.
 
 from src.services.canonical_service import (
     canonicalize,
+    canonicalize_structured,
     compute_hash,
     freeze_canonical_transcript,
     normalize_for_comparison,
@@ -111,6 +112,131 @@ class TestCanonicalize:
 
         # Verify the result is the NFC form (composed)
         assert canonicalize(decomposed) == "caf\u00e9"
+
+
+class TestCanonicalizeStructured:
+    """Tests for structured text canonicalization (preserves paragraphs)."""
+
+    def test_preserves_paragraph_breaks(self):
+        """Double newlines should be preserved as paragraph separators."""
+        text = "First paragraph.\n\nSecond paragraph."
+        result = canonicalize_structured(text)
+        assert result == "First paragraph.\n\nSecond paragraph."
+
+    def test_normalizes_multiple_blank_lines(self):
+        """3+ newlines should normalize to double newline."""
+        text = "First.\n\n\n\nSecond."
+        result = canonicalize_structured(text)
+        assert result == "First.\n\nSecond."
+
+    def test_collapses_whitespace_within_paragraphs(self):
+        """Multiple spaces within paragraphs should collapse."""
+        text = "Hello    world.\n\nSecond   paragraph."
+        result = canonicalize_structured(text)
+        assert result == "Hello world.\n\nSecond paragraph."
+
+    def test_normalizes_smart_quotes(self):
+        """Smart quotes should normalize like flat canonical."""
+        text = '\u201cHello\u201d\n\n\u201cWorld\u201d'
+        result = canonicalize_structured(text)
+        assert result == '"Hello"\n\n"World"'
+
+    def test_normalizes_dashes(self):
+        """Em/en dashes should normalize like flat canonical."""
+        text = "em\u2014dash\n\nen\u2013dash"
+        result = canonicalize_structured(text)
+        assert result == "em-dash\n\nen-dash"
+
+    def test_idempotent(self):
+        """CRITICAL: canonicalize_structured(canonicalize_structured(x)) == canonicalize_structured(x)."""
+        text = "First   para.\n\n\n\nSecond\u2014para."
+        once = canonicalize_structured(text)
+        twice = canonicalize_structured(once)
+        assert once == twice
+
+    def test_handles_windows_line_endings(self):
+        """\\r\\n should normalize to \\n for paragraph detection."""
+        text = "First.\r\n\r\nSecond."
+        result = canonicalize_structured(text)
+        assert result == "First.\n\nSecond."
+
+    def test_single_newlines_collapse_within_paragraph(self):
+        """Single newlines within a paragraph should collapse to space."""
+        text = "Line one\nLine two\n\nNew paragraph."
+        result = canonicalize_structured(text)
+        assert result == "Line one Line two\n\nNew paragraph."
+
+    def test_empty_string(self):
+        """Empty string should return empty string."""
+        assert canonicalize_structured("") == ""
+
+    def test_only_whitespace(self):
+        """String with only whitespace should return empty string."""
+        assert canonicalize_structured("   \n\n\n   ") == ""
+
+    def test_speaker_turns_preserved(self):
+        """Interview format with speaker labels should preserve turns."""
+        text = """Host: What is knowledge?
+
+David: Knowledge is conjectural.
+
+Host: Interesting!"""
+        result = canonicalize_structured(text)
+        assert "Host: What is knowledge?" in result
+        assert "David: Knowledge is conjectural." in result
+        assert result.count("\n\n") == 2  # Two paragraph breaks
+
+    def test_unicode_nfc_normalization(self):
+        """Composed and decomposed characters should normalize identically."""
+        composed = "caf\u00e9\n\ntest"
+        decomposed = "cafe\u0301\n\ntest"
+        assert canonicalize_structured(composed) == canonicalize_structured(decomposed)
+
+
+class TestFlatVsStructured:
+    """Tests comparing flat and structured canonicalization."""
+
+    def test_same_character_normalizations(self):
+        """Both modes should apply same character normalizations."""
+        text = '\u201cHello\u201d \u2014 it\u2019s\u00a0here'
+        flat = canonicalize(text)
+        structured = canonicalize_structured(text)
+        # Both should have straight quotes, hyphens, straight apostrophes
+        assert '"Hello"' in flat
+        assert '"Hello"' in structured
+        assert "it's" in flat
+        assert "it's" in structured
+        assert "-" in flat
+        assert "-" in structured
+
+    def test_flat_loses_paragraphs(self):
+        """Flat canonical collapses paragraphs to spaces."""
+        text = "First.\n\nSecond."
+        flat = canonicalize(text)
+        structured = canonicalize_structured(text)
+        assert "\n" not in flat  # No newlines in flat
+        assert flat == "First. Second."
+        assert "\n\n" in structured  # Paragraphs preserved
+
+    def test_flat_for_offsets_structured_for_display(self):
+        """Demonstrate the intended use case for each mode."""
+        raw = """Host: Question one?
+
+Guest: Answer one.
+
+Host: Question two?"""
+
+        # Flat for offsets - all on one line
+        flat = canonicalize(raw)
+        assert flat == "Host: Question one? Guest: Answer one. Host: Question two?"
+
+        # Structured for display - paragraphs preserved
+        structured = canonicalize_structured(raw)
+        lines = structured.split("\n\n")
+        assert len(lines) == 3
+        assert lines[0] == "Host: Question one?"
+        assert lines[1] == "Guest: Answer one."
+        assert lines[2] == "Host: Question two?"
 
 
 class TestNormalizeForComparison:
