@@ -6,12 +6,19 @@ import { OutlineEditor } from './OutlineEditor'
 import { ResourceList } from './ResourceList'
 import { AIAssistSection } from './AIAssistSection'
 import { AIPreviewModal } from './AIPreviewModal'
+import { EditionSelector } from './EditionSelector'
+import { ThemesPanel } from './ThemesPanel'
+import type { Edition, Theme } from '../../types/edition'
 
 export function Tab1Content() {
   const { state, dispatch, uploadResourceFile, removeResourceFile } = useProject()
   const { project } = state
 
   if (!project) return null
+
+  const handleEditionChange = (edition: Edition) => {
+    dispatch({ type: 'SET_EDITION', payload: edition })
+  }
 
   const handleTranscriptChange = (value: string) => {
     dispatch({ type: 'UPDATE_TRANSCRIPT', payload: value })
@@ -61,6 +68,26 @@ export function Tab1Content() {
     dispatch({ type: 'FILL_SAMPLE_DATA' })
   }
 
+  // Theme handlers (Ideas Edition)
+  const handleProposeThemes = async () => {
+    // TODO: Call theme proposal API (Task 14)
+    console.log('Propose themes')
+  }
+
+  const handleUpdateTheme = (id: string, updates: Partial<Theme>) => {
+    dispatch({ type: 'UPDATE_THEME', payload: { id, updates } })
+  }
+
+  const handleRemoveTheme = (id: string) => {
+    dispatch({ type: 'REMOVE_THEME', payload: id })
+  }
+
+  const handleReorderThemes = (orderedIds: string[]) => {
+    dispatch({ type: 'REORDER_THEMES', payload: orderedIds })
+  }
+
+  const isIdeasEdition = project.edition === 'ideas'
+
   return (
     <div className="space-y-6">
       {/* Action buttons row */}
@@ -74,21 +101,45 @@ export function Tab1Content() {
       {/* AI Preview Modal */}
       <AIPreviewModal />
 
+      {/* Edition Selector */}
+      <Card title="Output Format">
+        <EditionSelector
+          value={project.edition}
+          onChange={handleEditionChange}
+          recommendedEdition="qa"
+        />
+      </Card>
+
       {/* Transcript */}
       <Card title="Transcript">
         <TranscriptEditor value={project.transcriptText} onChange={handleTranscriptChange} />
       </Card>
 
-      {/* Outline */}
-      <Card title="Outline">
-        <OutlineEditor
-          items={project.outlineItems}
-          onAdd={handleAddOutlineItem}
-          onUpdate={handleUpdateOutlineItem}
-          onRemove={handleRemoveOutlineItem}
-          onReorder={handleReorderOutlineItems}
-        />
-      </Card>
+      {/* Conditional: Outline (Q&A) or Themes (Ideas) */}
+      {isIdeasEdition ? (
+        <Card title="Themes">
+          <ThemesPanel
+            themes={project.themes}
+            onProposeThemes={handleProposeThemes}
+            onUpdateTheme={handleUpdateTheme}
+            onRemoveTheme={handleRemoveTheme}
+            onReorderThemes={handleReorderThemes}
+          />
+        </Card>
+      ) : (
+        <Card title="Outline">
+          <p className="text-sm text-gray-500 mb-4">
+            Optional: Used for topic grouping only. Won't change the interview content.
+          </p>
+          <OutlineEditor
+            items={project.outlineItems}
+            onAdd={handleAddOutlineItem}
+            onUpdate={handleUpdateOutlineItem}
+            onRemove={handleRemoveOutlineItem}
+            onReorder={handleReorderOutlineItems}
+          />
+        </Card>
+      )}
 
       {/* Resources */}
       <Card title="Resources">
