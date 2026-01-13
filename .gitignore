@@ -31,3 +31,6 @@ env/
 
 # Export outputs
 /exports/
+
+# Worktrees
+.worktrees/
