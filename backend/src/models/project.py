@@ -6,10 +6,11 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
+from .edition import Edition, Fidelity, Theme
+from .evidence_map import EvidenceMap
+from .qa_report import QAReport
 from .style_config import StyleConfigEnvelope
 from .visuals import VisualPlan
-from .qa_report import QAReport
-from .evidence_map import EvidenceMap
 
 
 class WebinarType(str, Enum):
@@ -113,6 +114,10 @@ class UpdateProjectRequest(BaseModel):
     finalTitle: str = ""
     finalSubtitle: str = ""
     creditsText: str = ""
+    # Edition fields (Task 3) - all optional for partial updates
+    edition: Edition | None = None
+    fidelity: Fidelity | None = None
+    themes: list[Theme] | None = None
 
 
 # Response schemas
@@ -142,6 +147,12 @@ class Project(BaseModel):
     visualPlan: VisualPlan | None = None
     qaReport: QAReport | None = None
     evidenceMap: EvidenceMap | None = None  # Spec 009: Evidence Map for grounded generation
+    # Edition fields (Task 3)
+    edition: Edition = Edition.QA  # Default to Q&A Edition
+    fidelity: Fidelity = Fidelity.FAITHFUL  # Default to Faithful (Q&A only)
+    themes: list[Theme] = []  # Empty by default (Ideas only)
+    canonical_transcript: str | None = None  # Frozen transcript for offset validity
+    canonical_transcript_hash: str | None = None  # SHA256 hash for verification
     finalTitle: str = ""
     finalSubtitle: str = ""
     creditsText: str = ""

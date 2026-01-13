@@ -6,12 +6,17 @@ These tests verify:
 3. Invalid strings are rejected with ValueError
 4. SegmentRef model with canonical_hash for offset drift protection
 5. Theme model for Ideas Edition
+6. Project model edition fields (Task 3)
+7. UpdateProjectRequest edition fields (Task 3)
 """
+
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
 
 from src.models.edition import Coverage, Edition, Fidelity, SegmentRef, Theme
+from src.models.project import Project, UpdateProjectRequest, WebinarType
 
 
 class TestEditionEnum:
@@ -242,3 +247,167 @@ class TestTheme:
         assert restored_segment.token_count == segment.token_count
         assert restored_segment.text_preview == segment.text_preview
         assert restored_segment.canonical_hash == segment.canonical_hash
+
+
+# =============================================================================
+# Task 3: Project Model Edition Fields Tests
+# =============================================================================
+
+
+class TestProjectEditionFields:
+    """Test Project model edition fields (Task 3)."""
+
+    def test_project_has_edition_defaults(self):
+        """Verify new Project has edition=QA, fidelity=FAITHFUL, themes=[]."""
+        now = datetime.now(UTC)
+        project = Project(
+            id="proj-001",
+            name="Test Project",
+            webinarType=WebinarType.INTERVIEW,
+            createdAt=now,
+            updatedAt=now,
+        )
+        # Verify edition defaults
+        assert project.edition == Edition.QA
+        assert project.fidelity == Fidelity.FAITHFUL
+        assert project.themes == []
+
+    def test_project_with_ideas_edition(self):
+        """Verify Project can be created with IDEAS edition and themes."""
+        now = datetime.now(UTC)
+        segment = SegmentRef(
+            start_offset=0,
+            end_offset=100,
+            token_count=25,
+            text_preview="Sample transcript text...",
+            canonical_hash="abc123"
+        )
+        theme = Theme(
+            id="theme-001",
+            title="Key Concept",
+            one_liner="An important idea",
+            keywords=["concept", "idea"],
+            coverage=Coverage.STRONG,
+            supporting_segments=[segment]
+        )
+        project = Project(
+            id="proj-002",
+            name="Ideas Project",
+            webinarType=WebinarType.STANDARD_PRESENTATION,
+            createdAt=now,
+            updatedAt=now,
+            edition=Edition.IDEAS,
+            fidelity=Fidelity.VERBATIM,
+            themes=[theme]
+        )
+        assert project.edition == Edition.IDEAS
+        assert project.fidelity == Fidelity.VERBATIM
+        assert len(project.themes) == 1
+        assert project.themes[0].title == "Key Concept"
+
+    def test_project_canonical_transcript_fields(self):
+        """Verify canonical_transcript and hash fields work."""
+        now = datetime.now(UTC)
+        transcript_text = "This is the canonical transcript content."
+        transcript_hash = "sha256_abc123def456"
+
+        project = Project(
+            id="proj-003",
+            name="Canonical Test",
+            webinarType=WebinarType.INTERVIEW,
+            createdAt=now,
+            updatedAt=now,
+            canonical_transcript=transcript_text,
+            canonical_transcript_hash=transcript_hash
+        )
+        assert project.canonical_transcript == transcript_text
+        assert project.canonical_transcript_hash == transcript_hash
+
+        # Also test None defaults
+        project_no_canonical = Project(
+            id="proj-004",
+            name="No Canonical",
+            webinarType=WebinarType.INTERVIEW,
+            createdAt=now,
+            updatedAt=now,
+        )
+        assert project_no_canonical.canonical_transcript is None
+        assert project_no_canonical.canonical_transcript_hash is None
+
+    def test_existing_projects_get_defaults(self):
+        """Verify existing projects (without edition) get QA default (backward compat).
+
+        This simulates loading a project from the database that was created
+        before the edition fields were added.
+        """
+        now = datetime.now(UTC)
+        # Simulate data from database without edition fields
+        legacy_data = {
+            "id": "proj-legacy",
+            "name": "Legacy Project",
+            "webinarType": "interview",
+            "createdAt": now,
+            "updatedAt": now,
+            "transcriptText": "Some transcript",
+            "outlineItems": [],
+            "resources": [],
+            "visuals": [],
+            "draftText": "",
+            # Note: no edition, fidelity, themes, canonical_transcript, canonical_transcript_hash
+        }
+        project = Project.model_validate(legacy_data)
+
+        # Should get defaults
+        assert project.edition == Edition.QA
+        assert project.fidelity == Fidelity.FAITHFUL
+        assert project.themes == []
+        assert project.canonical_transcript is None
+        assert project.canonical_transcript_hash is None
+
+
+class TestUpdateProjectRequestEditionFields:
+    """Test UpdateProjectRequest accepts edition fields (Task 3)."""
+
+    def test_update_project_request_accepts_edition(self):
+        """Verify UpdateProjectRequest accepts edition fields."""
+        segment = SegmentRef(
+            start_offset=0,
+            end_offset=50,
+            token_count=10,
+            text_preview="Preview...",
+            canonical_hash="hash123"
+        )
+        theme = Theme(
+            id="theme-upd",
+            title="Update Theme",
+            one_liner="A theme for update",
+            keywords=["update"],
+            coverage=Coverage.MEDIUM,
+            supporting_segments=[segment]
+        )
+
+        request = UpdateProjectRequest(
+            name="Updated Project",
+            webinarType=WebinarType.INTERVIEW,
+            edition=Edition.IDEAS,
+            fidelity=Fidelity.VERBATIM,
+            themes=[theme]
+        )
+
+        assert request.edition == Edition.IDEAS
+        assert request.fidelity == Fidelity.VERBATIM
+        assert len(request.themes) == 1
+        assert request.themes[0].id == "theme-upd"
+
+    def test_update_project_request_edition_optional(self):
+        """Verify edition fields are optional in UpdateProjectRequest."""
+        # Create request without edition fields
+        request = UpdateProjectRequest(
+            name="Minimal Update",
+            webinarType=WebinarType.STANDARD_PRESENTATION,
+        )
+
+        # All edition fields should be None (not set)
+        assert request.edition is None
+        assert request.fidelity is None
+        assert request.themes is None
