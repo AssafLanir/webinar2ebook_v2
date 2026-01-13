@@ -21,7 +21,7 @@ from src.api.exceptions import (
     ValidationError,
 )
 from src.api.response import error_response
-from src.api.routes import ai, draft, ebook, files, health, projects, qa, visuals
+from src.api.routes import ai, draft, ebook, files, health, projects, qa, themes, visuals
 from src.llm import LLMError
 from src.db.mongo import close_database
 from src.services.job_store import get_job_store
@@ -157,3 +157,4 @@ app.include_router(draft.router, prefix="/api")
 app.include_router(visuals.router)
 app.include_router(ebook.router)
 app.include_router(qa.router, prefix="/api")
+app.include_router(themes.router, prefix="/api")
