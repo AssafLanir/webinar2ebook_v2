@@ -5,7 +5,6 @@ Used to track async theme proposal jobs.
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -34,10 +33,10 @@ class ThemeJob(BaseModel):
     project_id: str
     status: ThemeJobStatus = ThemeJobStatus.QUEUED
     created_at: datetime
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     themes: list[Theme] = []
-    error: Optional[str] = None
+    error: str | None = None
 
     def is_terminal(self) -> bool:
         """Check if job is in a terminal state."""

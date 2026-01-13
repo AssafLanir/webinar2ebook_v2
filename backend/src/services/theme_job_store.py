@@ -4,8 +4,7 @@ In-memory store for tracking theme proposal job status.
 """
 
 import asyncio
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from src.models.theme_job import ThemeJob, ThemeJobStatus
@@ -32,13 +31,13 @@ class InMemoryThemeJobStore:
             job_id=job_id,
             project_id=project_id,
             status=ThemeJobStatus.QUEUED,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         async with self._lock:
             self._jobs[job_id] = job
         return job_id
 
-    async def get_job(self, job_id: str) -> Optional[ThemeJob]:
+    async def get_job(self, job_id: str) -> ThemeJob | None:
         """Get a job by ID.
 
         Args:
@@ -50,7 +49,7 @@ class InMemoryThemeJobStore:
         async with self._lock:
             return self._jobs.get(job_id)
 
-    async def update_job(self, job_id: str, **updates) -> Optional[ThemeJob]:
+    async def update_job(self, job_id: str, **updates) -> ThemeJob | None:
         """Update a job with the given fields.
 
         Automatically sets started_at when transitioning to PROCESSING,
@@ -74,13 +73,13 @@ class InMemoryThemeJobStore:
 
             # Auto-set timestamps based on status transitions
             if updates.get("status") == ThemeJobStatus.PROCESSING:
-                job.started_at = datetime.now(timezone.utc)
+                job.started_at = datetime.now(UTC)
             if updates.get("status") in (
                 ThemeJobStatus.COMPLETED,
                 ThemeJobStatus.FAILED,
                 ThemeJobStatus.CANCELLED,
             ):
-                job.completed_at = datetime.now(timezone.utc)
+                job.completed_at = datetime.now(UTC)
 
             return job
 
@@ -101,7 +100,7 @@ class InMemoryThemeJobStore:
 
 
 # Singleton instance
-_store: Optional[InMemoryThemeJobStore] = None
+_store: InMemoryThemeJobStore | None = None
 
 
 def get_theme_job_store() -> InMemoryThemeJobStore:

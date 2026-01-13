@@ -18,9 +18,11 @@ export function ThemesPanel({
   onAddSuggestions,
   onUpdateTheme,
   onRemoveTheme,
-  onReorderThemes,
+  onReorderThemes: _onReorderThemes,
   isProposing = false,
 }: ThemesPanelProps) {
+  // onReorderThemes is passed but not yet used - will be implemented for drag-and-drop
+  void _onReorderThemes
   const hasThemes = themes.length > 0
 
   return (

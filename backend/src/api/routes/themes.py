@@ -7,10 +7,9 @@ from fastapi import APIRouter, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from src.api.response import success_response, error_response
-from src.services.theme_job_store import get_theme_job_store
+from src.api.response import error_response, success_response
 from src.models.theme_job import ThemeJobStatus
-
+from src.services.theme_job_store import get_theme_job_store
 
 router = APIRouter(prefix="/ai/themes", tags=["Themes"])
 

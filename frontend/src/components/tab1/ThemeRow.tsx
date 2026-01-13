@@ -7,7 +7,9 @@ interface ThemeRowProps {
   onRemove: () => void
 }
 
-export function ThemeRow({ theme, onUpdate, onRemove }: ThemeRowProps) {
+export function ThemeRow({ theme, onUpdate: _onUpdate, onRemove }: ThemeRowProps) {
+  // onUpdate is passed but not yet used - will be implemented for inline editing
+  void _onUpdate
   return (
     <div className="flex items-start gap-3 p-3 bg-white border rounded-lg group">
       {/* Drag handle */}

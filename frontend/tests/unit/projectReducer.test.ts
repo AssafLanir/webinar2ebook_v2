@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { ProjectState, Project } from '../../src/types/project'
-import type { Edition, Fidelity, Theme, Coverage } from '../../src/types/edition'
+import type { Theme } from '../../src/types/edition'
 
 // Import the reducer directly for testing
 // We need to export it from ProjectContext first
