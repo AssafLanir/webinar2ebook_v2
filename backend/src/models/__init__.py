@@ -142,6 +142,12 @@ from .rewrite_plan import (
     IssueReference,
     IssueTypeEnum,
 )
+# Edition enums (Editions feature)
+from .edition import (
+    Edition,
+    Fidelity,
+    Coverage,
+)
 
 __all__ = [
     # Project models
@@ -273,4 +279,8 @@ __all__ = [
     "IssueTypeEnum",
     # Content Mode (Spec 009)
     "ContentMode",
+    # Edition enums (Editions feature)
+    "Edition",
+    "Fidelity",
+    "Coverage",
 ]
