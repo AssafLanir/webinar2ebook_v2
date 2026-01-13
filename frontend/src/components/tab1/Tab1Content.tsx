@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useProject } from '../../context/ProjectContext'
 import { Card } from '../common/Card'
 import { Button } from '../common/Button'
@@ -8,11 +9,14 @@ import { AIAssistSection } from './AIAssistSection'
 import { AIPreviewModal } from './AIPreviewModal'
 import { EditionSelector } from './EditionSelector'
 import { ThemesPanel } from './ThemesPanel'
+import { pollThemeProposal } from '../../services/themeApi'
 import type { Edition, Theme } from '../../types/edition'
 
 export function Tab1Content() {
   const { state, dispatch, uploadResourceFile, removeResourceFile } = useProject()
   const { project } = state
+  const [isProposingThemes, setIsProposingThemes] = useState(false)
+  const [themeError, setThemeError] = useState<string | null>(null)
 
   if (!project) return null
 
@@ -70,8 +74,19 @@ export function Tab1Content() {
 
   // Theme handlers (Ideas Edition)
   const handleProposeThemes = async () => {
-    // TODO: Call theme proposal API (Task 14)
-    console.log('Propose themes')
+    if (!project) return
+
+    setIsProposingThemes(true)
+    setThemeError(null)
+    try {
+      const themes = await pollThemeProposal(project.id)
+      dispatch({ type: 'SET_THEMES', payload: themes })
+    } catch (err) {
+      console.error('Theme proposal failed:', err)
+      setThemeError(err instanceof Error ? err.message : 'Theme proposal failed')
+    } finally {
+      setIsProposingThemes(false)
+    }
   }
 
   const handleUpdateTheme = (id: string, updates: Partial<Theme>) => {
@@ -118,12 +133,18 @@ export function Tab1Content() {
       {/* Conditional: Outline (Q&A) or Themes (Ideas) */}
       {isIdeasEdition ? (
         <Card title="Themes">
+          {themeError && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-sm text-red-600">{themeError}</p>
+            </div>
+          )}
           <ThemesPanel
             themes={project.themes}
             onProposeThemes={handleProposeThemes}
             onUpdateTheme={handleUpdateTheme}
             onRemoveTheme={handleRemoveTheme}
             onReorderThemes={handleReorderThemes}
+            isProposing={isProposingThemes}
           />
         </Card>
       ) : (
