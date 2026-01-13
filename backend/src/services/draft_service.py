@@ -358,7 +358,8 @@ def postprocess_interview_markdown(
     """Post-process interview markdown for proper structure and polish.
 
     Applies deterministic fixes that improve "book feel" without changing content:
-    1. Fix heading hierarchy (## Key Ideas → ### Key Ideas)
+    1. Fix heading hierarchy (## Key Ideas → ### Key Ideas, ## The Conversation → ###)
+       This makes them subordinate to the topic heading.
     2. Add metadata block under H1 (source, format, date)
     3. Fix "Thank you" formatting (#### → *Interviewer:*)
 
@@ -387,15 +388,15 @@ def postprocess_interview_markdown(
             result_lines.append(line)
             continue
 
-        # Fix #1: Downgrade ## Key Ideas (Grounded) to ### (check BEFORE topic_heading)
-        if re.match(r'^##\s+Key Ideas', line, re.IGNORECASE):
-            line = re.sub(r'^##\s+', '### ', line)
+        # Fix #1: Ensure Key Ideas is ### (downgrade from ## to be subordinate to topic)
+        if re.match(r'^#{2,3}\s+Key Ideas', line, re.IGNORECASE):
+            line = re.sub(r'^#{2,3}\s+', '### ', line)
             result_lines.append(line)
             continue
 
-        # Fix #1: Downgrade ## The Conversation to ### (check BEFORE topic_heading)
-        if re.match(r'^##\s+The Conversation', line, re.IGNORECASE):
-            line = re.sub(r'^##\s+', '### ', line)
+        # Fix #1: Ensure The Conversation is ### (downgrade from ## to be subordinate to topic)
+        if re.match(r'^#{2,3}\s+The Conversation', line, re.IGNORECASE):
+            line = re.sub(r'^#{2,3}\s+', '### ', line)
             inside_conversation = True
             result_lines.append(line)
             continue
@@ -426,16 +427,646 @@ def postprocess_interview_markdown(
 
     # Fix #4: Insert metadata block after H1
     if include_metadata and h1_index is not None:
+        # Compute actual word count from the content
+        content_text = '\n'.join(result_lines)
+        word_count = len(content_text.split())
+
         metadata_lines = []
         if source_url:
             metadata_lines.append(f'*Source:* {source_url}')
         metadata_lines.append('*Format:* Interview')
+        metadata_lines.append(f'*Word count:* ~{word_count:,}')
         metadata_lines.append(f'*Generated:* {date.today().isoformat()}')
 
         # Insert after H1 (with blank line before and after)
         insert_pos = h1_index + 1
         metadata_block = [''] + metadata_lines + ['']
         result_lines = result_lines[:insert_pos] + metadata_block + result_lines[insert_pos:]
+
+    # Apply speaker attribution fix
+    result_text = '\n'.join(result_lines)
+    result_text = fix_speaker_attribution(result_text)
+
+    return result_text
+
+
+# ==============================================================================
+# Speaker Attribution (Heuristic Detection)
+# ==============================================================================
+
+# Caller intro patterns - high confidence
+# These detect when a caller is being introduced
+CALLER_INTRO_PATTERNS = [
+    # "[Name] in [Location]...you're on the air"
+    r'###\s+.*?([A-Z][a-z]+)\s+in\s+[A-Z][a-z]+.*?you\'?re\s+on\s+the\s+air',
+    # "[Name], you're on the air"
+    r'###\s+.*?([A-Z][a-z]+),?\s+you\'?re\s+on\s+the\s+air',
+    # "Let's go to [Name] in [Location]"
+    r'###\s+.*?[Ll]et\'?s\s+go\s+to\s+([A-Z][a-z]+)\s+in\s+[A-Z]',
+    # "[Name] is calling from"
+    r'###\s+.*?([A-Z][a-z]+)\s+is\s+calling\s+from',
+    # "[Name] in [Location]. [Name], thank you" (e.g., "David in Boston. David, thank you")
+    r'###\s+.*?([A-Z][a-z]+)\s+in\s+[A-Z][a-z]+.*?[Tt]hank(?:s|\s+you)',
+]
+
+# EXPLICIT Deutsch handoff patterns - these END caller mode
+# Only patterns that clearly indicate the host is now asking Deutsch to respond
+DEUTSCH_HANDOFF_PATTERNS = [
+    # "David Deutsch, what do you say"
+    r'###\s+.*?David\s+Deutsch.*?what\s+do\s+you\s+say',
+    # "[Name], let us pick it up. David Deutsch, what do you say"
+    r'###\s+.*?David\s+Deutsch.*?\?',
+    # "Professor Deutsch, what do you say" / "Mr. Deutsch, what do you say"
+    r'###\s+.*?(?:Professor|Mr\.?)\s+Deutsch.*?what\s+do\s+you',
+    # Clear question to Deutsch ending with ?
+    r'###\s+.*?(?:Professor|Mr\.?)\s+Deutsch.*?\?$',
+]
+
+# Host comment patterns - these do NOT end caller mode
+# The caller may still respond after these
+HOST_COMMENT_PATTERNS = [
+    # "[Name], I'll put that to..." - host is commenting, caller may still respond
+    r'###\s+[A-Z][a-z]+,\s+I\'ll\s+put\s+that\s+to',
+    # "[Name], standby" - host is commenting
+    r'###\s+[A-Z][a-z]+,\s+stand\s*by',
+    # "You've got a specific question" - prompting caller to continue
+    r'###\s+[Yy]ou\'?ve\s+got\s+a\s+specific\s+question',
+]
+
+# Patterns that indicate caller is speaking (in their response)
+CALLER_SPEECH_PATTERNS = [
+    r'^Hi,?\s+Tom',  # Greeting the host
+    r'^Thanks?\s+for\s+(?:having|taking)',
+    r'^I\s+have\s+a\s+question\s+for\s+(?:Mr\.|Professor)',
+    r'^(?:Mr\.|Professor)\s+Deutsch,\s+(?:given|I)',
+    r'^Yeah,?\s+thanks?\s+for\s+having',  # "Yeah, thanks for having me on"
+    r'^I\s+think\s+that\s+Professor\s+Deutsch',
+    r'^I\s+guess\s+for\s+me',
+    r'^I\'m\s+(?:certainly|not)\s+',
+]
+
+# Clip patterns - external audio/video clips played during the show
+CLIP_PATTERNS = [
+    (r'Carl\s+Sagan', 'Carl Sagan'),
+    (r'Stephen\s+Hawking', 'Stephen Hawking'),
+    (r'Richard\s+Feynman', 'Richard Feynman'),
+]
+
+
+def fix_speaker_attribution(markdown: str) -> str:
+    """Fix speaker attribution in interview markdown using heuristics.
+
+    Applies deterministic fixes:
+    1. Caller detection and persistence until explicit Deutsch handoff
+    2. Header sanity: demote non-question headers to text
+    3. CLIP detection for external audio/video clips
+    4. HOST detection for short interjections mislabeled as GUEST
+
+    Args:
+        markdown: Interview markdown with potentially wrong speaker labels.
+
+    Returns:
+        Markdown with corrected speaker attribution.
+    """
+    import re
+
+    # First pass: fix speaker labels (CALLER detection)
+    markdown = _fix_speaker_labels(markdown)
+
+    # Second pass: fix malformed headers (non-? headers that should be text)
+    markdown = _fix_malformed_headers(markdown)
+
+    # Third pass: detect and label clips
+    markdown = _fix_clip_headers(markdown)
+
+    # Fourth pass: detect HOST interjections mislabeled as GUEST
+    markdown = _fix_host_interjections(markdown)
+
+    return markdown
+
+
+def _fix_speaker_labels(markdown: str) -> str:
+    """Fix GUEST: labels to CALLER: where appropriate.
+
+    In a caller segment, GUEST labels are converted to CALLER unless
+    they sound like Deutsch responding (complex explanations, technical answers).
+    """
+    import re
+
+    lines = markdown.split('\n')
+    result_lines = []
+
+    # State tracking
+    current_caller: Optional[str] = None
+    in_caller_segment = False
+    # Track position: first GUEST after caller intro is always caller
+    guest_count_in_segment = 0
+
+    for i, line in enumerate(lines):
+        # Check if this is a question header
+        if line.startswith('### '):
+            header_text = line
+
+            # Check for caller intro patterns FIRST
+            caller_name = None
+            for pattern in CALLER_INTRO_PATTERNS:
+                match = re.search(pattern, header_text, re.IGNORECASE)
+                if match:
+                    caller_name = match.group(1)
+                    # Disambiguate: "David in Boston" is a caller, not "David Deutsch"
+                    if caller_name.lower() == 'david' and 'deutsch' in header_text.lower():
+                        caller_name = None  # This is about David Deutsch, not a caller
+                    break
+
+            if caller_name:
+                # New caller intro - start caller segment
+                current_caller = caller_name
+                in_caller_segment = True
+                guest_count_in_segment = 0
+                result_lines.append(line)
+                continue
+
+            # Check for EXPLICIT Deutsch handoff (ends caller segment)
+            is_deutsch_handoff = False
+            for pattern in DEUTSCH_HANDOFF_PATTERNS:
+                if re.search(pattern, header_text, re.IGNORECASE):
+                    is_deutsch_handoff = True
+                    break
+
+            if is_deutsch_handoff:
+                # Clear handoff to Deutsch - end caller segment
+                in_caller_segment = False
+                current_caller = None
+                guest_count_in_segment = 0
+                result_lines.append(line)
+                continue
+
+            # Check for host comments (do NOT end caller segment)
+            is_host_comment = False
+            for pattern in HOST_COMMENT_PATTERNS:
+                if re.search(pattern, header_text, re.IGNORECASE):
+                    is_host_comment = True
+                    break
+
+            # If it's a host comment and we're in a caller segment,
+            # the caller segment continues (host is prompting caller to continue)
+            if is_host_comment and in_caller_segment:
+                # Caller segment persists - reset guest count for next caller response
+                guest_count_in_segment = 0
+                result_lines.append(line)
+                continue
+
+            result_lines.append(line)
+            continue
+
+        # Check if this is a speaker attribution line
+        guest_match = re.match(r'^\*\*GUEST:\*\*\s*(.*)$', line)
+        if guest_match:
+            response_start = guest_match.group(1)
+            guest_count_in_segment += 1
+
+            # If in caller segment, this is likely the caller speaking
+            if in_caller_segment and current_caller:
+                # Default to CALLER for first response in segment
+                # or if response has caller speech patterns
+                is_caller_speech = False
+
+                # First response after caller intro or host comment is always caller
+                if guest_count_in_segment == 1:
+                    is_caller_speech = True
+                else:
+                    # Check for explicit caller speech patterns
+                    for pattern in CALLER_SPEECH_PATTERNS:
+                        if re.match(pattern, response_start, re.IGNORECASE):
+                            is_caller_speech = True
+                            break
+
+                    # If response mentions "Mr. Deutsch" or "Professor Deutsch" as addressee,
+                    # it's likely a caller speaking TO Deutsch
+                    if 'mr. deutsch' in response_start.lower() or 'professor deutsch' in response_start.lower():
+                        is_caller_speech = True
+
+                if is_caller_speech:
+                    line = f'**CALLER ({current_caller}):** {response_start}'
+
+            result_lines.append(line)
+            continue
+
+        result_lines.append(line)
+
+    return '\n'.join(result_lines)
+
+
+def _fix_malformed_headers(markdown: str) -> str:
+    """Fix headers that should be text (non-? headers followed by GUEST continuation).
+
+    Excludes host comments and clip intros from conversion.
+
+    Also detects first-person continuation markers in the header itself:
+    - "what I said", "I'm saying", "I said" → indicates Deutsch speaking, not a header
+    """
+    import re
+
+    lines = markdown.split('\n')
+    result_lines = []
+    i = 0
+
+    # First-person markers that indicate the header is actually Deutsch speaking
+    # These should be converted to GUEST even without a following continuation
+    FIRST_PERSON_PATTERNS = [
+        r'\bwhat I said\b',
+        r'\bwhat I\'m saying\b',
+        r'\bwhat I am saying\b',
+        r'\bI\'m saying\b',
+        r'\bI am saying\b',
+        r'\bI said\b',
+        r'\bI think\b',
+        r'\bI believe\b',
+        r'\bI would say\b',
+        r'\bI\'d say\b',
+        r'\bI mean\b',
+        r'\bI\'ve been\b',
+        r'\bI have been\b',
+        r'\bI was\b',
+        r'\bI\'ve said\b',
+        r'\bI have said\b',
+        r'\bmy point\b',
+        r'\bmy view\b',
+        r'\bmy argument\b',
+        r'\bmy position\b',
+    ]
+
+    while i < len(lines):
+        line = lines[i]
+
+        # Check for ### header that doesn't end with ?
+        if line.startswith('### ') and not line.rstrip().endswith('?'):
+            header_text = line[4:].strip()  # Remove "### "
+
+            # Don't convert host comments - these are valid headers
+            is_host_comment = False
+            for pattern in HOST_COMMENT_PATTERNS:
+                if re.search(pattern, line, re.IGNORECASE):
+                    is_host_comment = True
+                    break
+
+            # Don't convert clip intros
+            is_clip_intro = False
+            for pattern, _ in CLIP_PATTERNS:
+                if re.search(pattern, line, re.IGNORECASE):
+                    is_clip_intro = True
+                    break
+
+            if is_host_comment or is_clip_intro:
+                result_lines.append(line)
+                i += 1
+                continue
+
+            # Check if the header ITSELF contains first-person markers
+            # This indicates Deutsch speaking, not a host question/transition
+            is_first_person = False
+            for pattern in FIRST_PERSON_PATTERNS:
+                if re.search(pattern, header_text, re.IGNORECASE):
+                    is_first_person = True
+                    break
+
+            if is_first_person:
+                # This header is actually Deutsch speaking
+                result_lines.append(f'**GUEST:** {header_text}')
+                i += 1
+                continue
+
+            # Look ahead: if next non-empty line starts with **GUEST:** and looks like
+            # a continuation (starts with "Now," or similar), this header is misplaced
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+
+            if j < len(lines):
+                next_line = lines[j]
+                # Check if this looks like Deutsch continuing an answer
+                continuation_patterns = [
+                    r'^\*\*GUEST:\*\*\s*Now,',
+                    r'^\*\*GUEST:\*\*\s*Yes[,.]',
+                    r'^\*\*GUEST:\*\*\s*Okay[,.]',
+                    r'^\*\*GUEST:\*\*\s*Well[,.]',
+                    r'^\*\*GUEST:\*\*\s*First[,.]',
+                    r'^\*\*GUEST:\*\*\s*The\s+',
+                ]
+
+                is_continuation = False
+                for pattern in continuation_patterns:
+                    if re.match(pattern, next_line):
+                        is_continuation = True
+                        break
+
+                if is_continuation:
+                    # This header is actually part of Deutsch's response
+                    # Convert to regular text and prepend to the GUEST block
+                    # Skip this header - it will be absorbed into context
+                    # Actually, let's just convert it to a GUEST line
+                    result_lines.append(f'**GUEST:** {header_text}')
+                    i += 1
+                    continue
+
+        result_lines.append(line)
+        i += 1
+
+    return '\n'.join(result_lines)
+
+
+def _fix_clip_headers(markdown: str) -> str:
+    """Convert clip content to CLIP labels.
+
+    When a header introduces a clip (mentions Carl Sagan, Stephen Hawking, etc.),
+    subsequent content becomes CLIP labels until a termination signal:
+    - ### header (host question/transition)
+    - **CALLER:** line
+    - Mention of "Deutsch" (back to interview)
+
+    Handles both ### headers AND **GUEST:** lines as potential clip content.
+    This prevents clip quotes from being attributed to the guest (Deutsch).
+    """
+    import re
+
+    lines = markdown.split('\n')
+    result_lines = []
+    clip_speaker = None  # Current clip context speaker
+
+    # Phrases that indicate a clip intro (host ABOUT TO play a clip)
+    INTRO_PHRASES = [
+        "here's", "here is", "let's hear", "here he", "here she",
+        "listen to", "we'll hear", "speaks at", "speaking at",
+        "warning about", "in the cosmos", "in the series",
+    ]
+
+    # Backward references - host referring to a PAST clip, not introducing one
+    BACKWARD_PHRASES = [
+        "we played", "played the clip", "the clip from", "that clip",
+    ]
+
+    for i, line in enumerate(lines):
+        # === Handle ### headers ===
+        if line.startswith('### '):
+            header_text = line[4:].strip()
+            header_lower = header_text.lower()
+
+            # Check if this header mentions a clip speaker
+            mentioned_speaker = None
+            for pattern, speaker_name in CLIP_PATTERNS:
+                if re.search(pattern, line, re.IGNORECASE):
+                    mentioned_speaker = speaker_name
+                    break
+
+            if mentioned_speaker:
+                # Check for backward references first - these are NOT intros
+                is_backward_ref = any(phrase in header_lower for phrase in BACKWARD_PHRASES)
+
+                if is_backward_ref:
+                    clip_speaker = None
+                    result_lines.append(line)
+                    continue
+
+                # Check if this is a clip INTRO
+                is_intro = any(phrase in header_lower for phrase in INTRO_PHRASES)
+
+                if is_intro:
+                    # Start clip context
+                    clip_speaker = mentioned_speaker
+                    result_lines.append(line)
+                    continue
+                else:
+                    # Just mentions speaker, not an intro - ends any clip context
+                    clip_speaker = None
+                    result_lines.append(line)
+                    continue
+
+            # If we're in clip context and this is a non-intro header
+            if clip_speaker:
+                # Questions end clip context (host asking something)
+                if header_text.endswith('?'):
+                    clip_speaker = None
+                    result_lines.append(line)
+                    continue
+
+                # Mention of Deutsch ends clip context
+                if 'deutsch' in header_lower:
+                    clip_speaker = None
+                    result_lines.append(line)
+                    continue
+
+                # Non-question header in clip context = clip content
+                result_lines.append(f'**CLIP ({clip_speaker}):** {header_text}')
+                # Don't reset clip_speaker yet - there might be more clip lines
+                continue
+
+            result_lines.append(line)
+            continue
+
+        # === Handle **GUEST:** lines ===
+        guest_match = re.match(r'^\*\*GUEST:\*\*\s*(.*)$', line)
+        if guest_match and clip_speaker:
+            content = guest_match.group(1)
+            content_lower = content.lower()
+
+            # Check for termination signals in the content
+            if 'deutsch' in content_lower:
+                # This is probably back to Deutsch - end clip context
+                clip_speaker = None
+                result_lines.append(line)
+                continue
+
+            # Convert GUEST to CLIP
+            result_lines.append(f'**CLIP ({clip_speaker}):** {content}')
+            # Don't reset - there might be multiple clip lines
+            continue
+
+        # === Handle **CALLER:** lines - ends clip context ===
+        if line.startswith('**CALLER'):
+            clip_speaker = None
+            result_lines.append(line)
+            continue
+
+        # === Handle other lines ===
+        # Empty lines don't affect clip context
+        if not line.strip():
+            result_lines.append(line)
+            continue
+
+        # Any other non-empty, non-speaker line could be clip continuation
+        # But we're conservative - only convert explicitly labeled lines
+        result_lines.append(line)
+
+    return '\n'.join(result_lines)
+
+
+def _fix_host_interjections(markdown: str) -> str:
+    """Convert GUEST interjections that are actually HOST to ### headers.
+
+    The LLM sometimes mislabels host comments as GUEST. We use three tiers:
+    - HARD patterns: Apply regardless of length (unambiguous HOST phrases)
+    - STRONG patterns: Apply up to 40 words (specific phrasings)
+    - WEAK patterns: Apply up to 15 words (general patterns)
+
+    Additionally, we use look-ahead confirmation:
+    - If a GUEST line is followed by another GUEST starting with an affirmation
+      ("Yes,", "Exactly,", "That's right,"), the first line is likely HOST.
+    """
+    import re
+
+    lines = markdown.split('\n')
+
+    # Thresholds for different pattern strengths
+    MAX_STRONG_WORDS = 40  # Strong patterns can be longer
+    MAX_WEAK_WORDS = 15    # Weak patterns need word count restriction
+
+    # === HARD PATTERNS (no length limit) ===
+    # These phrases are almost exclusively HOST, regardless of length
+    HARD_HOST_PATTERNS = [
+        r'^Maybe\s+I\s+misunderstood',           # Host seeking clarification
+        r'^I\'m\s+trying\s+to\s+get\s+my\s+mind\s+around',  # Host processing
+        r'^Let\s+me\s+push\s+back',              # Host challenge
+        r'^Our\s+listeners',                      # Host referencing audience
+        r'^Let\'s\s+go\s+to',                    # Host transitioning to callers
+        r'^Let\s+me\s+bring',                    # Host bringing in callers
+        r'^It\'s\s+hard\s+to\s+grapple\s+with',  # Host expressing difficulty
+        r'^I\s+didn\'t\s+think\s+simply\s+of',   # Host clarifying understanding
+    ]
+
+    # === AFFIRMATION PATTERNS for look-ahead ===
+    # If next GUEST line starts with these, previous GUEST is likely HOST
+    AFFIRMATION_PATTERNS = [
+        r'^Yes[,.\s]',
+        r'^Exactly[,.\s]',
+        r'^That\'s\s+right',
+        r'^Right[,.\s]',
+        r'^Correct[,.\s]',
+        r'^Certainly[,.\s]',
+        r'^Absolutely[,.\s]',
+        r'^Indeed[,.\s]',
+    ]
+
+    # === HOST-LIKE PATTERNS for look-ahead confirmation ===
+    # These patterns, when followed by affirmation, confirm HOST
+    HOST_LIKE_PATTERNS = [
+        r'\bwhat\s+you\'re\s+(?:saying|describing|suggesting)\b',
+        r'\byou\'re\s+(?:saying|describing|suggesting|talking\s+about)\b',
+        r'\byou\s+seem\s+to\s+be\s+(?:saying|describing|suggesting)\b',
+        r'\bif\s+I\s+understand\s+(?:you|correctly)\b',
+        r'\bso\s+you\'re\s+saying\b',
+        r'\bwhat\s+you\s+mean\b',
+        r'\bwhat\s+would\s+(?:that|it)\s+mean\b',
+        r'\bis\s+that\s+really\s+what\b',
+    ]
+
+    def is_guest_line(line: str) -> tuple[bool, str]:
+        """Check if line is GUEST and return (is_guest, content)."""
+        match = re.match(r'^\*\*GUEST:\*\*\s*(.*)$', line)
+        if match:
+            return True, match.group(1)
+        return False, ""
+
+    def find_next_guest_content(lines: list, start_idx: int) -> str | None:
+        """Find the content of the next GUEST line after start_idx."""
+        for j in range(start_idx + 1, len(lines)):
+            is_guest, content = is_guest_line(lines[j])
+            if is_guest:
+                return content
+            # Stop at headers or other speaker labels
+            if lines[j].startswith('###') or lines[j].startswith('**CALLER') or lines[j].startswith('**CLIP'):
+                return None
+        return None
+
+    def matches_any_pattern(text: str, patterns: list) -> bool:
+        """Check if text matches any pattern in the list."""
+        for pattern in patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                return True
+        return False
+
+    # First pass: identify which lines should be converted to HOST
+    convert_to_host = set()
+
+    for i, line in enumerate(lines):
+        is_guest, content = is_guest_line(line)
+        if not is_guest:
+            continue
+
+        word_count = len(content.split())
+        is_likely_host = False
+
+        # === HARD PATTERNS (no length limit) ===
+        if matches_any_pattern(content, HARD_HOST_PATTERNS):
+            is_likely_host = True
+
+        # === STRONG PATTERNS (up to 40 words) ===
+        if not is_likely_host and word_count <= MAX_STRONG_WORDS:
+
+            # Host transition to guest: "[Name], let us pick it up"
+            if re.search(r',\s*let\s+us\s+pick\s+it\s+up', content, re.IGNORECASE):
+                is_likely_host = True
+
+            # Host transition: "[Name], let me put that to"
+            elif re.search(r',\s*let\s+me\s+put\s+that\s+to', content, re.IGNORECASE):
+                is_likely_host = True
+
+            # Host pushback: "Well, so you say, but"
+            elif re.match(r'^Well,?\s+so\s+you\s+say', content, re.IGNORECASE):
+                is_likely_host = True
+
+            # Questions are almost always host (up to 40 words)
+            elif content.rstrip().endswith('?'):
+                is_likely_host = True
+
+            # Addressing guest by name with question/transition
+            elif re.match(r'^(?:Professor|Mr\.?|Dr\.?)\s+Deutsch', content, re.IGNORECASE):
+                is_likely_host = True
+            elif re.match(r'^David\s+Deutsch,', content, re.IGNORECASE):
+                is_likely_host = True
+
+            # Host addressing caller: "[Name], standby" or "[Name], let me"
+            elif re.match(r'^[A-Z][a-z]+,\s+(?:standby|let\s+me|let\s+us)', content):
+                is_likely_host = True
+
+        # === WEAK PATTERNS (up to 15 words only) ===
+        if not is_likely_host and word_count <= MAX_WEAK_WORDS:
+
+            # Very short pushback starting with "But" (under 10 words)
+            if word_count < 10 and re.match(r'^But\s+', content):
+                is_likely_host = True
+
+            # "But the environment" pushback (up to 15 words)
+            elif re.match(r'^But\s+the\s+environment', content, re.IGNORECASE):
+                is_likely_host = True
+
+            # "You mean X" clarification
+            elif re.match(r'^You\s+mean\s+', content, re.IGNORECASE) and word_count < 10:
+                is_likely_host = True
+
+            # "If I may" / "If I understand"
+            elif re.match(r'^If\s+I\s+(?:may|understand)', content, re.IGNORECASE):
+                is_likely_host = True
+
+        # === LOOK-AHEAD CONFIRMATION ===
+        # If next GUEST starts with affirmation AND current has host-like patterns
+        if not is_likely_host:
+            next_guest = find_next_guest_content(lines, i)
+            if next_guest and matches_any_pattern(next_guest, AFFIRMATION_PATTERNS):
+                # Next response is an affirmation - check if current has host-like patterns
+                if matches_any_pattern(content, HOST_LIKE_PATTERNS):
+                    is_likely_host = True
+
+        if is_likely_host:
+            convert_to_host.add(i)
+
+    # Second pass: build result with conversions
+    result_lines = []
+    for i, line in enumerate(lines):
+        if i in convert_to_host:
+            is_guest, content = is_guest_line(line)
+            result_lines.append(f'### {content}')
+        else:
+            result_lines.append(line)
 
     return '\n'.join(result_lines)
 

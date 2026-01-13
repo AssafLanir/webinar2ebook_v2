@@ -1,5 +1,6 @@
 import type { StyleConfig, StyleConfigEnvelope } from './style'
 import type { VisualPlan } from './visuals'
+import type { Edition, Fidelity, Theme } from './edition'
 
 // Webinar Type - aligned with backend
 export type WebinarType = 'standard_presentation' | 'training_tutorial' | 'interview'
@@ -15,6 +16,19 @@ export type { StyleConfig, StyleConfigEnvelope } from './style'
 
 // Visual Plan - re-export from dedicated file
 export type { VisualPlan, VisualOpportunity, VisualAsset } from './visuals'
+
+// Edition types - re-export from dedicated file
+export type { Edition, Fidelity, Theme, Coverage, SegmentRef, ThemeJob, ThemeJobStatus } from './edition'
+export {
+  EDITION_LABELS,
+  EDITION_DESCRIPTIONS,
+  FIDELITY_LABELS,
+  FIDELITY_DESCRIPTIONS,
+  COVERAGE_LABELS,
+  COVERAGE_COLORS,
+  DEFAULT_EDITION,
+  DEFAULT_FIDELITY,
+} from './edition'
 
 // Legacy style config for backward compatibility with existing data
 export interface LegacyStyleConfig {
@@ -78,6 +92,13 @@ export interface Project {
   webinarType: WebinarType
   createdAt: string
   updatedAt: string
+
+  // Edition Settings (Editions feature)
+  edition: Edition
+  fidelity: Fidelity
+  themes: Theme[]
+  canonical_transcript: string | null
+  canonical_transcript_hash: string | null
 
   // Stage 1: Transcript, Outline & Resources
   transcriptText: string
@@ -279,3 +300,11 @@ export type ProjectAction =
   | { type: 'APPLY_AI_PREVIEW' }
   | { type: 'DISCARD_AI_PREVIEW' }
   | { type: 'TOGGLE_AI_PREVIEW_SELECTION'; payload: number }
+
+  // Edition Actions (Editions feature)
+  | { type: 'SET_EDITION'; payload: Edition }
+  | { type: 'SET_FIDELITY'; payload: Fidelity }
+  | { type: 'SET_THEMES'; payload: Theme[] }
+  | { type: 'UPDATE_THEME'; payload: { id: string; updates: Partial<Theme> } }
+  | { type: 'REMOVE_THEME'; payload: string }
+  | { type: 'REORDER_THEMES'; payload: string[] }

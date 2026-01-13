@@ -58,8 +58,8 @@ interface ProjectContextValue {
 // Create context
 const ProjectContext = createContext<ProjectContextValue | undefined>(undefined)
 
-// Reducer function
-function projectReducer(state: ProjectState, action: ProjectAction): ProjectState {
+// Reducer function (exported for testing)
+export function projectReducer(state: ProjectState, action: ProjectAction): ProjectState {
   switch (action.type) {
     case 'SET_VIEW':
       return { ...state, view: action.payload }
@@ -101,6 +101,12 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
         webinarType: action.payload.webinarType,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        // Edition defaults
+        edition: 'qa',
+        fidelity: 'faithful',
+        themes: [],
+        canonical_transcript: null,
+        canonical_transcript_hash: null,
         transcriptText: '',
         outlineItems: [],
         resources: [],
@@ -740,6 +746,79 @@ function projectReducer(state: ProjectState, action: ProjectAction): ProjectStat
             ...preview,
             selected: newSelected,
           } as AIPreviewData,
+        },
+      }
+    }
+
+    // Edition Actions (Editions feature)
+    case 'SET_EDITION':
+      if (!state.project) return state
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          edition: action.payload,
+        },
+      }
+
+    case 'SET_FIDELITY':
+      if (!state.project) return state
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          fidelity: action.payload,
+        },
+      }
+
+    case 'SET_THEMES':
+      if (!state.project) return state
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          themes: action.payload,
+        },
+      }
+
+    case 'UPDATE_THEME': {
+      if (!state.project) return state
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          themes: state.project.themes.map(theme =>
+            theme.id === action.payload.id
+              ? { ...theme, ...action.payload.updates }
+              : theme
+          ),
+        },
+      }
+    }
+
+    case 'REMOVE_THEME': {
+      if (!state.project) return state
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          themes: state.project.themes.filter(theme => theme.id !== action.payload),
+        },
+      }
+    }
+
+    case 'REORDER_THEMES': {
+      if (!state.project) return state
+      const orderedIds = action.payload
+      const themeMap = new Map(state.project.themes.map(theme => [theme.id, theme]))
+      const reorderedThemes = orderedIds
+        .map(id => themeMap.get(id))
+        .filter((theme): theme is NonNullable<typeof theme> => theme !== undefined)
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          themes: reorderedThemes,
         },
       }
     }
