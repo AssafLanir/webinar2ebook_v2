@@ -202,6 +202,13 @@ STRONG_WORDS_PER_CLAIM = 50
 MEDIUM_QUOTES = 3
 MEDIUM_WORDS_PER_CLAIM = 30
 
+# Excerpt counts per coverage level
+EXCERPT_COUNTS = {
+    CoverageLevel.STRONG: 4,
+    CoverageLevel.MEDIUM: 3,
+    CoverageLevel.WEAK: 2,
+}
+
 
 def compute_chapter_coverage(
     chapter_evidence: ChapterEvidence,
@@ -260,3 +267,35 @@ def compute_chapter_coverage(
         target_words=target_words,
         generation_mode=mode,
     )
+
+
+def select_deterministic_excerpts(
+    whitelist: list[WhitelistQuote],
+    chapter_index: int,
+    coverage_level: CoverageLevel,
+) -> list[WhitelistQuote]:
+    """Select Key Excerpts deterministically from whitelist.
+
+    Valid by construction: these quotes come from whitelist,
+    so they're guaranteed to be transcript substrings with known speakers.
+
+    Args:
+        whitelist: Validated quote whitelist.
+        chapter_index: 0-based chapter index.
+        coverage_level: Coverage level for count selection.
+
+    Returns:
+        List of selected WhitelistQuote entries.
+    """
+    # Filter to this chapter, GUEST only
+    candidates = [
+        q for q in whitelist
+        if chapter_index in q.chapter_indices
+        and q.speaker.speaker_role == SpeakerRole.GUEST
+    ]
+
+    # Stable sort: longest first, then by quote_id for ties
+    candidates.sort(key=lambda q: (-len(q.quote_text), q.quote_id))
+
+    count = EXCERPT_COUNTS[coverage_level]
+    return candidates[:count]

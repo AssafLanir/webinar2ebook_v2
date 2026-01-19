@@ -5,6 +5,7 @@ from src.services.whitelist_service import (
     canonicalize_transcript,
     find_all_occurrences,
     resolve_speaker,
+    select_deterministic_excerpts,
 )
 from src.models.evidence_map import EvidenceMap, ChapterEvidence, EvidenceEntry, SupportQuote
 
@@ -567,3 +568,105 @@ def _make_chapter_evidence(claim_count: int) -> ChapterEvidence:
             for i in range(claim_count)
         ],
     )
+
+
+from hashlib import sha256
+
+
+def _make_guest_quote(text: str, chapter_indices: list[int] | None = None) -> WhitelistQuote:
+    """Create a GUEST WhitelistQuote for testing."""
+    if chapter_indices is None:
+        chapter_indices = [0]
+    quote_id = sha256(text.encode()).hexdigest()[:16]
+    return WhitelistQuote(
+        quote_id=quote_id,
+        quote_text=text,
+        quote_canonical=text.lower(),
+        speaker=SpeakerRef(
+            speaker_id="guest_speaker",
+            speaker_name="Guest Speaker",
+            speaker_role=SpeakerRole.GUEST,
+        ),
+        source_evidence_ids=["ev1"],
+        chapter_indices=chapter_indices,
+        match_spans=[(0, len(text))],
+    )
+
+
+def _make_host_quote(text: str, chapter_indices: list[int] | None = None) -> WhitelistQuote:
+    """Create a HOST WhitelistQuote for testing."""
+    if chapter_indices is None:
+        chapter_indices = [0]
+    quote_id = sha256(text.encode()).hexdigest()[:16]
+    return WhitelistQuote(
+        quote_id=quote_id,
+        quote_text=text,
+        quote_canonical=text.lower(),
+        speaker=SpeakerRef(
+            speaker_id="host_speaker",
+            speaker_name="Host Speaker",
+            speaker_role=SpeakerRole.HOST,
+        ),
+        source_evidence_ids=["ev1"],
+        chapter_indices=chapter_indices,
+        match_spans=[(0, len(text))],
+    )
+
+
+class TestSelectDeterministicExcerpts:
+    def test_selects_correct_count_for_strong(self):
+        """Test STRONG coverage gets 4 excerpts."""
+        whitelist = [_make_guest_quote(f"Quote {i} with enough words here") for i in range(10)]
+        excerpts = select_deterministic_excerpts(whitelist, chapter_index=0, coverage_level=CoverageLevel.STRONG)
+        assert len(excerpts) == 4
+
+    def test_selects_correct_count_for_medium(self):
+        """Test MEDIUM coverage gets 3 excerpts."""
+        whitelist = [_make_guest_quote(f"Quote {i} with enough words here") for i in range(10)]
+        excerpts = select_deterministic_excerpts(whitelist, chapter_index=0, coverage_level=CoverageLevel.MEDIUM)
+        assert len(excerpts) == 3
+
+    def test_selects_correct_count_for_weak(self):
+        """Test WEAK coverage gets 2 excerpts."""
+        whitelist = [_make_guest_quote(f"Quote {i} with enough words here") for i in range(10)]
+        excerpts = select_deterministic_excerpts(whitelist, chapter_index=0, coverage_level=CoverageLevel.WEAK)
+        assert len(excerpts) == 2
+
+    def test_filters_to_guest_only(self):
+        """Test only GUEST quotes are selected."""
+        whitelist = [
+            _make_guest_quote("Guest quote 1 with enough words"),
+            _make_host_quote("Host quote with enough words here"),
+            _make_guest_quote("Guest quote 2 with enough words"),
+        ]
+        excerpts = select_deterministic_excerpts(whitelist, chapter_index=0, coverage_level=CoverageLevel.STRONG)
+        for e in excerpts:
+            assert e.speaker.speaker_role == SpeakerRole.GUEST
+
+    def test_filters_to_chapter(self):
+        """Test only quotes for this chapter are selected."""
+        whitelist = [
+            _make_guest_quote("Quote ch0 with enough words", chapter_indices=[0]),
+            _make_guest_quote("Quote ch1 with enough words", chapter_indices=[1]),
+        ]
+        excerpts = select_deterministic_excerpts(whitelist, chapter_index=0, coverage_level=CoverageLevel.STRONG)
+        for e in excerpts:
+            assert 0 in e.chapter_indices
+
+    def test_stable_ordering(self):
+        """Test same input always produces same order."""
+        whitelist = [_make_guest_quote(f"Quote {i} with enough words") for i in range(10)]
+        excerpts1 = select_deterministic_excerpts(whitelist, chapter_index=0, coverage_level=CoverageLevel.STRONG)
+        excerpts2 = select_deterministic_excerpts(whitelist, chapter_index=0, coverage_level=CoverageLevel.STRONG)
+        assert [e.quote_id for e in excerpts1] == [e.quote_id for e in excerpts2]
+
+    def test_prefers_longer_quotes(self):
+        """Test longer quotes are selected first."""
+        whitelist = [
+            _make_guest_quote("Short"),
+            _make_guest_quote("This is a much longer quote with many words here"),
+            _make_guest_quote("Medium length quote here now"),
+        ]
+        excerpts = select_deterministic_excerpts(whitelist, chapter_index=0, coverage_level=CoverageLevel.WEAK)
+        # First excerpt should be the longest
+        assert "much longer" in excerpts[0].quote_text
