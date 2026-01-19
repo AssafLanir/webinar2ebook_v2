@@ -22,13 +22,13 @@ class TestCanonicalizeTranscript:
         result = canonicalize_transcript(raw)
         assert "\u2014" not in result
         assert "\u2013" not in result
-        assert "word-another-third" in result
+        assert result == "word-another-third"
 
     def test_collapses_whitespace(self):
         """Test multiple spaces/newlines collapse to single space."""
         raw = "hello   world\n\ntest"
         result = canonicalize_transcript(raw)
-        assert "hello world test" in result
+        assert result == "hello world test"
 
     def test_preserves_case(self):
         """Test case is preserved (not lowercased)."""
@@ -42,3 +42,11 @@ class TestCanonicalizeTranscript:
         result1 = canonicalize_transcript(raw)
         result2 = canonicalize_transcript(raw)
         assert result1 == result2
+
+    def test_empty_string(self):
+        """Test empty string returns empty string."""
+        assert canonicalize_transcript("") == ""
+
+    def test_whitespace_only(self):
+        """Test whitespace-only string returns empty string."""
+        assert canonicalize_transcript("   \n\t  ") == ""

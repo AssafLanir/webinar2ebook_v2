@@ -6,9 +6,6 @@ against whitelist, and provides deterministic excerpt selection.
 
 from __future__ import annotations
 
-import re
-from hashlib import sha256
-
 
 def canonicalize_transcript(text: str) -> str:
     """Normalize transcript for matching.
