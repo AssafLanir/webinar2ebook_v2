@@ -41,8 +41,18 @@ from src.models.style_config import (
     ContentMode,
 )
 from src.models.evidence_map import EvidenceMap, ChapterEvidence
+from src.models.edition import WhitelistQuote, TranscriptPair
 
 from .job_store import get_job_store, get_job, update_job
+from .whitelist_service import (
+    build_quote_whitelist,
+    canonicalize_transcript,
+    strip_llm_blockquotes,
+    enforce_quote_whitelist,
+    select_deterministic_excerpts,
+    format_excerpts_markdown,
+    compute_chapter_coverage,
+)
 from .prompts import (
     DRAFT_PLAN_SYSTEM_PROMPT,
     build_draft_plan_user_prompt,
@@ -84,6 +94,7 @@ logger = logging.getLogger(__name__)
 # Default LLM models
 PLANNING_MODEL = "gpt-4o-mini"  # Faster, cheaper for structured planning
 CHAPTER_MODEL = "gpt-4o-mini"   # Could use gpt-4o for higher quality
+POLISH_MODEL = "gpt-4o"         # Stronger model for prose polish pass
 
 # Best-of-N candidate selection for interview mode
 # When enabled, generates multiple candidates and picks the best based on scoring
@@ -94,6 +105,1665 @@ INTERVIEW_CANDIDATE_COUNT_MAX = int(os.environ.get("INTERVIEW_CANDIDATE_COUNT_MA
 GENERIC_TITLES = {
     "interview", "interview transcript", "untitled", "untitled ebook", "draft", ""
 }
+
+# ==============================================================================
+# Post-Generation Enforcement (strip banned sections)
+# ==============================================================================
+
+# Regex patterns for banned sections (case-insensitive)
+BANNED_SECTION_PATTERNS = [
+    # Key Takeaways sections (with bullet or numbered lists)
+    r'#{2,4}\s*(?:Key\s+)?Takeaways?\s*\n(?:(?:[-*•]\s*|\d+[.)]\s*).+\n?)+',
+    # Action Steps/Items sections (with bullet or numbered lists)
+    r'#{2,4}\s*(?:Action(?:able)?\s+)?(?:Steps?|Items?)\s*\n(?:(?:[-*•]\s*|\d+[.)]\s*).+\n?)+',
+    # Conclusion sections with bullet summaries
+    r'#{2,4}\s*(?:In\s+)?Conclusion\s*\n(?:(?:[-*•]\s*|\d+[.)]\s*).+\n?)+',
+    # Summary sections with bullets
+    r'#{2,4}\s*(?:Chapter\s+)?Summary\s*\n(?:(?:[-*•]\s*|\d+[.)]\s*).+\n?)+',
+]
+
+# Compile patterns for efficiency
+BANNED_SECTION_REGEXES = [re.compile(p, re.IGNORECASE | re.MULTILINE) for p in BANNED_SECTION_PATTERNS]
+
+# Banned phrases to flag (for reporting, not auto-removal)
+# These are AI-telltale phrases that should be avoided
+BANNED_PHRASES = [
+    # Conclusion markers
+    "In conclusion",
+    "To conclude",
+    "In summary",
+    # Hedging/noting phrases
+    "It is important to note",
+    "It should be noted",
+    # Demonstrative patterns
+    "This highlights",
+    "This demonstrates",
+    "This shows",
+    # Back-references
+    "As mentioned earlier",
+    "As we discussed",
+    # Conversational openers
+    "Let's explore",
+    "Let's dive into",
+    "Let's take a look",
+    # Sentence starter connectors (AI overuses these)
+    "Moreover",
+    "Furthermore",
+    "Additionally",
+    "However",
+]
+
+# Compile phrase patterns
+BANNED_PHRASE_REGEXES = [re.compile(re.escape(p), re.IGNORECASE) for p in BANNED_PHRASES]
+
+
+def strip_banned_sections(text: str, book_format: str = "essay") -> tuple[str, list[str]]:
+    """Strip banned sections from generated text.
+
+    Args:
+        text: The generated chapter/draft text.
+        book_format: The book format (enforcement is stricter for 'essay').
+
+    Returns:
+        Tuple of (cleaned_text, list of removed section types).
+    """
+    if book_format not in ("essay",):
+        # Only enforce for essay format for now
+        return text, []
+
+    removed = []
+    result = text
+
+    for pattern in BANNED_SECTION_REGEXES:
+        matches = pattern.findall(result)
+        if matches:
+            # Log what we're removing
+            for match in matches:
+                first_line = match.split('\n')[0].strip()
+                removed.append(first_line)
+            result = pattern.sub('', result)
+
+    # Clean up multiple consecutive newlines
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    return result.strip(), removed
+
+
+def count_banned_phrases(text: str) -> dict[str, int]:
+    """Count occurrences of banned phrases in text.
+
+    Args:
+        text: The text to check.
+
+    Returns:
+        Dict mapping phrase to count (only non-zero counts).
+    """
+    counts = {}
+    for phrase, pattern in zip(BANNED_PHRASES, BANNED_PHRASE_REGEXES):
+        count = len(pattern.findall(text))
+        if count > 0:
+            counts[phrase] = count
+    return counts
+
+
+def enforce_prose_quality(
+    text: str,
+    book_format: str = "essay",
+    strip_sections: bool = True,
+) -> tuple[str, dict]:
+    """Apply all prose quality enforcement rules.
+
+    Args:
+        text: The generated text.
+        book_format: The book format.
+        strip_sections: Whether to strip banned sections.
+
+    Returns:
+        Tuple of (cleaned_text, enforcement_report).
+    """
+    report = {
+        "sections_removed": [],
+        "banned_phrase_counts": {},
+        "total_banned_phrases": 0,
+    }
+
+    result = text
+
+    # Strip banned sections
+    if strip_sections:
+        result, removed = strip_banned_sections(result, book_format)
+        report["sections_removed"] = removed
+
+    # Count banned phrases (for reporting)
+    phrase_counts = count_banned_phrases(result)
+    report["banned_phrase_counts"] = phrase_counts
+    report["total_banned_phrases"] = sum(phrase_counts.values())
+
+    if removed:
+        logger.info(f"Enforcement: stripped {len(removed)} banned sections: {removed}")
+    if phrase_counts:
+        logger.warning(f"Enforcement: {report['total_banned_phrases']} banned phrases remain: {phrase_counts}")
+
+    return result, report
+
+
+# ==============================================================================
+# Whitelist Excerpt Injection
+# ==============================================================================
+
+# Pattern to find chapters with empty Key Excerpts sections
+# Matches "### Key Excerpts" followed by whitespace then another section header
+KEY_EXCERPTS_EMPTY_PATTERN = re.compile(
+    r'(### Key Excerpts\s*\n)(\s*(?:### Core Claims|## Chapter|\Z))',
+    re.MULTILINE
+)
+
+
+def inject_excerpts_into_empty_sections(
+    markdown: str,
+    whitelist: list[WhitelistQuote],
+    evidence_map: EvidenceMap,
+) -> str:
+    """Inject deterministic excerpts into empty Key Excerpts sections.
+
+    When the LLM generates empty Key Excerpts sections (due to failed validation
+    or other issues), this function injects valid excerpts from the whitelist
+    to ensure each chapter has representative quotes.
+
+    Args:
+        markdown: The draft markdown text.
+        whitelist: Validated quote whitelist.
+        evidence_map: Evidence map with chapter data.
+
+    Returns:
+        Markdown with excerpts injected into empty Key Excerpts sections.
+    """
+    result = markdown
+
+    # Find all chapter boundaries
+    chapter_pattern = re.compile(r'^## Chapter (\d+)', re.MULTILINE)
+    chapters = list(chapter_pattern.finditer(result))
+
+    if not chapters:
+        logger.info("inject_excerpts: No chapters found in markdown")
+        return result
+
+    logger.info(f"inject_excerpts: Found {len(chapters)} chapters, whitelist has {len(whitelist)} quotes")
+
+    # Process chapters in reverse order to maintain string positions
+    for i in range(len(chapters) - 1, -1, -1):
+        chapter_match = chapters[i]
+        chapter_num = int(chapter_match.group(1))
+        chapter_idx = chapter_num - 1  # 0-based index
+
+        # Find the bounds of this chapter
+        chapter_start = chapter_match.start()
+        chapter_end = chapters[i + 1].start() if i + 1 < len(chapters) else len(result)
+        chapter_text = result[chapter_start:chapter_end]
+
+        # Check if Key Excerpts section is empty
+        # Pattern: "### Key Excerpts\n" followed by whitespace then "### Core Claims" or "## Chapter" or end
+        key_excerpts_match = re.search(
+            r'(### Key Excerpts\s*\n)(\s*)(?=### Core Claims|## Chapter |\Z)',
+            chapter_text
+        )
+
+        if key_excerpts_match:
+            # Check if the section only contains whitespace (empty)
+            content_after_header = key_excerpts_match.group(2)
+            if content_after_header.strip() == '':
+                # This chapter has empty Key Excerpts - inject valid excerpts
+                # Get chapter evidence to determine coverage
+                chapter_evidence = None
+                for ch in evidence_map.chapters:
+                    if ch.chapter_index == chapter_num:
+                        chapter_evidence = ch
+                        break
+
+                if chapter_evidence:
+                    coverage = compute_chapter_coverage(chapter_evidence, whitelist, chapter_idx)
+                    excerpts = select_deterministic_excerpts(whitelist, chapter_idx, coverage.level)
+
+                    # Debug logging: count quotes available for this chapter
+                    chapter_quotes = [q for q in whitelist if chapter_idx in q.chapter_indices]
+                    guest_quotes = [q for q in chapter_quotes if q.speaker.speaker_role.value == "guest"]
+                    logger.info(
+                        f"Chapter {chapter_num}: {len(chapter_quotes)} whitelist quotes, "
+                        f"{len(guest_quotes)} GUEST quotes, coverage={coverage.level.value}, "
+                        f"selected {len(excerpts)} excerpts"
+                    )
+
+                    if excerpts:
+                        formatted = format_excerpts_markdown(excerpts)
+                        # Insert after "### Key Excerpts\n"
+                        insert_pos = chapter_start + key_excerpts_match.end(1)
+                        result = result[:insert_pos] + "\n" + formatted + "\n\n" + result[insert_pos:]
+                        logger.info(
+                            f"Injected {len(excerpts)} excerpts into Chapter {chapter_num} Key Excerpts section"
+                        )
+                    else:
+                        logger.warning(
+                            f"Chapter {chapter_num}: No excerpts to inject (empty Key Excerpts will remain)"
+                        )
+
+    return result
+
+
+# ==============================================================================
+# Quote Substring Validation (Grounding Enforcement)
+# ==============================================================================
+
+# Pattern to extract quoted text (handles straight and smart quotes)
+# Unicode: " (U+0022), " (U+201C left), " (U+201D right)
+QUOTE_PATTERN = re.compile(r'["\u201c\u201d]([^"\u201c\u201d]+)["\u201c\u201d]')
+
+# Ellipsis patterns to reject
+ELLIPSIS_PATTERNS = ['...', '\u2026', '. . .']  # U+2026 is unicode ellipsis
+
+# Truncation marker patterns to reject (indicate mid-sentence cutoff)
+# These appear at the END of quotes and suggest incomplete/truncated content
+TRUNCATION_END_PATTERNS = [
+    '\u2014',  # em-dash —
+    '\u2013',  # en-dash –
+    '—',       # em-dash (duplicate for clarity)
+    '–',       # en-dash (duplicate for clarity)
+    '-',       # hyphen at end
+]
+
+# Anachronism keywords - contemporary terms that shouldn't appear in Ideas Edition
+# unless they're actually in the transcript. These are filtered in non-quoted prose.
+ANACHRONISM_KEYWORDS = [
+    # Contemporary issues/framing
+    'climate change', 'global warming', 'carbon footprint', 'sustainability',
+    'social media', 'internet', 'online', 'digital age', 'smartphone',
+    'artificial intelligence', ' ai ', ' a.i.', 'machine learning',
+    'inequality', 'inequalities', 'social justice', 'systemic',
+    'polarization', 'misinformation', 'disinformation', 'fake news',
+    'pandemic', 'covid', 'coronavirus',
+    # Modern buzzwords
+    "today's world", "modern world", "modern challenges", "our time",
+    "21st century", "contemporary", "current era",
+    # Moralizing without evidence
+    'crucial for survival', 'moral duty', 'moral imperative', 'ethical responsibility',
+    'vigilant stewards', 'responsible stewardship',
+]
+
+
+def normalize_for_comparison(text: str) -> str:
+    """Normalize text for substring comparison.
+
+    Handles smart quotes, em-dashes, and other typography variations
+    so that quotes can match even if the transcript uses different characters.
+
+    Args:
+        text: Text to normalize.
+
+    Returns:
+        Normalized text for comparison.
+    """
+    result = text
+    # Smart quotes → straight quotes (using unicode escapes for reliability)
+    result = result.replace('\u201c', '"').replace('\u201d', '"')  # " " → "
+    result = result.replace('\u2018', "'").replace('\u2019', "'")  # ' ' → '
+    # Em-dash/en-dash → hyphen
+    result = result.replace('\u2014', '-').replace('\u2013', '-')  # — – → -
+    # Normalize whitespace
+    result = ' '.join(result.split())
+    return result.lower()
+
+
+def extract_quotes(text: str) -> list[dict]:
+    """Extract all quoted spans from text.
+
+    Args:
+        text: The generated text to scan.
+
+    Returns:
+        List of dicts with 'quote', 'start', 'end' positions.
+    """
+    quotes = []
+    for match in QUOTE_PATTERN.finditer(text):
+        quotes.append({
+            'quote': match.group(1),
+            'start': match.start(),
+            'end': match.end(),
+            'full_match': match.group(0),
+        })
+    return quotes
+
+
+def validate_quote_against_transcript(
+    quote: str,
+    transcript: str,
+) -> dict:
+    """Validate a single quote against the transcript.
+
+    Args:
+        quote: The quoted text to validate.
+        transcript: The canonical transcript text.
+
+    Returns:
+        Dict with 'valid', 'reason', and details.
+    """
+    # Check for ellipsis
+    for ellipsis in ELLIPSIS_PATTERNS:
+        if ellipsis in quote:
+            return {
+                'valid': False,
+                'reason': 'contains_ellipsis',
+                'quote': quote,
+                'ellipsis_found': ellipsis,
+            }
+
+    # Check for truncation markers at end of quote (indicates mid-sentence cutoff)
+    quote_stripped = quote.rstrip(' .,;:!?')  # Strip trailing punctuation first
+    for truncation in TRUNCATION_END_PATTERNS:
+        if quote_stripped.endswith(truncation):
+            return {
+                'valid': False,
+                'reason': 'truncated_quote',
+                'quote': quote,
+                'truncation_marker': truncation,
+            }
+
+    # Normalize both for comparison
+    quote_normalized = normalize_for_comparison(quote)
+    transcript_normalized = normalize_for_comparison(transcript)
+
+    # Check if quote is a substring of transcript
+    if quote_normalized in transcript_normalized:
+        return {
+            'valid': True,
+            'reason': 'exact_match',
+            'quote': quote,
+        }
+
+    # Not found - fabricated quote
+    return {
+        'valid': False,
+        'reason': 'not_in_transcript',
+        'quote': quote,
+    }
+
+
+def validate_quotes_in_text(
+    text: str,
+    transcript: str,
+) -> dict:
+    """Validate all quotes in generated text against transcript.
+
+    Args:
+        text: The generated text with quotes.
+        transcript: The canonical transcript text.
+
+    Returns:
+        Dict with 'valid', 'invalid_quotes', 'valid_quotes', 'summary'.
+    """
+    quotes = extract_quotes(text)
+
+    valid_quotes = []
+    invalid_quotes = []
+
+    for q in quotes:
+        result = validate_quote_against_transcript(q['quote'], transcript)
+        result['position'] = {'start': q['start'], 'end': q['end']}
+        result['full_match'] = q['full_match']
+
+        if result['valid']:
+            valid_quotes.append(result)
+        else:
+            invalid_quotes.append(result)
+
+    return {
+        'valid': len(invalid_quotes) == 0,
+        'total_quotes': len(quotes),
+        'valid_quotes': valid_quotes,
+        'invalid_quotes': invalid_quotes,
+        'summary': {
+            'total': len(quotes),
+            'valid': len(valid_quotes),
+            'invalid': len(invalid_quotes),
+            'ellipsis_violations': sum(1 for q in invalid_quotes if q['reason'] == 'contains_ellipsis'),
+            'truncation_violations': sum(1 for q in invalid_quotes if q['reason'] == 'truncated_quote'),
+            'fabricated': sum(1 for q in invalid_quotes if q['reason'] == 'not_in_transcript'),
+        }
+    }
+
+
+def remove_invalid_quotes(
+    text: str,
+    invalid_quotes: list[dict],
+) -> tuple[str, list[str]]:
+    """Convert invalid quotes to paraphrases by removing quotation marks.
+
+    Instead of deleting sentences with invalid quotes (too destructive),
+    we keep the text but remove the quotation marks - converting a false
+    direct quote into a paraphrase.
+
+    Args:
+        text: The generated text.
+        invalid_quotes: List of invalid quote dicts from validate_quotes_in_text.
+
+    Returns:
+        Tuple of (cleaned_text, list of converted quote texts).
+    """
+    if not invalid_quotes:
+        return text, []
+
+    converted_quotes = []
+    result = text
+
+    # Sort by position descending so we can replace from end first
+    # (avoids position shifts)
+    sorted_quotes = sorted(invalid_quotes, key=lambda q: q['position']['start'], reverse=True)
+
+    for invalid in sorted_quotes:
+        quote_text = invalid['full_match']  # includes surrounding quotes
+        inner_text = invalid['quote']  # just the text inside quotes
+
+        # Find the quoted text in the result
+        pos = result.find(quote_text)
+        if pos == -1:
+            continue
+
+        # Replace quoted text with unquoted version (convert to paraphrase)
+        result = result[:pos] + inner_text + result[pos + len(quote_text):]
+        converted_quotes.append(inner_text)
+
+    return result, converted_quotes
+
+
+def enforce_quote_grounding(
+    text: str,
+    transcript: str,
+    convert_invalid: bool = True,
+) -> tuple[str, dict]:
+    """Enforce quote grounding: validate and optionally convert invalid quotes to paraphrases.
+
+    Invalid quotes are converted to paraphrases by removing quotation marks
+    (preserving the text content). This is less destructive than deleting
+    entire sentences.
+
+    Args:
+        text: The generated text.
+        transcript: The canonical transcript.
+        convert_invalid: If True, convert invalid quotes to paraphrases.
+
+    Returns:
+        Tuple of (cleaned_text, validation_report).
+    """
+    validation = validate_quotes_in_text(text, transcript)
+
+    result = text
+    converted = []
+
+    if convert_invalid and validation['invalid_quotes']:
+        result, converted = remove_invalid_quotes(text, validation['invalid_quotes'])
+        logger.info(
+            f"Quote grounding: converted {len(converted)} invalid quotes to paraphrases "
+            f"({validation['summary']['ellipsis_violations']} ellipsis, "
+            f"{validation['summary']['fabricated']} fabricated)"
+        )
+    elif validation['invalid_quotes']:
+        logger.warning(
+            f"Quote grounding: {len(validation['invalid_quotes'])} invalid quotes found "
+            f"(conversion disabled)"
+        )
+
+    report = {
+        **validation,
+        'converted_quotes': converted,
+    }
+
+    return result, report
+
+
+def drop_claims_with_invalid_quotes(
+    text: str,
+    transcript: str,
+) -> tuple[str, dict]:
+    """Drop Core Claim bullets whose supporting quotes fail validation.
+
+    This is a HARD GATE for Core Claims integrity. When a Core Claim's
+    supporting quote cannot be validated against the transcript, the
+    entire bullet is dropped (not just de-quoted). This maintains the
+    integrity of "quote-backed claims."
+
+    Only operates on ### Core Claims sections to avoid affecting narrative
+    prose or Key Excerpts sections.
+
+    Args:
+        text: The generated text containing Core Claims sections.
+        transcript: The canonical transcript for validation.
+
+    Returns:
+        Tuple of (cleaned_text, report_dict with dropped claims info).
+    """
+    lines = text.split('\n')
+    result_lines = []
+    dropped_claims = []
+    in_core_claims_section = False
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        # Detect Core Claims section start
+        if line.strip() == '### Core Claims':
+            in_core_claims_section = True
+            result_lines.append(line)
+            i += 1
+            continue
+
+        # Detect end of Core Claims section (next section heading or chapter)
+        if in_core_claims_section and line.strip().startswith('#'):
+            in_core_claims_section = False
+            # Fall through to append the line
+
+        # Process Core Claim bullets
+        if in_core_claims_section and line.strip().startswith('- **'):
+            # Collect the full bullet (may span multiple lines)
+            bullet_lines = [line]
+            j = i + 1
+            while j < len(lines):
+                next_line = lines[j]
+                # Next bullet, section heading, or blank line ends this bullet
+                if (next_line.strip().startswith('- **') or
+                    next_line.strip().startswith('#') or
+                    next_line.strip() == ''):
+                    break
+                bullet_lines.append(next_line)
+                j += 1
+
+            bullet_text = '\n'.join(bullet_lines)
+
+            # Extract the supporting quote from the bullet
+            # Format: - **Claim text**: "supporting quote"
+            quote_match = QUOTE_PATTERN.search(bullet_text)
+
+            if quote_match:
+                supporting_quote = quote_match.group(1)
+                # Validate this quote against transcript
+                validation = validate_quote_against_transcript(supporting_quote, transcript)
+
+                if not validation['valid']:
+                    # DROP the entire bullet - hard gate
+                    dropped_claims.append({
+                        'claim_preview': bullet_text[:100].replace('\n', ' '),
+                        'quote': supporting_quote[:60],
+                        'reason': validation['reason'],
+                    })
+                    # Skip to end of this bullet
+                    i = j
+                    continue
+
+            # Quote is valid (or no quote found) - keep the bullet
+            result_lines.extend(bullet_lines)
+            i = j
+            continue
+
+        result_lines.append(line)
+        i += 1
+
+    result_text = '\n'.join(result_lines)
+
+    # Handle empty Core Claims sections - add placeholder
+    # Match: ### Core Claims followed by only whitespace until next heading or EOF
+    result_text = re.sub(
+        r'(### Core Claims)\n+(?=### |## |\Z)',
+        r'\1\n*No fully grounded claims available for this chapter.*\n\n',
+        result_text
+    )
+
+    return result_text, {
+        "dropped_count": len(dropped_claims),
+        "dropped_claims": dropped_claims[:10],  # Limit for logging
+    }
+
+
+def drop_excerpts_with_invalid_quotes(
+    text: str,
+    transcript: str,
+) -> tuple[str, dict]:
+    """Drop Key Excerpt blocks whose quotes fail validation.
+
+    This is a HARD GATE for Key Excerpts integrity. When a Key Excerpt's
+    quote cannot be validated against the transcript, the entire block
+    is dropped (quote line + attribution line). This maintains the
+    integrity of "source truth" excerpts.
+
+    Also drops excerpts with "Unknown" attribution - if the LLM isn't
+    confident about the speaker, the excerpt shouldn't survive.
+
+    Only operates on ### Key Excerpts sections to avoid affecting narrative
+    prose or Core Claims sections.
+
+    Args:
+        text: The generated text containing Key Excerpts sections.
+        transcript: The canonical transcript for validation.
+
+    Returns:
+        Tuple of (cleaned_text, report_dict with dropped excerpts info).
+    """
+    lines = text.split('\n')
+    result_lines = []
+    dropped_excerpts = []
+    in_key_excerpts_section = False
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        # Detect Key Excerpts section start
+        if line.strip() == '### Key Excerpts':
+            in_key_excerpts_section = True
+            result_lines.append(line)
+            i += 1
+            continue
+
+        # Detect end of Key Excerpts section (next section heading or chapter)
+        if in_key_excerpts_section and line.strip().startswith('#'):
+            in_key_excerpts_section = False
+            # Fall through to append the line
+
+        # Process block quote lines in Key Excerpts
+        if in_key_excerpts_section and line.strip().startswith('>'):
+            # Collect the full excerpt block (quote line(s) + attribution line)
+            block_lines = [line]
+            j = i + 1
+
+            # Collect continuation lines (more > lines, attribution, blank lines within block)
+            while j < len(lines):
+                next_line = lines[j]
+                stripped = next_line.strip()
+
+                # Continue if it's part of the block quote
+                if stripped.startswith('>'):
+                    block_lines.append(next_line)
+                    j += 1
+                    continue
+
+                # Empty line after block - include it as separator
+                if stripped == '':
+                    block_lines.append(next_line)
+                    j += 1
+                    break
+
+                # Section heading means end of excerpts
+                if stripped.startswith('#'):
+                    break
+
+                # Any other content means end of this block
+                break
+
+            block_text = '\n'.join(block_lines)
+
+            # Check for "Unknown" attribution - automatic fail
+            if '— Unknown' in block_text or '- Unknown' in block_text:
+                dropped_excerpts.append({
+                    'excerpt_preview': block_text[:100].replace('\n', ' '),
+                    'reason': 'unknown_attribution',
+                })
+                i = j
+                continue
+
+            # Extract the quote from the block (first > line with quoted content)
+            quote_match = QUOTE_PATTERN.search(block_text)
+
+            if quote_match:
+                excerpt_quote = quote_match.group(1)
+                # Validate this quote against transcript
+                validation = validate_quote_against_transcript(excerpt_quote, transcript)
+
+                if not validation['valid']:
+                    # DROP the entire block - hard gate
+                    dropped_excerpts.append({
+                        'excerpt_preview': block_text[:100].replace('\n', ' '),
+                        'quote': excerpt_quote[:60],
+                        'reason': validation['reason'],
+                    })
+                    i = j
+                    continue
+
+            # Quote is valid (or no quote found) - keep the block
+            result_lines.extend(block_lines)
+            i = j
+            continue
+
+        result_lines.append(line)
+        i += 1
+
+    result_text = '\n'.join(result_lines)
+
+    # Handle empty Key Excerpts sections - add placeholder
+    result_text = re.sub(
+        r'(### Key Excerpts)\n+(?=### |## |\Z)',
+        r'\1\n*No fully grounded excerpts available for this chapter.*\n\n',
+        result_text
+    )
+
+    return result_text, {
+        "dropped_count": len(dropped_excerpts),
+        "dropped_excerpts": dropped_excerpts[:10],  # Limit for logging
+    }
+
+
+# ==============================================================================
+# Global Ellipsis Ban (Step B)
+# ==============================================================================
+# Ellipses anywhere in Ideas Edition output indicate truncation/approximation.
+# They almost always mean "I'm hiding missing words" - unacceptable for grounded content.
+
+# Pattern to find ellipsis in text (three dots, unicode ellipsis, or spaced dots)
+GLOBAL_ELLIPSIS_PATTERN = re.compile(r'\.{3}|\u2026|\. \. \.')
+
+
+def find_ellipses_in_text(text: str) -> list[dict]:
+    """Find all ellipsis occurrences in text.
+
+    Args:
+        text: The generated text to scan.
+
+    Returns:
+        List of dicts with 'match', 'start', 'end', 'context' (surrounding sentence).
+    """
+    ellipses = []
+    for match in GLOBAL_ELLIPSIS_PATTERN.finditer(text):
+        # Get surrounding context (the sentence containing the ellipsis)
+        start_pos = match.start()
+        end_pos = match.end()
+
+        # Find sentence boundaries
+        sentence_start = 0
+        for i in range(start_pos - 1, -1, -1):
+            if text[i] in '.!?\n' and i < start_pos - 1:
+                sentence_start = i + 1
+                break
+
+        sentence_end = len(text)
+        for i in range(end_pos, len(text)):
+            if text[i] in '.!?\n':
+                sentence_end = i + 1
+                break
+
+        context = text[sentence_start:sentence_end].strip()
+
+        ellipses.append({
+            'match': match.group(0),
+            'start': start_pos,
+            'end': end_pos,
+            'sentence_start': sentence_start,
+            'sentence_end': sentence_end,
+            'context': context,
+        })
+
+    return ellipses
+
+
+def remove_ellipsis_sentences(text: str, ellipses: list[dict]) -> tuple[str, list[str]]:
+    """Remove sentences containing ellipses from text.
+
+    Args:
+        text: The generated text.
+        ellipses: List of ellipsis dicts from find_ellipses_in_text.
+
+    Returns:
+        Tuple of (cleaned_text, list of removed sentences).
+    """
+    if not ellipses:
+        return text, []
+
+    removed_sentences = []
+    result = text
+
+    # Sort by position descending to remove from end first (avoids position shifts)
+    sorted_ellipses = sorted(ellipses, key=lambda e: e['sentence_start'], reverse=True)
+
+    # Track which sentence ranges we've already removed to avoid duplicates
+    removed_ranges = set()
+
+    for ellipsis in sorted_ellipses:
+        range_key = (ellipsis['sentence_start'], ellipsis['sentence_end'])
+        if range_key in removed_ranges:
+            continue
+
+        sentence = ellipsis['context']
+        if sentence:
+            removed_sentences.append(sentence)
+            # Remove the sentence
+            result = result[:ellipsis['sentence_start']] + result[ellipsis['sentence_end']:]
+            removed_ranges.add(range_key)
+
+    # Clean up multiple consecutive newlines/spaces
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    result = re.sub(r'  +', ' ', result)
+
+    return result.strip(), removed_sentences
+
+
+def enforce_ellipsis_ban(text: str, remove_sentences: bool = True) -> tuple[str, dict]:
+    """Enforce global ellipsis ban: find and optionally remove ellipsis-containing sentences.
+
+    Args:
+        text: The generated text.
+        remove_sentences: If True, remove sentences containing ellipses.
+
+    Returns:
+        Tuple of (cleaned_text, report_dict).
+    """
+    ellipses = find_ellipses_in_text(text)
+
+    result = text
+    removed = []
+
+    if remove_sentences and ellipses:
+        result, removed = remove_ellipsis_sentences(text, ellipses)
+        logger.info(
+            f"Ellipsis ban: removed {len(removed)} sentences containing ellipses"
+        )
+    elif ellipses:
+        logger.warning(
+            f"Ellipsis ban: {len(ellipses)} ellipses found (removal disabled)"
+        )
+
+    report = {
+        'ellipses_found': len(ellipses),
+        'ellipsis_locations': [
+            {'match': e['match'], 'context': e['context'][:80] + '...' if len(e['context']) > 80 else e['context']}
+            for e in ellipses
+        ],
+        'removed_sentences': removed,
+    }
+
+    return result, report
+
+
+# ==============================================================================
+# Attributed-Speech Enforcement (Step A) - HARD ENFORCEMENT
+# ==============================================================================
+# Detects patterns like "Deutsch argues, X" which bypass quote validation.
+# Treats these as quote candidates - validates X against transcript.
+# If valid: wraps X in quotes. If invalid: DELETES entire clause.
+
+# Attribution verbs commonly used
+ATTRIBUTION_VERBS = r'(?:argues?|says?|notes?|observes?|warns?|asserts?|claims?|explains?|points?\s+out|suggests?|states?|contends?|believes?|maintains?|emphasizes?|stresses?|highlights?|insists?|remarks?|cautions?|envisions?|tells?|adds?|writes?|acknowledges?|reflects?|challenges?|sees?|views?|thinks?|considers?|describes?|calls?|puts?)'
+
+# Pattern 1: "Speaker verb, X" or "Speaker verb that X" or "Speaker verb: X"
+# Matches: Deutsch argues, X / Deutsch says that X / Deutsch notes: X
+# Also handles em-dash: Deutsch says—X
+ATTRIBUTED_SPEECH_PATTERN_PREFIX = re.compile(
+    r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?|He|She)\s+' +  # Speaker name or pronoun
+    ATTRIBUTION_VERBS +
+    r'(?:,|:|\s+that|\s*\u2014|\s*-)\s*(.+?)(?:\.(?:\s|$)|$)',  # Content after punctuation
+    re.MULTILINE | re.DOTALL
+)
+
+# Pattern 2: "X, Speaker verb." (suffix attribution)
+ATTRIBUTED_SPEECH_PATTERN_SUFFIX = re.compile(
+    r'([^.!?]+?),\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?|he|she)\s+' + ATTRIBUTION_VERBS + r'\.',
+    re.MULTILINE | re.IGNORECASE
+)
+
+# Pattern 3: "Speaker: X" (colon form, narrative use)
+ATTRIBUTED_SPEECH_PATTERN_COLON = re.compile(
+    r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*:\s+([^.!?]+[.!?])',
+    re.MULTILINE
+)
+
+
+def find_attributed_speech(text: str) -> list[dict]:
+    """Find all attributed speech patterns in text.
+
+    Detects patterns like:
+    - Deutsch argues, X
+    - He says that X
+    - Deutsch notes: X
+    - Deutsch says—X
+    - X, Deutsch argues.
+
+    Args:
+        text: The generated text to scan.
+
+    Returns:
+        List of dicts with 'speaker', 'content', 'full_match', 'start', 'end', 'pattern_type'.
+    """
+    attributed = []
+
+    # Find prefix patterns: "Deutsch argues, X" / "He says that X" / "Deutsch: X"
+    for match in ATTRIBUTED_SPEECH_PATTERN_PREFIX.finditer(text):
+        speaker = match.group(1)
+        content = match.group(2).strip()
+        # Remove trailing period if present (we'll add it back later)
+        if content.endswith('.'):
+            content = content[:-1].strip()
+        # Skip if content is very short (likely not a real attribution)
+        if len(content) < 10:
+            continue
+        # Skip if content is already in quotes (already handled by quote validator)
+        if content.startswith('"') or content.startswith('\u201c'):
+            continue
+        attributed.append({
+            'speaker': speaker,
+            'content': content,
+            'full_match': match.group(0),
+            'start': match.start(),
+            'end': match.end(),
+            'pattern_type': 'prefix',
+        })
+
+    # Find suffix patterns: "X, Deutsch argues."
+    for match in ATTRIBUTED_SPEECH_PATTERN_SUFFIX.finditer(text):
+        content = match.group(1).strip()
+        speaker = match.group(2)
+        if len(content) < 10:
+            continue
+        if content.startswith('"') or content.startswith('\u201c'):
+            continue
+        attributed.append({
+            'speaker': speaker,
+            'content': content,
+            'full_match': match.group(0),
+            'start': match.start(),
+            'end': match.end(),
+            'pattern_type': 'suffix',
+        })
+
+    # Find colon patterns: "Deutsch: X" (but not in dialogue context)
+    for match in ATTRIBUTED_SPEECH_PATTERN_COLON.finditer(text):
+        speaker = match.group(1)
+        content = match.group(2).strip()
+        # Skip common non-attribution uses
+        if speaker.lower() in ('example', 'note', 'warning', 'tip', 'summary', 'chapter'):
+            continue
+        if len(content) < 10:
+            continue
+        if content.startswith('"') or content.startswith('\u201c'):
+            continue
+        attributed.append({
+            'speaker': speaker,
+            'content': content,
+            'full_match': match.group(0),
+            'start': match.start(),
+            'end': match.end(),
+            'pattern_type': 'colon',
+        })
+
+    # Sort by position and deduplicate overlapping matches
+    attributed.sort(key=lambda x: x['start'])
+    deduplicated = []
+    last_end = -1
+    for attr in attributed:
+        if attr['start'] >= last_end:
+            deduplicated.append(attr)
+            last_end = attr['end']
+
+    return deduplicated
+
+
+def validate_attributed_content(
+    content: str,
+    transcript: str,
+) -> dict:
+    """Validate attributed content against transcript using exact substring matching.
+
+    Uses same normalization as quote validator for consistency.
+
+    Args:
+        content: The attributed content (X in "Deutsch says, X").
+        transcript: The canonical transcript.
+
+    Returns:
+        Dict with 'valid', 'reason', 'has_ellipsis'.
+    """
+    # Check for ellipsis in content (automatic rejection)
+    has_ellipsis = any(p in content for p in ELLIPSIS_PATTERNS)
+    if has_ellipsis:
+        return {
+            'valid': False,
+            'reason': 'contains_ellipsis',
+            'has_ellipsis': True,
+        }
+
+    # Normalize both for comparison
+    content_normalized = normalize_for_comparison(content)
+    transcript_normalized = normalize_for_comparison(transcript)
+
+    # Exact substring match (same as quote validator)
+    if content_normalized in transcript_normalized:
+        return {
+            'valid': True,
+            'reason': 'exact_match',
+            'has_ellipsis': False,
+        }
+
+    return {
+        'valid': False,
+        'reason': 'not_in_transcript',
+        'has_ellipsis': False,
+    }
+
+
+def get_sentence_boundaries(text: str, pos: int) -> tuple[int, int]:
+    """Find the start and end of the sentence containing position pos.
+
+    Args:
+        text: The full text.
+        pos: Position within the text.
+
+    Returns:
+        Tuple of (sentence_start, sentence_end).
+    """
+    # Find sentence start (look backward for sentence end or start of text)
+    sentence_start = 0
+    for i in range(pos - 1, -1, -1):
+        if text[i] in '.!?\n' and i < pos - 1:
+            sentence_start = i + 1
+            break
+
+    # Find sentence end (look forward for sentence end or end of text)
+    sentence_end = len(text)
+    for i in range(pos, len(text)):
+        if text[i] in '.!?\n':
+            sentence_end = i + 1
+            break
+
+    return sentence_start, sentence_end
+
+
+def enforce_attributed_speech_hard(
+    text: str,
+    transcript: str,
+) -> tuple[str, dict]:
+    """HARD enforcement of attributed speech validation.
+
+    Rules:
+    - Detect patterns like "Deutsch argues, X" / "He says, X" / "Deutsch: X"
+    - Validate X against transcript (exact substring match)
+    - If valid AND no ellipsis: wrap X in quotes → Deutsch argues, "X".
+    - If invalid OR has ellipsis: DELETE entire clause/sentence
+
+    Args:
+        text: The generated text.
+        transcript: The canonical transcript.
+
+    Returns:
+        Tuple of (cleaned_text, report_dict).
+    """
+    attributed = find_attributed_speech(text)
+
+    valid_converted = []  # Valid attributions that got quotes added
+    invalid_deleted = []  # Invalid attributions that were deleted
+    result = text
+
+    # Process in reverse order to maintain positions
+    for attr in reversed(attributed):
+        content = attr['content']
+        speaker = attr['speaker']
+        full_match = attr['full_match']
+
+        # Validate content against transcript
+        validation = validate_attributed_content(content, transcript)
+
+        if validation['valid']:
+            # VALID: Wrap content in quotes
+            # "Deutsch argues, X becomes Y." → "Deutsch argues, "X becomes Y.""
+            pos = result.find(full_match)
+            if pos == -1:
+                continue
+
+            # Build the quoted version
+            if attr['pattern_type'] == 'suffix':
+                # "X, Deutsch argues." → ""X," Deutsch argues."
+                # Extract the full attribution clause (everything after content)
+                # to preserve phrases like "Deutsch tells me" or "Deutsch points out here"
+                attribution_clause = full_match[len(content):].strip()
+                # Remove leading comma if present
+                if attribution_clause.startswith(','):
+                    attribution_clause = attribution_clause[1:].strip()
+                # Ensure it ends with a period
+                if not attribution_clause.endswith('.'):
+                    attribution_clause = attribution_clause + '.'
+                quoted_version = f'"{content}," {attribution_clause}'
+            else:
+                # "Deutsch argues, X." → "Deutsch argues, "X.""
+                verb = _extract_verb(full_match, speaker)
+                quoted_version = f'{speaker} {verb}, "{content}."'
+
+            result = result[:pos] + quoted_version + result[pos + len(full_match):]
+            valid_converted.append({
+                'speaker': speaker,
+                'content': content[:50] + '...' if len(content) > 50 else content,
+                'action': 'quoted',
+            })
+        else:
+            # INVALID: Delete entire sentence containing this attribution
+            pos = result.find(full_match)
+            if pos == -1:
+                continue
+
+            # Find and delete the entire sentence
+            sent_start, sent_end = get_sentence_boundaries(result, pos)
+            deleted_sentence = result[sent_start:sent_end].strip()
+
+            result = result[:sent_start] + result[sent_end:]
+            invalid_deleted.append({
+                'speaker': speaker,
+                'content': content[:50] + '...' if len(content) > 50 else content,
+                'reason': validation['reason'],
+                'deleted_sentence': deleted_sentence[:80] + '...' if len(deleted_sentence) > 80 else deleted_sentence,
+            })
+
+    # Clean up multiple consecutive newlines/spaces
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    result = re.sub(r'  +', ' ', result)
+
+    # Grammar repair pass: remove orphan fragments
+    result = repair_grammar_fragments(result)
+
+    if valid_converted:
+        logger.info(
+            f"Attribution enforcement: converted {len(valid_converted)} valid attributions to quotes"
+        )
+    if invalid_deleted:
+        logger.info(
+            f"Attribution enforcement: deleted {len(invalid_deleted)} invalid attributions"
+        )
+
+    report = {
+        'total_found': len(attributed),
+        'valid_converted': len(valid_converted),
+        'invalid_deleted': len(invalid_deleted),
+        'valid_details': valid_converted,
+        'invalid_details': invalid_deleted,
+    }
+
+    return result.strip(), report
+
+
+def _extract_verb(full_match: str, speaker: str) -> str:
+    """Extract the attribution verb from a full match.
+
+    Handles both prefix patterns ("Deutsch argues, X") and suffix patterns
+    ("X, Deutsch argues.") by finding the speaker position in the string.
+
+    Args:
+        full_match: The full matched string
+        speaker: The speaker name (e.g., "Deutsch")
+
+    Returns:
+        The verb (e.g., "argues")
+    """
+    # Find speaker position in the string (case-insensitive)
+    speaker_pos = full_match.lower().find(speaker.lower())
+    if speaker_pos == -1:
+        return 'says'  # Default fallback
+
+    # Get text after the speaker
+    after_speaker = full_match[speaker_pos + len(speaker):].strip()
+
+    # Extract verb (first word)
+    verb_match = re.match(r'(\w+)', after_speaker)
+    if verb_match:
+        return verb_match.group(1)
+    return 'says'  # Default fallback
+
+
+def repair_grammar_fragments(text: str) -> str:
+    """Repair grammar fragments left after sentence deletions.
+
+    Detects and removes:
+    - Orphan sentence fragments (e.g., "Against the idea that...")
+    - Sentences starting with lowercase (unless after colon)
+    - Very short sentences that look incomplete
+    - Pronoun orphans: paragraphs starting with It/This/That/These/They + verb
+      where the antecedent was likely deleted
+
+    Args:
+        text: Text that may have fragments after deletions.
+
+    Returns:
+        Cleaned text with fragments removed.
+    """
+    # Split into paragraphs (double newline) for pronoun orphan detection
+    paragraphs = text.split('\n\n')
+    repaired_paragraphs = []
+
+    for i, para in enumerate(paragraphs):
+        stripped = para.strip()
+        if not stripped:
+            continue
+
+        # Skip headings
+        if stripped.startswith('#'):
+            repaired_paragraphs.append(para)
+            continue
+
+        # Check for pronoun orphans at paragraph start
+        # Pattern: starts with pronoun + verb, suggesting missing antecedent
+        pronoun_orphan_patterns = [
+            # "It grows and changes..." - orphaned "it" without clear referent
+            r'^It\s+(is|was|grows|changes|reflects|represents|suggests|shows|demonstrates|illustrates|captures|marks|reveals|becomes|remains|continues|appears|seems)\b',
+            # "This challenges..." - orphaned "this" without clear referent
+            r'^This\s+(is|was|challenges|shows|suggests|indicates|demonstrates|reflects|captures|marks|reveals|means|implies|highlights|underscores|proves|confirms)\b',
+            # "That is..." - orphaned "that"
+            r'^That\s+(is|was|shows|means|suggests)\b',
+            # "These ideas..." - may be orphaned if previous context deleted
+            r'^These\s+(are|were|ideas?|concepts?|views?|notions?|principles?)\b',
+            # "They believed..." - orphaned subject
+            r'^They\s+(are|were|have|had|believed|thought|argued|suggested)\b',
+            # "He/She envisions..." - orphaned third-person pronoun without named referent
+            r'^He\s+(is|was|has|had|argues?|says?|notes?|observes?|warns?|asserts?|claims?|explains?|points?\s+out|suggests?|states?|contends?|believes?|maintains?|emphasizes?|stresses?|highlights?|insists?|remarks?|cautions?|envisions?|tells?|adds?|writes?|acknowledges?|reflects?|sees?|views?|challenges?|thinks?|considers?|describes?|calls?|puts?)\b',
+            r'^She\s+(is|was|has|had|argues?|says?|notes?|observes?|warns?|asserts?|claims?|explains?|points?\s+out|suggests?|states?|contends?|believes?|maintains?|emphasizes?|stresses?|highlights?|insists?|remarks?|cautions?|envisions?|tells?|adds?|writes?|acknowledges?|reflects?|sees?|views?|challenges?|thinks?|considers?|describes?|calls?|puts?)\b',
+        ]
+
+        is_pronoun_orphan = False
+        for pattern in pronoun_orphan_patterns:
+            if re.match(pattern, stripped, re.IGNORECASE):
+                # Check if previous paragraph provides a clear antecedent
+                # Heuristic: if this is the first paragraph or prev ends without a noun phrase, it's orphaned
+                if i == 0:
+                    is_pronoun_orphan = True
+                    break
+                # Check if previous paragraph exists and ends with potential antecedent
+                prev_para = paragraphs[i - 1].strip() if i > 0 else ""
+                if not prev_para or prev_para.startswith('#'):
+                    # No previous content or just a heading - definitely orphaned
+                    is_pronoun_orphan = True
+                    break
+                # Check if previous paragraph ends with a clear noun that could be antecedent
+                # This is a heuristic - if prev is very short, may be orphaned
+                # Filter out empty strings from split (happens when sentence ends with punctuation)
+                prev_sentences = [s for s in re.split(r'[.!?]\s*', prev_para) if s.strip()]
+                last_sentence = prev_sentences[-1] if prev_sentences else ""
+                # If the previous paragraph is very short overall, likely orphaned
+                # (A long paragraph likely establishes context)
+                if len(prev_para.strip()) < 50:
+                    is_pronoun_orphan = True
+                    break
+
+        if is_pronoun_orphan:
+            logger.info(f"Removing pronoun orphan: {stripped[:60]}...")
+            continue
+
+        # Also check for other fragment patterns within the paragraph
+        lines = para.split('\n')
+        repaired_lines = []
+
+        for line in lines:
+            line_stripped = line.strip()
+            if not line_stripped:
+                repaired_lines.append(line)
+                continue
+
+            # Check for orphan fragments
+            is_fragment = False
+
+            # Lowercase start is always a fragment (proper sentences start with capitals)
+            if re.match(r'^[a-z]', line_stripped) and not line_stripped.startswith('#'):
+                is_fragment = True
+
+            # Check other fragment patterns (need additional criteria)
+            if not is_fragment:
+                fragment_patterns = [
+                    r'^Against\s+',  # Orphaned "Against..."
+                    r'^Which\s+',  # Orphaned "Which..."
+                    r'^And\s+the\s+',  # Orphaned "And the..."
+                ]
+                for pattern in fragment_patterns:
+                    if re.match(pattern, line_stripped):
+                        # Check if it's a complete sentence (has ending punctuation and reasonable length)
+                        if len(line_stripped) < 30 or not line_stripped.endswith(('.', '!', '?')):
+                            is_fragment = True
+                            break
+
+            if is_fragment:
+                logger.debug(f"Removing fragment: {line_stripped[:50]}...")
+                continue
+
+            repaired_lines.append(line)
+
+        repaired_para = '\n'.join(repaired_lines)
+
+        # Remove mid-sentence orphan "He/She + verb" patterns
+        # Pattern: sentence ending + "He/She" + attribution verb + content + sentence ending
+        # Example: "...our future. He challenges the common belief..." → remove "He challenges..." sentence
+        # Also handles: "He states, X" and "He states that X" and "He states: X"
+        mid_sentence_orphan_pattern = re.compile(
+            r'([.!?])\s+'  # Sentence ending + space
+            r'(He|She)\s+'  # Orphan pronoun
+            r'(?:is|was|has|had|argues?|says?|notes?|observes?|warns?|asserts?|claims?|explains?|'
+            r'points?\s+out|suggests?|states?|contends?|believes?|maintains?|emphasizes?|stresses?|'
+            r'highlights?|insists?|remarks?|cautions?|envisions?|tells?|adds?|writes?|acknowledges?|'
+            r'reflects?|challenges?|sees?|views?|thinks?|considers?|describes?|calls?|puts?)'
+            r'(?:,|:|\s+that)?\s+'  # Optional comma, colon, or "that" after verb
+            r'[^.!?]+[.!?]',  # Rest of sentence until ending
+            re.IGNORECASE
+        )
+
+        # Keep removing orphan sentences until none are found
+        while True:
+            match = mid_sentence_orphan_pattern.search(repaired_para)
+            if not match:
+                break
+            # Remove the orphan sentence but keep the sentence ending from the previous sentence
+            orphan_sentence = match.group(0)[1:].strip()  # Skip the sentence ending char
+            logger.info(f"Removing mid-sentence orphan: {orphan_sentence[:50]}...")
+            # Replace with just the sentence ending (keep the period/etc from previous sentence)
+            repaired_para = repaired_para[:match.start() + 1] + repaired_para[match.end():]
+
+        if repaired_para.strip():
+            repaired_paragraphs.append(repaired_para)
+
+    return '\n\n'.join(repaired_paragraphs)
+
+
+def repair_whitespace(text: str) -> str:
+    """Repair whitespace issues left after sentence/paragraph deletions.
+
+    Fixes:
+    - Missing space after closing quote before next word: `."This` → `." This`
+    - Leading spaces at start of paragraphs
+    - Multiple consecutive blank lines
+    - Multiple consecutive spaces
+
+    Args:
+        text: Text that may have whitespace issues after deletions.
+
+    Returns:
+        Text with repaired whitespace.
+    """
+    result = text
+
+    # Fix missing space after closing quote + punctuation before capital letter
+    # Pattern: closing punctuation + quote + capital letter (no space between)
+    # e.g., `wrong."This` → `wrong." This`
+    # Use negative lookahead to avoid adding space if one already exists
+    result = re.sub(r'([.!?])(["\u201d])(?! )([A-Z])', r'\1\2 \3', result)
+
+    # Fix leading spaces at start of paragraphs
+    # Split by paragraph, strip leading whitespace from each, rejoin
+    paragraphs = result.split('\n\n')
+    cleaned_paragraphs = []
+    for para in paragraphs:
+        # Strip leading spaces from each line in the paragraph
+        lines = para.split('\n')
+        cleaned_lines = [line.lstrip() if not line.strip().startswith('#') else line for line in lines]
+        cleaned_paragraphs.append('\n'.join(cleaned_lines))
+
+    result = '\n\n'.join(cleaned_paragraphs)
+
+    # Normalize multiple blank lines to double newline
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    # Normalize multiple spaces to single space (but preserve indentation)
+    result = re.sub(r'  +', ' ', result)
+
+    return result.strip()
+
+
+def fix_unquoted_excerpts(text: str) -> tuple[str, dict]:
+    """Fix unquoted block quotes and Core Claims in Ideas Edition output.
+
+    Detects and wraps:
+    1. Block quotes (> lines) without quotation marks
+    2. Core Claims bullets with unquoted supporting text after colon
+
+    Args:
+        text: The generated text.
+
+    Returns:
+        Tuple of (fixed_text, report_dict).
+    """
+    lines = text.split('\n')
+    fixed_lines = []
+    fixes_made = []
+
+    for i, line in enumerate(lines):
+        fixed_line = line
+
+        # Fix block quotes without quotation marks
+        # Pattern: > Some text without quotes
+        # Should be: > "Some text"
+        if line.strip().startswith('>'):
+            content = line.strip()[1:].strip()  # Remove > and whitespace
+            # Skip attribution lines (— Speaker)
+            if content.startswith('—') or content.startswith('-'):
+                fixed_lines.append(line)
+                continue
+            # Skip if already has quotes
+            if content.startswith('"') or content.startswith('\u201c'):
+                fixed_lines.append(line)
+                continue
+            # Skip empty lines
+            if not content:
+                fixed_lines.append(line)
+                continue
+            # Wrap in quotes
+            # Preserve leading whitespace from original line
+            leading_ws = len(line) - len(line.lstrip())
+            fixed_line = ' ' * leading_ws + '> "' + content + '"'
+            fixes_made.append({
+                'type': 'block_quote',
+                'line': i + 1,
+                'original': line.strip()[:50] + '...' if len(line.strip()) > 50 else line.strip(),
+            })
+
+        # Fix Core Claims without quotation marks
+        # Pattern: - **Claim**: some text without quotes
+        # Should be: - **Claim**: "Some text"
+        elif line.strip().startswith('- **') and '**: ' in line:
+            # Split into claim part and quote part
+            match = re.match(r'^(\s*-\s+\*\*[^*]+\*\*:\s*)(.+)$', line)
+            if match:
+                prefix = match.group(1)
+                quote_part = match.group(2).strip()
+                # Skip if already quoted
+                if quote_part.startswith('"') or quote_part.startswith('\u201c'):
+                    fixed_lines.append(line)
+                    continue
+                # Wrap in quotes, capitalize first letter
+                if quote_part:
+                    # Capitalize first letter if lowercase
+                    if quote_part[0].islower():
+                        quote_part = quote_part[0].upper() + quote_part[1:]
+                    # Remove trailing period if present, we'll add it after the quote
+                    if quote_part.endswith('.'):
+                        quote_part = quote_part[:-1]
+                    fixed_line = prefix + '"' + quote_part + '."'
+                    fixes_made.append({
+                        'type': 'core_claim',
+                        'line': i + 1,
+                        'original': line.strip()[:50] + '...' if len(line.strip()) > 50 else line.strip(),
+                    })
+
+        fixed_lines.append(fixed_line)
+
+    report = {
+        'fixes_made': len(fixes_made),
+        'fix_details': fixes_made[:10],  # Limit to first 10 for brevity
+    }
+
+    if fixes_made:
+        logger.info(f"Fixed {len(fixes_made)} unquoted excerpts/claims")
+
+    return '\n'.join(fixed_lines), report
+
+
+def filter_anachronism_paragraphs(text: str) -> tuple[str, dict]:
+    """Filter paragraphs containing anachronism keywords without validated quotes.
+
+    This is a safety net for Ideas Edition to catch contemporary framing
+    that slipped past generation prompts. Only removes paragraphs that:
+    1. Contain an anachronism keyword (case-insensitive)
+    2. Do NOT contain a validated quote (text in quotation marks)
+
+    Args:
+        text: The generated text.
+
+    Returns:
+        Tuple of (cleaned_text, report_dict).
+    """
+    paragraphs = text.split('\n\n')
+    filtered_paragraphs = []
+    removed_paragraphs = []
+
+    for para in paragraphs:
+        stripped = para.strip()
+        if not stripped:
+            continue
+
+        # Skip headings
+        if stripped.startswith('#'):
+            filtered_paragraphs.append(para)
+            continue
+
+        # Check if paragraph has a quote (any quoted text)
+        has_quote = bool(QUOTE_PATTERN.search(stripped))
+
+        # Check for anachronism keywords (case-insensitive)
+        para_lower = stripped.lower()
+        found_anachronism = None
+        for keyword in ANACHRONISM_KEYWORDS:
+            if keyword.lower() in para_lower:
+                found_anachronism = keyword
+                break
+
+        # Remove if has anachronism AND no quote to anchor it
+        if found_anachronism and not has_quote:
+            logger.info(
+                f"Anachronism filter: removing paragraph with '{found_anachronism}' "
+                f"(no quote): {stripped[:60]}..."
+            )
+            removed_paragraphs.append({
+                'keyword': found_anachronism,
+                'paragraph': stripped[:100] + '...' if len(stripped) > 100 else stripped,
+            })
+            continue
+
+        filtered_paragraphs.append(para)
+
+    report = {
+        'paragraphs_scanned': len(paragraphs),
+        'paragraphs_removed': len(removed_paragraphs),
+        'removed_details': removed_paragraphs,
+    }
+
+    return '\n\n'.join(filtered_paragraphs), report
+
+
+# Keep old function name for backwards compatibility, but use hard enforcement
+def enforce_attributed_speech(
+    text: str,
+    transcript: str,
+    remediate_invalid: bool = True,  # Ignored, always hard enforcement now
+) -> tuple[str, dict]:
+    """Enforce attributed speech validation with HARD enforcement.
+
+    This is now a wrapper around enforce_attributed_speech_hard.
+    The remediate_invalid parameter is ignored - we always do hard enforcement.
+
+    Args:
+        text: The generated text.
+        transcript: The canonical transcript.
+        remediate_invalid: Ignored (kept for API compatibility).
+
+    Returns:
+        Tuple of (cleaned_text, report_dict).
+    """
+    return enforce_attributed_speech_hard(text, transcript)
+
+
+# ==============================================================================
+# Polish Pass - Prose Quality Enhancement
+# ==============================================================================
+
+POLISH_SYSTEM_PROMPT = """You are a ruthless editor who despises AI-generated prose. Your task: transform this text into writing that sounds unmistakably human.
+
+CORE PRINCIPLE: If a sentence sounds like something ChatGPT would write, rewrite it completely.
+
+BANNED PATTERNS - REWRITE ANY SENTENCE CONTAINING:
+
+1. "This [noun]" sentence starters (the #1 AI tell):
+   - "This observation..." → Rewrite to start differently
+   - "This principle..." → Name the principle directly
+   - "This capacity..." → Be specific about what capacity
+   - "This reality..." → State the reality plainly
+   - "These ideas..." → Name the ideas
+
+2. Generic profundity (empty impressive-sounding phrases):
+   - "profound implications" → What ARE the implications?
+   - "far-reaching consequences" → Name them
+   - "transformative power" → Show the transformation
+   - "fundamental aspect" → Just state the aspect
+   - "the very essence of" → Delete, state directly
+
+3. Grandiose conclusions:
+   - "The universe awaits..." → Delete entirely or be concrete
+   - "...is boundless/limitless" → Give specific scope instead
+   - "...the promise of transformation" → What transformation?
+   - "...infinite potential" → Potential for what exactly?
+
+4. Overused academic verbs (find synonyms or restructure):
+   - "underscores" → emphasizes, reveals, shows (but vary!)
+   - "highlights" → (often deletable - just state the point)
+   - "articulates" → says, argues, writes
+   - "emphasizes" → (don't overuse this either)
+
+5. Hollow transitions:
+   - "It is worth noting that" → Delete, just state it
+   - "It is important to recognize" → Delete
+   - "The implications of this are" → State implications directly
+   - "This invites reflection on" → Just reflect
+
+6. AI comfort phrases:
+   - "In the face of" → During, amid, confronting
+   - "At the heart of" → Central to, core of
+   - "Paved the way for" → Enabled, led to, caused
+   - "Serves as a reminder" → Delete or state the reminder
+
+STRUCTURAL RULES:
+- No two consecutive paragraphs should end with similar rhythms
+- Vary sentence length dramatically (some 5 words, some 30)
+- Start paragraphs with concrete nouns or actions, not abstractions
+- End chapters with a specific thought, not a grand gesture
+
+PRESERVE:
+- All factual content and quotes
+- Markdown formatting
+- The author's actual arguments
+
+OUTPUT: Return ONLY the polished text. No commentary."""
+
+
+async def polish_chapter(
+    chapter_text: str,
+    client: Optional["LLMClient"] = None,
+) -> str:
+    """Polish chapter text through a stronger model for prose quality.
+
+    Args:
+        chapter_text: Raw chapter markdown text.
+        client: Optional LLM client (created if not provided).
+
+    Returns:
+        Polished chapter text.
+    """
+    if client is None:
+        from src.services.llm_client import get_llm_client
+        client = await get_llm_client()
+
+    request = LLMRequest(
+        model=POLISH_MODEL,
+        messages=[
+            ChatMessage(role="system", content=POLISH_SYSTEM_PROMPT),
+            ChatMessage(role="user", content=f"Polish this chapter:\n\n{chapter_text}"),
+        ],
+        temperature=0.3,  # Lower temperature for more consistent editing
+        max_tokens=4000,
+    )
+
+    response = await client.generate(request)
+    return response.text
 
 
 def sanitize_interview_title(
@@ -1467,6 +3137,26 @@ async def _generate_draft_task(
             f"{sum(len(ch.claims) for ch in evidence_map.chapters)} claims across {len(evidence_map.chapters)} chapters"
         )
 
+        # Build quote whitelist for Ideas Edition
+        whitelist: list[WhitelistQuote] = []
+        if content_mode == ContentMode.essay and evidence_map:
+            try:
+                transcript_pair = TranscriptPair(
+                    raw=request.transcript,
+                    canonical=canonicalize_transcript(request.transcript),
+                )
+                whitelist = build_quote_whitelist(
+                    evidence_map=evidence_map,
+                    transcript=transcript_pair,
+                    known_guests=[],  # TODO: Get from project settings
+                    known_hosts=[],
+                )
+                logger.info(
+                    f"Job {job_id}: Built whitelist with {len(whitelist)} validated quotes"
+                )
+            except Exception as e:
+                logger.error(f"Job {job_id}: Whitelist build failed (non-fatal): {e}", exc_info=True)
+
         # Check for cancellation
         job = await get_job(job_id)
         if job and job.cancel_requested:
@@ -1707,6 +3397,253 @@ async def _generate_draft_task(
                 book_title=draft_plan.book_title,
                 chapters=chapters_completed,
             )
+
+            # Apply enforcement for essay format on final assembled draft
+            if book_format == "essay":
+                final_markdown, enforcement_report = enforce_prose_quality(final_markdown, book_format)
+                if enforcement_report["sections_removed"]:
+                    logger.info(
+                        f"Job {job_id}: Final draft enforcement removed sections: "
+                        f"{enforcement_report['sections_removed']}"
+                    )
+                if enforcement_report["banned_phrase_counts"]:
+                    logger.info(
+                        f"Job {job_id}: Final draft has {sum(enforcement_report['banned_phrase_counts'].values())} "
+                        f"banned phrase instances"
+                    )
+
+        # Whitelist-based enforcement (Ideas Edition only)
+        # When whitelist is available, use it for deterministic quote validation
+        if content_mode == ContentMode.essay and whitelist:
+            try:
+                # Step 1: Strip LLM-generated blockquotes outside Key Excerpts section
+                final_markdown = strip_llm_blockquotes(final_markdown)
+                logger.debug(f"Job {job_id}: Stripped LLM blockquotes outside Key Excerpts")
+
+                # Step 1.5: Inject excerpts into empty Key Excerpts sections
+                # This ensures each chapter has valid excerpts even if LLM generation failed
+                if evidence_map:
+                    try:
+                        logger.info(f"Job {job_id}: Calling inject_excerpts_into_empty_sections")
+                        final_markdown = inject_excerpts_into_empty_sections(
+                            final_markdown, whitelist, evidence_map
+                        )
+                        logger.info(f"Job {job_id}: Finished inject_excerpts_into_empty_sections")
+                    except Exception as e:
+                        logger.warning(f"Job {job_id}: Excerpt injection failed (non-fatal): {e}")
+
+                # Step 2: Enforce whitelist on remaining quotes (Core Claims, inline)
+                # Process each chapter separately to match quotes against the correct chapter's whitelist entries
+                chapter_pattern = re.compile(r'^## Chapter (\d+)', re.MULTILINE)
+                chapter_matches = list(chapter_pattern.finditer(final_markdown))
+
+                total_dropped = []
+                total_replaced = []
+
+                if chapter_matches:
+                    # Process chapters in reverse order to maintain string positions
+                    for i in range(len(chapter_matches) - 1, -1, -1):
+                        chapter_match = chapter_matches[i]
+                        chapter_num = int(chapter_match.group(1))
+                        chapter_idx = chapter_num - 1  # 0-based
+
+                        chapter_start = chapter_match.start()
+                        chapter_end = chapter_matches[i + 1].start() if i + 1 < len(chapter_matches) else len(final_markdown)
+                        chapter_text = final_markdown[chapter_start:chapter_end]
+
+                        # Enforce whitelist for this chapter
+                        enforcement_result = enforce_quote_whitelist(
+                            generated_text=chapter_text,
+                            whitelist=whitelist,
+                            chapter_index=chapter_idx,
+                        )
+
+                        # Replace chapter text with enforced version
+                        final_markdown = final_markdown[:chapter_start] + enforcement_result.text + final_markdown[chapter_end:]
+
+                        total_dropped.extend(enforcement_result.dropped)
+                        total_replaced.extend(enforcement_result.replaced)
+                else:
+                    # Fallback: no chapter structure found, enforce globally with chapter_index=0
+                    enforcement_result = enforce_quote_whitelist(
+                        generated_text=final_markdown,
+                        whitelist=whitelist,
+                        chapter_index=0,
+                    )
+                    final_markdown = enforcement_result.text
+                    total_dropped = enforcement_result.dropped
+                    total_replaced = enforcement_result.replaced
+
+                if total_dropped:
+                    logger.info(
+                        f"Job {job_id}: Whitelist enforcement - dropped {len(total_dropped)} invalid quotes"
+                    )
+                    for dropped in total_dropped[:3]:
+                        constraint_warnings.append(f"Quote dropped: \"{dropped[:40]}...\"")
+
+                if total_replaced:
+                    logger.info(
+                        f"Job {job_id}: Whitelist enforcement - replaced {len(total_replaced)} quotes with exact text"
+                    )
+
+                await update_job(job_id, constraint_warnings=constraint_warnings)
+
+            except Exception as e:
+                logger.error(f"Job {job_id}: Whitelist enforcement failed (non-fatal): {e}", exc_info=True)
+
+        # Keep the old hard gates as fallback when whitelist is empty
+        elif content_mode == ContentMode.essay:
+            # Core Claims hard gate (Ideas Edition only)
+            # Drop entire Core Claim bullets if their supporting quotes fail validation
+            # This must run BEFORE general quote grounding so quotes are still in place
+            try:
+                final_markdown, claims_report = drop_claims_with_invalid_quotes(
+                    final_markdown,
+                    request.transcript,
+                )
+                if claims_report["dropped_count"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Core Claims hard gate - dropped "
+                        f"{claims_report['dropped_count']} claims with invalid quotes"
+                    )
+                    # Add to constraint warnings
+                    for dropped in claims_report["dropped_claims"][:3]:
+                        constraint_warnings.append(
+                            f"Core Claim dropped ({dropped['reason']}): \"{dropped['quote'][:30]}...\""
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Core Claims hard gate failed (non-fatal): {e}", exc_info=True)
+
+            # Key Excerpts hard gate (Ideas Edition only)
+            # Drop entire excerpt blocks if their quotes fail validation or have Unknown attribution
+            # This must run BEFORE general quote grounding so quotes are still in place
+            try:
+                final_markdown, excerpts_report = drop_excerpts_with_invalid_quotes(
+                    final_markdown,
+                    request.transcript,
+                )
+                if excerpts_report["dropped_count"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Key Excerpts hard gate - dropped "
+                        f"{excerpts_report['dropped_count']} excerpts with invalid quotes"
+                    )
+                    # Add to constraint warnings
+                    for dropped in excerpts_report["dropped_excerpts"][:3]:
+                        reason = dropped.get('reason', 'invalid')
+                        preview = dropped.get('quote', dropped.get('excerpt_preview', ''))[:30]
+                        constraint_warnings.append(
+                            f"Key Excerpt dropped ({reason}): \"{preview}...\""
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Key Excerpts hard gate failed (non-fatal): {e}", exc_info=True)
+
+        # Quote grounding enforcement (applies to all modes)
+        # Validates quotes against transcript, converts invalid quotes to paraphrases
+        try:
+            final_markdown, quote_report = enforce_quote_grounding(
+                final_markdown,
+                request.transcript,
+                convert_invalid=True,
+            )
+            if quote_report["invalid_quotes"]:
+                logger.info(
+                    f"Job {job_id}: Quote grounding - {quote_report['summary']['invalid']} invalid quotes "
+                    f"({quote_report['summary']['ellipsis_violations']} ellipsis, "
+                    f"{quote_report['summary']['fabricated']} fabricated)"
+                )
+                # Add to constraint warnings
+                for invalid in quote_report["invalid_quotes"][:5]:
+                    quote_preview = invalid.get('quote', '')[:40]
+                    constraint_warnings.append(
+                        f"Invalid quote ({invalid['reason']}): \"{quote_preview}...\""
+                    )
+                await update_job(job_id, constraint_warnings=constraint_warnings)
+        except Exception as e:
+            logger.error(f"Job {job_id}: Quote grounding failed (non-fatal): {e}", exc_info=True)
+            # Continue without quote grounding - don't fail the whole generation
+
+        # Fix unquoted excerpts (Ideas Edition) - wrap block quotes and Core Claims in quotation marks
+        # This must run BEFORE validation so the newly-quoted content gets validated
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, excerpt_fix_report = fix_unquoted_excerpts(final_markdown)
+                if excerpt_fix_report["fixes_made"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Fixed {excerpt_fix_report['fixes_made']} unquoted excerpts/claims"
+                    )
+            except Exception as e:
+                logger.error(f"Job {job_id}: Unquoted excerpt fix failed (non-fatal): {e}", exc_info=True)
+
+        # Global ellipsis ban (Step B) - remove sentences containing ellipses
+        # Ellipses indicate truncation/approximation which is unacceptable for grounded content
+        try:
+            final_markdown, ellipsis_report = enforce_ellipsis_ban(
+                final_markdown,
+                remove_sentences=True,
+            )
+            if ellipsis_report["ellipses_found"]:
+                logger.info(
+                    f"Job {job_id}: Ellipsis ban - removed {len(ellipsis_report['removed_sentences'])} "
+                    f"sentences containing ellipses"
+                )
+                # Add to constraint warnings
+                for location in ellipsis_report["ellipsis_locations"][:3]:
+                    constraint_warnings.append(
+                        f"Ellipsis removed: \"{location['context'][:50]}...\""
+                    )
+                await update_job(job_id, constraint_warnings=constraint_warnings)
+        except Exception as e:
+            logger.error(f"Job {job_id}: Ellipsis ban failed (non-fatal): {e}", exc_info=True)
+
+        # Attributed-speech enforcement (Step A) - validate "Deutsch argues, X" patterns
+        # These pseudo-quotes bypass quote validation and may contain fabricated content
+        try:
+            final_markdown, attribution_report = enforce_attributed_speech(
+                final_markdown,
+                request.transcript,
+                remediate_invalid=True,  # Ignored - always hard enforcement now
+            )
+            if attribution_report.get("invalid_deleted", 0) > 0:
+                logger.info(
+                    f"Job {job_id}: Attribution enforcement (HARD) - deleted "
+                    f"{attribution_report['invalid_deleted']} invalid attributions, "
+                    f"wrapped {attribution_report.get('valid_converted', 0)} valid ones"
+                )
+                # Add to constraint warnings
+                for detail in attribution_report.get("invalid_details", [])[:3]:
+                    constraint_warnings.append(
+                        f"Invalid attribution deleted ({detail['speaker']}): \"{detail['content'][:40]}...\""
+                    )
+                await update_job(job_id, constraint_warnings=constraint_warnings)
+        except Exception as e:
+            logger.error(f"Job {job_id}: Attribution enforcement failed (non-fatal): {e}", exc_info=True)
+
+        # Anachronism filter (Ideas Edition safety net) - only for essay mode
+        # Catches contemporary framing that slipped past generation prompts
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, anachronism_report = filter_anachronism_paragraphs(final_markdown)
+                if anachronism_report["paragraphs_removed"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Anachronism filter - removed "
+                        f"{anachronism_report['paragraphs_removed']} paragraphs with contemporary framing"
+                    )
+                    # Add to constraint warnings
+                    for detail in anachronism_report.get("removed_details", [])[:3]:
+                        constraint_warnings.append(
+                            f"Anachronism filtered ('{detail['keyword']}'): \"{detail['paragraph'][:40]}...\""
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Anachronism filter failed (non-fatal): {e}", exc_info=True)
+
+        # Final whitespace repair pass - fix formatting issues from deletions
+        try:
+            final_markdown = repair_whitespace(final_markdown)
+        except Exception as e:
+            logger.error(f"Job {job_id}: Whitespace repair failed (non-fatal): {e}", exc_info=True)
 
         await update_job(
             job_id,
@@ -2084,7 +4021,28 @@ async def generate_chapter(
     response = await client.generate(request)
 
     logger.debug(f"Generated chapter {chapter_plan.chapter_number}: {len(response.text)} chars")
-    return response.text
+
+    # Apply enforcement for essay format
+    chapter_text = response.text
+    if book_format == "essay":
+        chapter_text, enforcement_report = enforce_prose_quality(chapter_text, book_format)
+        if enforcement_report["sections_removed"]:
+            logger.info(
+                f"Chapter {chapter_plan.chapter_number}: removed sections: "
+                f"{enforcement_report['sections_removed']}"
+            )
+
+        # Polish pass for essay format - stronger model for prose quality
+        try:
+            logger.info(f"Chapter {chapter_plan.chapter_number}: running polish pass")
+            polished_text = await polish_chapter(chapter_text, client)
+            logger.info(f"Chapter {chapter_plan.chapter_number}: polish complete, {len(polished_text)} chars")
+            chapter_text = polished_text
+        except Exception as e:
+            logger.error(f"Chapter {chapter_plan.chapter_number}: polish pass failed (using unpolished): {e}")
+            # Continue with unpolished text rather than crashing
+
+    return chapter_text
 
 
 def _extract_speaker_name(transcript: str) -> str:
@@ -2246,10 +4204,28 @@ def assemble_chapters(
     Returns:
         Complete draft markdown.
     """
-    parts = [
-        f"# {book_title}",
-        "",
-    ]
+    parts = []
+
+    # Check if first chapter title duplicates the book title
+    # Pattern: "## Chapter 1: {title}" or "## {title}"
+    first_chapter_duplicates_title = False
+    if chapters:
+        first_chapter = chapters[0].strip()
+        # Extract the title from first chapter header
+        import re
+        # Match "## Chapter 1: Title" or "## Title"
+        match = re.match(r'^##\s*(?:Chapter\s*\d+[:\s]*)?(.+)', first_chapter, re.IGNORECASE)
+        if match:
+            first_chapter_title = match.group(1).strip()
+            # Check if it matches book title (case-insensitive, ignoring punctuation)
+            book_title_normalized = re.sub(r'[^\w\s]', '', book_title.lower())
+            first_title_normalized = re.sub(r'[^\w\s]', '', first_chapter_title.lower())
+            first_chapter_duplicates_title = book_title_normalized == first_title_normalized
+
+    # Only add book title header if first chapter doesn't duplicate it
+    if not first_chapter_duplicates_title:
+        parts.append(f"# {book_title}")
+        parts.append("")
 
     for chapter in chapters:
         parts.append(chapter)
