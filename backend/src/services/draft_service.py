@@ -52,6 +52,8 @@ from .whitelist_service import (
     select_deterministic_excerpts,
     format_excerpts_markdown,
     compute_chapter_coverage,
+    fix_quote_artifacts,
+    detect_verbatim_leakage,
 )
 from .prompts import (
     DRAFT_PLAN_SYSTEM_PROMPT,
@@ -3487,6 +3489,32 @@ async def _generate_draft_task(
                     )
 
                 await update_job(job_id, constraint_warnings=constraint_warnings)
+
+                # Step 3: Fix quote artifacts (markdown hygiene)
+                # Remove stray quote marks, orphan quotes, and other artifacts
+                try:
+                    final_markdown, artifact_report = fix_quote_artifacts(final_markdown)
+                    if artifact_report.get("fixes_applied", 0) > 0:
+                        logger.info(
+                            f"Job {job_id}: Quote artifact cleanup - applied {artifact_report['fixes_applied']} fixes"
+                        )
+                except Exception as e:
+                    logger.warning(f"Job {job_id}: Quote artifact cleanup failed (non-fatal): {e}")
+
+                # Step 4: Detect verbatim leakage (unquoted whitelist text in prose)
+                # Log warnings but don't modify text - leakage detection is informational
+                try:
+                    _, leakage_report = detect_verbatim_leakage(final_markdown, whitelist, min_words=6)
+                    leakage_count = leakage_report.get("total_leakages", 0)
+                    if leakage_count > 0:
+                        logger.warning(
+                            f"Job {job_id}: Verbatim leakage detected - {leakage_count} unquoted whitelist fragments in prose"
+                        )
+                        for leak in leakage_report.get("leakages", [])[:3]:
+                            constraint_warnings.append(f"Verbatim leakage: \"{leak['fragment'][:40]}...\"")
+                        await update_job(job_id, constraint_warnings=constraint_warnings)
+                except Exception as e:
+                    logger.warning(f"Job {job_id}: Verbatim leakage detection failed (non-fatal): {e}")
 
             except Exception as e:
                 logger.error(f"Job {job_id}: Whitelist enforcement failed (non-fatal): {e}", exc_info=True)

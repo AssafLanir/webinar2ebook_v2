@@ -1223,3 +1223,188 @@ Narrative text.
 
         # Legitimate excerpt should remain
         assert "Legitimate excerpt" in result
+
+
+class TestFixQuoteArtifacts:
+    """Tests for fix_quote_artifacts function."""
+
+    def test_removes_standalone_quote_line(self):
+        """Test removal of lines containing only quote marks."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = '''- **Claim one**: "quote"
+- **Claim two**: "quote"
+"
+- **Claim three**: "quote"'''
+
+        result, report = fix_quote_artifacts(text)
+
+        assert '"' not in result.split('\n')  # No line is just a quote
+        assert '- **Claim one**' in result
+        assert '- **Claim three**' in result
+        assert report["fixes_applied"] >= 1
+
+    def test_removes_orphan_closing_quote(self):
+        """Test removal of orphan closing quotes mid-sentence."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = 'The universe." This idea challenges old notions.'
+
+        result, report = fix_quote_artifacts(text)
+
+        # Should become: The universe. This idea challenges old notions.
+        assert 'universe. This' in result
+        assert 'universe."' not in result
+
+    def test_removes_orphan_opening_quote(self):
+        """Test removal of orphan opening quotes before punctuation."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = 'This is wrong". And this continues.'
+
+        result, report = fix_quote_artifacts(text)
+
+        # The orphan quote before period should be removed
+        assert '". And' not in result
+
+    def test_preserves_valid_quotes(self):
+        """Test that valid quotes are not affected."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = '''### Core Claims
+
+- **Claim**: "This is a valid quote that should remain."'''
+
+        result, report = fix_quote_artifacts(text)
+
+        assert '"This is a valid quote that should remain."' in result
+
+    def test_collapses_multiple_blank_lines(self):
+        """Test that multiple blank lines are collapsed."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = "Line one.\n\n\n\nLine two."
+
+        result, report = fix_quote_artifacts(text)
+
+        assert "\n\n\n" not in result
+        assert "Line one.\n\nLine two." == result
+
+
+class TestDetectVerbatimLeakage:
+    """Tests for detect_verbatim_leakage function."""
+
+    def test_detects_leakage_in_prose(self):
+        """Test detection of whitelist quote appearing unquoted in prose."""
+        from src.services.whitelist_service import detect_verbatim_leakage
+
+        whitelist = [
+            _make_guest_quote(
+                "The truth of the matter is that wisdom like scientific knowledge is also limitless",
+                speaker_name="David Deutsch",
+            )
+        ]
+
+        # Prose contains the quote text without quotation marks
+        text = '''## Chapter 1
+
+David Deutsch argues that the truth of the matter is that wisdom like scientific knowledge is also limitless. This is a profound insight.
+
+### Key Excerpts
+
+> "Different quote here"
+> — Someone
+
+### Core Claims
+
+- **Claim**: "The truth of the matter is that wisdom like scientific knowledge is also limitless."
+'''
+
+        result, report = detect_verbatim_leakage(text, whitelist, min_words=6)
+
+        # Should detect leakage in prose but not in Key Excerpts/Core Claims
+        assert report["leakage_count"] >= 1
+        # Check that the leakage was found in the prose section
+        assert any("truth of the matter" in l["fragment"] for l in report["leakages"])
+
+    def test_ignores_quotes_in_key_excerpts(self):
+        """Test that quotes in Key Excerpts section are not flagged."""
+        from src.services.whitelist_service import detect_verbatim_leakage
+
+        whitelist = [
+            _make_guest_quote(
+                "This is a valid excerpt that appears in Key Excerpts",
+                speaker_name="Speaker",
+            )
+        ]
+
+        text = '''## Chapter 1
+
+Narrative text here.
+
+### Key Excerpts
+
+> "This is a valid excerpt that appears in Key Excerpts"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Supporting quote"
+'''
+
+        result, report = detect_verbatim_leakage(text, whitelist, min_words=6)
+
+        # Should not detect this as leakage since it's in Key Excerpts
+        assert report["leakage_count"] == 0
+
+    def test_ignores_quotes_in_core_claims(self):
+        """Test that quotes in Core Claims section are not flagged."""
+        from src.services.whitelist_service import detect_verbatim_leakage
+
+        whitelist = [
+            _make_guest_quote(
+                "This quote appears in core claims section only",
+                speaker_name="Speaker",
+            )
+        ]
+
+        text = '''## Chapter 1
+
+Narrative text here.
+
+### Key Excerpts
+
+> "Different excerpt"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "This quote appears in core claims section only"
+'''
+
+        result, report = detect_verbatim_leakage(text, whitelist, min_words=6)
+
+        # Should not detect this as leakage since it's in Core Claims
+        assert report["leakage_count"] == 0
+
+    def test_respects_min_words_threshold(self):
+        """Test that short matches below threshold are ignored."""
+        from src.services.whitelist_service import detect_verbatim_leakage
+
+        whitelist = [
+            _make_guest_quote("short quote", speaker_name="Speaker")
+        ]
+
+        text = '''## Chapter 1
+
+The text mentions a short quote here.
+
+### Key Excerpts
+
+### Core Claims
+'''
+
+        result, report = detect_verbatim_leakage(text, whitelist, min_words=6)
+
+        # "short quote" is only 2 words, below the 6-word threshold
+        assert report["leakage_count"] == 0

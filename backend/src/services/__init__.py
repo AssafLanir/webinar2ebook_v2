@@ -13,6 +13,8 @@ from .whitelist_service import (
     enforce_core_claims_guest_only,
     strip_llm_blockquotes,
     format_excerpts_markdown,
+    fix_quote_artifacts,
+    detect_verbatim_leakage,
     EnforcementResult,
 )
 
@@ -29,5 +31,7 @@ __all__ = [
     "enforce_core_claims_guest_only",
     "strip_llm_blockquotes",
     "format_excerpts_markdown",
+    "fix_quote_artifacts",
+    "detect_verbatim_leakage",
     "EnforcementResult",
 ]

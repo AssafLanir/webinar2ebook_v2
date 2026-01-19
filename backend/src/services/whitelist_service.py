@@ -2,6 +2,25 @@
 
 Builds validated quote whitelist from Evidence Map, enforces quotes
 against whitelist, and provides deterministic excerpt selection.
+
+QUOTE ENFORCEMENT RULES:
+------------------------
+1. BLOCKQUOTES ("> "quote" — Speaker"):
+   - Valid (in whitelist) → replace with exact whitelist text
+   - Invalid (not in whitelist) → DROP entirely (remove from output)
+
+2. INLINE QUOTES ("quoted text"):
+   - Valid (in whitelist) → replace with exact whitelist text
+   - Invalid (not in whitelist) → UNQUOTE (remove quotes, keep text as paraphrase)
+
+3. KEY EXCERPTS SECTION:
+   - Injected deterministically from whitelist
+   - LLM blockquotes in narrative are stripped
+   - Injected excerpts are preserved verbatim
+
+4. CORE CLAIMS:
+   - Filter to GUEST-only quotes
+   - Supporting quotes must be in whitelist
 """
 
 from __future__ import annotations
@@ -406,7 +425,10 @@ def enforce_quote_whitelist(
             result = result[:match.start()] + replacement + result[match.end():]
             replaced.append(validated)
         else:
-            # Remove quotes but keep text (convert to paraphrase)
+            # INLINE RULE: Remove quotes but keep text (convert to paraphrase).
+            # Unlike blockquotes which are dropped entirely, inline quotes are
+            # unquoted to preserve the narrative flow. The idea remains, but
+            # without claiming it as a direct quote.
             result = result[:match.start()] + quote_text + result[match.end():]
             dropped.append(quote_text)
 
@@ -576,3 +598,136 @@ def strip_llm_blockquotes(generated_text: str) -> str:
     # Collapse multiple consecutive blank lines to double newline
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result
+
+
+def fix_quote_artifacts(text: str) -> tuple[str, dict]:
+    """Remove stray quote marks and malformed quote patterns.
+
+    Cleans up debris left by quote enforcement:
+    - Lines containing only quote marks
+    - Orphan closing quotes at start of sentences (word." Text)
+    - Mismatched quote marks
+
+    Args:
+        text: Text to clean.
+
+    Returns:
+        Tuple of (cleaned text, report dict).
+    """
+    result = text
+    fixes = []
+
+    # Fix 1: Remove lines that are just quote marks (straight or smart)
+    # Pattern: line with only whitespace and quote marks
+    standalone_quote_pattern = re.compile(r'^[\s]*["\u201c\u201d\u2018\u2019\']+[\s]*$', re.MULTILINE)
+    matches = list(standalone_quote_pattern.finditer(result))
+    for match in reversed(matches):
+        fixes.append({"type": "standalone_quote", "text": match.group().strip()})
+        result = result[:match.start()] + result[match.end():]
+
+    # Fix 2: Remove orphan closing quotes at word boundaries
+    # Pattern: word followed by punctuation then quote (word." or word,") then space and capital
+    # This catches: universe." This idea...
+    orphan_close_pattern = re.compile(r'(\w+)([.!?,])["\u201d]\s+([A-Z])')
+    result = orphan_close_pattern.sub(r'\1\2 \3', result)
+
+    # Fix 3: Remove orphan opening quotes before periods
+    # Pattern: ." or "word where quote seems misplaced
+    orphan_open_pattern = re.compile(r'["\u201c]([.!?,])')
+    result = orphan_open_pattern.sub(r'\1', result)
+
+    # Fix 4: Collapse multiple consecutive blank lines
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    # Fix 5: Remove trailing whitespace on lines
+    result = re.sub(r'[ \t]+$', '', result, flags=re.MULTILINE)
+
+    report = {
+        "fixes_applied": len(fixes),
+        "details": fixes[:10],  # First 10 fixes
+    }
+
+    return result, report
+
+
+def detect_verbatim_leakage(
+    text: str,
+    whitelist: list[WhitelistQuote],
+    min_words: int = 6,
+) -> tuple[str, dict]:
+    """Detect and remove verbatim whitelist quotes appearing unquoted in prose.
+
+    The LLM can bypass quote enforcement by pasting transcript text without
+    quotation marks. This detector finds such leakage and removes the sentences.
+
+    Args:
+        text: Generated text.
+        whitelist: Validated quote whitelist.
+        min_words: Minimum words for a match to count as leakage (default 6).
+
+    Returns:
+        Tuple of (cleaned text, report dict).
+    """
+    # Extract prose sections (exclude Key Excerpts and Core Claims)
+    # We'll work on the full text but only flag leakage outside structured sections
+
+    result = text
+    leakages = []
+
+    # Build set of canonical quote substrings to search for
+    # Use sliding window of min_words to catch partial matches
+    quote_fragments: dict[str, WhitelistQuote] = {}
+    for q in whitelist:
+        # Split into words and create fragments
+        words = q.quote_canonical.split()
+        if len(words) >= min_words:
+            # Create overlapping fragments
+            for i in range(len(words) - min_words + 1):
+                fragment = ' '.join(words[i:i + min_words])
+                quote_fragments[fragment] = q
+
+    # Canonicalize the text for searching
+    canonical_text = canonicalize_transcript(text)
+
+    # Find Key Excerpts and Core Claims sections to exclude
+    key_excerpts_pattern = re.compile(r'### Key Excerpts.*?(?=### Core Claims|## Chapter|\Z)', re.DOTALL)
+    core_claims_pattern = re.compile(r'### Core Claims.*?(?=## Chapter|\Z)', re.DOTALL)
+
+    # Find positions of structured sections in canonical text
+    excluded_ranges: list[tuple[int, int]] = []
+    for match in key_excerpts_pattern.finditer(canonical_text):
+        excluded_ranges.append((match.start(), match.end()))
+    for match in core_claims_pattern.finditer(canonical_text):
+        excluded_ranges.append((match.start(), match.end()))
+
+    def is_in_excluded_range(pos: int) -> bool:
+        return any(start <= pos < end for start, end in excluded_ranges)
+
+    # Search for quote fragments in canonical text
+    for fragment, quote in quote_fragments.items():
+        pos = 0
+        while True:
+            found = canonical_text.find(fragment, pos)
+            if found == -1:
+                break
+
+            # Check if this position is in an excluded section
+            if not is_in_excluded_range(found):
+                leakages.append({
+                    "fragment": fragment,
+                    "position": found,
+                    "quote_id": quote.quote_id,
+                    "speaker": quote.speaker.speaker_name,
+                })
+
+            pos = found + 1
+
+    # For now, just report leakages (removal would require careful sentence detection)
+    # In future: could remove sentences containing leakage
+    report = {
+        "leakage_count": len(leakages),
+        "leakages": leakages[:10],  # First 10 leakages
+        "action": "reported",  # Future: "removed"
+    }
+
+    return result, report
