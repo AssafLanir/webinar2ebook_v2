@@ -3,6 +3,8 @@ from src.models.edition import SpeakerRef, SpeakerRole, TranscriptPair, Whitelis
 from src.services.whitelist_service import (
     build_quote_whitelist,
     canonicalize_transcript,
+    enforce_quote_whitelist,
+    EnforcementResult,
     find_all_occurrences,
     resolve_speaker,
     select_deterministic_excerpts,
@@ -573,18 +575,18 @@ def _make_chapter_evidence(claim_count: int) -> ChapterEvidence:
 from hashlib import sha256
 
 
-def _make_guest_quote(text: str, chapter_indices: list[int] | None = None) -> WhitelistQuote:
+def _make_guest_quote(text: str, chapter_indices: list[int] | None = None, speaker_name: str = "Guest Speaker") -> WhitelistQuote:
     """Create a GUEST WhitelistQuote for testing."""
     if chapter_indices is None:
         chapter_indices = [0]
-    quote_id = sha256(text.encode()).hexdigest()[:16]
+    quote_id = sha256(f"{speaker_name}|{text}".encode()).hexdigest()[:16]
     return WhitelistQuote(
         quote_id=quote_id,
         quote_text=text,
         quote_canonical=text.lower(),
         speaker=SpeakerRef(
-            speaker_id="guest_speaker",
-            speaker_name="Guest Speaker",
+            speaker_id=speaker_name.lower().replace(" ", "_"),
+            speaker_name=speaker_name,
             speaker_role=SpeakerRole.GUEST,
         ),
         source_evidence_ids=["ev1"],
@@ -670,3 +672,83 @@ class TestSelectDeterministicExcerpts:
         excerpts = select_deterministic_excerpts(whitelist, chapter_index=0, coverage_level=CoverageLevel.WEAK)
         # First excerpt should be the longest
         assert "much longer" in excerpts[0].quote_text
+
+
+class TestEnforcementResult:
+    def test_enforcement_result_model(self):
+        """Test EnforcementResult model structure."""
+        result = EnforcementResult(
+            text="cleaned text",
+            replaced=[],
+            dropped=["invalid quote"],
+        )
+        assert result.text == "cleaned text"
+        assert len(result.dropped) == 1
+
+
+class TestEnforceQuoteWhitelist:
+    def test_replaces_valid_blockquote_with_exact_text(self):
+        """Test valid blockquotes are replaced with exact quote_text."""
+        whitelist = [_make_guest_quote("Wisdom is limitless")]
+        text = '> "wisdom is limitless"\n> — Guest Speaker'
+
+        result = enforce_quote_whitelist(text, whitelist, chapter_index=0)
+
+        assert "Wisdom is limitless" in result.text  # Exact from whitelist
+        assert len(result.replaced) == 1
+        assert len(result.dropped) == 0
+
+    def test_drops_invalid_blockquote(self):
+        """Test invalid blockquotes are dropped entirely."""
+        whitelist = [_make_guest_quote("Wisdom is limitless")]
+        text = '> "This quote is not in whitelist"\n> — Someone'
+
+        result = enforce_quote_whitelist(text, whitelist, chapter_index=0)
+
+        assert "not in whitelist" not in result.text
+        assert len(result.dropped) == 1
+
+    def test_replaces_valid_inline_quote(self):
+        """Test valid inline quotes are replaced with exact text."""
+        whitelist = [_make_guest_quote("Wisdom is limitless")]
+        text = 'He said "wisdom is limitless" today.'
+
+        result = enforce_quote_whitelist(text, whitelist, chapter_index=0)
+
+        assert '"Wisdom is limitless"' in result.text
+
+    def test_unquotes_invalid_inline_quote(self):
+        """Test invalid inline quotes have quotes removed."""
+        whitelist = [_make_guest_quote("Wisdom is limitless")]
+        text = 'He said "fabricated quote" today.'
+
+        result = enforce_quote_whitelist(text, whitelist, chapter_index=0)
+
+        # Quote marks removed but text preserved
+        assert '"fabricated quote"' not in result.text
+        assert 'fabricated quote' in result.text
+
+    def test_multi_candidate_lookup_same_quote_different_speakers(self):
+        """Test multi-candidate lookup handles same quote from different speakers."""
+        whitelist = [
+            _make_guest_quote("The truth matters", speaker_name="David"),
+            _make_guest_quote("The truth matters", speaker_name="Naval"),
+        ]
+        text = '> "The truth matters"\n> — David'
+
+        result = enforce_quote_whitelist(text, whitelist, chapter_index=0)
+
+        assert len(result.replaced) == 1
+
+    def test_chapter_scoping(self):
+        """Test quotes are scoped to chapter."""
+        whitelist = [_make_guest_quote("Chapter 0 only", chapter_indices=[0])]
+        text = '> "Chapter 0 only"\n> — Guest Speaker'
+
+        # Chapter 0 - should match
+        result0 = enforce_quote_whitelist(text, whitelist, chapter_index=0)
+        assert len(result0.replaced) == 1
+
+        # Chapter 1 - should still match (fallback to any chapter)
+        result1 = enforce_quote_whitelist(text, whitelist, chapter_index=1)
+        assert len(result1.replaced) == 1

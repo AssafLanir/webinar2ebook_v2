@@ -6,10 +6,32 @@ against whitelist, and provides deterministic excerpt selection.
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
 from hashlib import sha256
 
 from src.models.edition import ChapterCoverage, CoverageLevel, SpeakerRef, SpeakerRole, TranscriptPair, WhitelistQuote
 from src.models.evidence_map import ChapterEvidence, EvidenceMap
+
+
+@dataclass
+class EnforcementResult:
+    """Result of whitelist enforcement."""
+    text: str
+    replaced: list[WhitelistQuote]
+    dropped: list[str]
+
+
+# Patterns for quote extraction
+BLOCKQUOTE_PATTERN = re.compile(
+    r'^>\s*["\u201c](?P<quote>[^"\u201d]+)["\u201d]\s*$\n'
+    r'^>\s*[—\-]\s*(?P<speaker>.+?)\s*$',
+    re.MULTILINE
+)
+
+INLINE_QUOTE_PATTERN = re.compile(
+    r'["\u201c](?P<quote>[^"\u201d]{5,})["\u201d]'
+)
 
 
 def find_all_occurrences(text: str, substring: str) -> list[tuple[int, int]]:
@@ -299,3 +321,142 @@ def select_deterministic_excerpts(
 
     count = EXCERPT_COUNTS[coverage_level]
     return candidates[:count]
+
+
+def enforce_quote_whitelist(
+    generated_text: str,
+    whitelist: list[WhitelistQuote],
+    chapter_index: int,
+) -> EnforcementResult:
+    """Enforce ALL quotes against whitelist.
+
+    This is the hard guarantee. Quotes not in whitelist are removed.
+    Quotes in whitelist are replaced with exact quote_text.
+
+    Args:
+        generated_text: LLM-generated text with quotes.
+        whitelist: Validated quote whitelist.
+        chapter_index: 0-based chapter index.
+
+    Returns:
+        EnforcementResult with cleaned text and tracking.
+    """
+    # Build lookup index: (speaker_id, quote_canonical) -> list[WhitelistQuote]
+    lookup: dict[tuple[str, str], list[WhitelistQuote]] = {}
+    for q in whitelist:
+        key = (q.speaker.speaker_id, q.quote_canonical)
+        lookup.setdefault(key, []).append(q)
+
+    result = generated_text
+    dropped: list[str] = []
+    replaced: list[WhitelistQuote] = []
+
+    # Track which ranges are blockquotes (so we don't process them as inline)
+    blockquote_ranges: list[tuple[int, int]] = []
+
+    # Process block quotes (must process from end to start to maintain indices)
+    matches = list(BLOCKQUOTE_PATTERN.finditer(result))
+    for match in reversed(matches):
+        quote_text = match.group("quote")
+        speaker_text = match.group("speaker")
+
+        validated = _validate_blockquote(
+            quote_text, speaker_text, chapter_index, lookup, whitelist
+        )
+
+        if validated:
+            # Replace with exact quote_text
+            replacement = f'> "{validated.quote_text}"\n> — {validated.speaker.speaker_name}'
+            result = result[:match.start()] + replacement + result[match.end():]
+            replaced.append(validated)
+            # Track new blockquote range
+            blockquote_ranges.append((match.start(), match.start() + len(replacement)))
+        else:
+            # Drop the blockquote entirely
+            result = result[:match.start()] + result[match.end():]
+            dropped.append(quote_text)
+
+    # Process inline quotes (must process from end to start to maintain indices)
+    # Skip quotes that are inside blockquotes
+    matches = list(INLINE_QUOTE_PATTERN.finditer(result))
+    for match in reversed(matches):
+        # Check if this match is inside a blockquote
+        is_in_blockquote = any(
+            start <= match.start() < end for start, end in blockquote_ranges
+        )
+        if is_in_blockquote:
+            continue
+
+        quote_text = match.group("quote")
+
+        validated = _validate_inline(quote_text, chapter_index, lookup, whitelist)
+
+        if validated:
+            # Replace with exact quote_text
+            replacement = f'"{validated.quote_text}"'
+            result = result[:match.start()] + replacement + result[match.end():]
+            replaced.append(validated)
+        else:
+            # Remove quotes but keep text (convert to paraphrase)
+            result = result[:match.start()] + quote_text + result[match.end():]
+            dropped.append(quote_text)
+
+    return EnforcementResult(
+        text=result,
+        replaced=replaced,
+        dropped=dropped,
+    )
+
+
+def _validate_blockquote(
+    quote_text: str,
+    speaker_text: str | None,
+    chapter_index: int,
+    lookup: dict[tuple[str, str], list[WhitelistQuote]],
+    whitelist: list[WhitelistQuote],
+) -> WhitelistQuote | None:
+    """Find matching whitelist entry for a block quote."""
+    quote_canonical = canonicalize_transcript(quote_text).casefold()
+
+    # Try to resolve speaker
+    if speaker_text:
+        speaker_id = speaker_text.lower().replace(" ", "_").replace(".", "")
+        candidates = lookup.get((speaker_id, quote_canonical), [])
+    else:
+        # No speaker—search all entries with this quote
+        candidates = []
+        for (sid, qc), entries in lookup.items():
+            if qc == quote_canonical:
+                candidates.extend(entries)
+
+    # Find best match for this chapter
+    for candidate in candidates:
+        if chapter_index in candidate.chapter_indices:
+            return candidate
+
+    # Fall back to any candidate
+    return candidates[0] if candidates else None
+
+
+def _validate_inline(
+    quote_text: str,
+    chapter_index: int,
+    lookup: dict[tuple[str, str], list[WhitelistQuote]],
+    whitelist: list[WhitelistQuote],
+) -> WhitelistQuote | None:
+    """Find matching whitelist entry for an inline quote."""
+    quote_canonical = canonicalize_transcript(quote_text).casefold()
+
+    # Search all entries with this quote (no speaker info for inline)
+    candidates = []
+    for (sid, qc), entries in lookup.items():
+        if qc == quote_canonical:
+            candidates.extend(entries)
+
+    # Find best match for this chapter
+    for candidate in candidates:
+        if chapter_index in candidate.chapter_indices:
+            return candidate
+
+    # Fall back to any candidate
+    return candidates[0] if candidates else None
