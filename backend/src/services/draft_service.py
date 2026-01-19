@@ -49,6 +49,7 @@ from .whitelist_service import (
     canonicalize_transcript,
     strip_llm_blockquotes,
     enforce_quote_whitelist,
+    enforce_core_claims_text,
     select_deterministic_excerpts,
     format_excerpts_markdown,
     compute_chapter_coverage,
@@ -3489,6 +3490,51 @@ async def _generate_draft_task(
                     )
 
                 await update_job(job_id, constraint_warnings=constraint_warnings)
+
+                # Step 2.5: Enforce Core Claims stricter rules (full-span match, min length)
+                # Core Claims require GUEST-only quotes with exact whitelist match
+                try:
+                    total_claims_dropped = []
+                    total_claims_kept = 0
+
+                    if chapter_matches:
+                        # Process per chapter
+                        for i in range(len(chapter_matches) - 1, -1, -1):
+                            chapter_match = chapter_matches[i]
+                            chapter_num = int(chapter_match.group(1))
+                            chapter_idx = chapter_num - 1
+
+                            chapter_start = chapter_match.start()
+                            chapter_end = chapter_matches[i + 1].start() if i + 1 < len(chapter_matches) else len(final_markdown)
+                            chapter_text = final_markdown[chapter_start:chapter_end]
+
+                            # Apply Core Claims enforcement
+                            enforced_chapter, claims_report = enforce_core_claims_text(
+                                chapter_text, whitelist, chapter_idx
+                            )
+
+                            final_markdown = final_markdown[:chapter_start] + enforced_chapter + final_markdown[chapter_end:]
+                            total_claims_dropped.extend(claims_report.get("dropped", []))
+                            total_claims_kept += claims_report.get("kept", 0)
+                    else:
+                        # Single chapter
+                        final_markdown, claims_report = enforce_core_claims_text(
+                            final_markdown, whitelist, 0
+                        )
+                        total_claims_dropped = claims_report.get("dropped", [])
+                        total_claims_kept = claims_report.get("kept", 0)
+
+                    if total_claims_dropped:
+                        logger.info(
+                            f"Job {job_id}: Core Claims enforcement - dropped {len(total_claims_dropped)}, kept {total_claims_kept}"
+                        )
+                        for claim in total_claims_dropped[:3]:
+                            constraint_warnings.append(
+                                f"Core Claim dropped ({claim['reason']}): \"{claim['claim'][:30]}...\""
+                            )
+                        await update_job(job_id, constraint_warnings=constraint_warnings)
+                except Exception as e:
+                    logger.warning(f"Job {job_id}: Core Claims enforcement failed (non-fatal): {e}")
 
                 # Step 3: Fix quote artifacts (markdown hygiene)
                 # Remove stray quote marks, orphan quotes, and other artifacts

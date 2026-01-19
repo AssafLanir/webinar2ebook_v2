@@ -11,11 +11,14 @@ from .whitelist_service import (
     select_deterministic_excerpts,
     enforce_quote_whitelist,
     enforce_core_claims_guest_only,
+    enforce_core_claims_text,
     strip_llm_blockquotes,
     format_excerpts_markdown,
     fix_quote_artifacts,
     detect_verbatim_leakage,
     EnforcementResult,
+    MIN_CORE_CLAIM_QUOTE_WORDS,
+    MIN_CORE_CLAIM_QUOTE_CHARS,
 )
 
 __all__ = [
@@ -29,9 +32,12 @@ __all__ = [
     "select_deterministic_excerpts",
     "enforce_quote_whitelist",
     "enforce_core_claims_guest_only",
+    "enforce_core_claims_text",
     "strip_llm_blockquotes",
     "format_excerpts_markdown",
     "fix_quote_artifacts",
     "detect_verbatim_leakage",
     "EnforcementResult",
+    "MIN_CORE_CLAIM_QUOTE_WORDS",
+    "MIN_CORE_CLAIM_QUOTE_CHARS",
 ]

@@ -1408,3 +1408,177 @@ The text mentions a short quote here.
 
         # "short quote" is only 2 words, below the 6-word threshold
         assert report["leakage_count"] == 0
+
+
+class TestEnforceCoreClaimsText:
+    """Tests for enforce_core_claims_text function."""
+
+    def test_drops_claims_with_too_short_quotes(self):
+        """Test claims with quotes under minimum length are dropped."""
+        from src.services.whitelist_service import enforce_core_claims_text
+
+        whitelist = [
+            _make_guest_quote("Yes", speaker_name="David Deutsch"),
+        ]
+
+        text = '''## Chapter 1
+
+Narrative here.
+
+### Core Claims
+
+- **Humans can reshape the universe**: "Yes"
+'''
+
+        result, report = enforce_core_claims_text(text, whitelist, chapter_index=0)
+
+        # "Yes" is only 1 word, under 8-word minimum
+        assert report["dropped"]
+        assert report["dropped"][0]["reason"].startswith("too_short")
+        assert "Yes" not in result or '- **Humans' not in result
+
+    def test_drops_claims_with_quotes_not_in_whitelist(self):
+        """Test claims with quotes not matching whitelist exactly are dropped."""
+        from src.services.whitelist_service import enforce_core_claims_text
+
+        whitelist = [
+            _make_guest_quote(
+                "The Enlightenment changed everything about how we think",
+                speaker_name="David Deutsch"
+            ),
+        ]
+
+        text = '''## Chapter 1
+
+### Core Claims
+
+- **Progress is possible**: "The Enlightenment changed everything about how we think and also some extra narrator text that should not be here"
+'''
+
+        result, report = enforce_core_claims_text(text, whitelist, chapter_index=0)
+
+        # Quote contains extra text beyond whitelist entry
+        assert report["dropped"]
+        assert report["dropped"][0]["reason"] == "not_in_whitelist"
+
+    def test_keeps_valid_claims_with_exact_match(self):
+        """Test claims with exact whitelist match are kept."""
+        from src.services.whitelist_service import enforce_core_claims_text
+
+        whitelist = [
+            _make_guest_quote(
+                "The Enlightenment changed everything about how we think about progress",
+                speaker_name="David Deutsch"
+            ),
+        ]
+
+        text = '''## Chapter 1
+
+### Core Claims
+
+- **Progress is possible**: "The Enlightenment changed everything about how we think about progress"
+'''
+
+        result, report = enforce_core_claims_text(text, whitelist, chapter_index=0)
+
+        assert report["kept"] == 1
+        assert not report["dropped"]
+        assert "Progress is possible" in result
+
+    def test_replaces_quote_with_exact_whitelist_text(self):
+        """Test that kept claims use exact whitelist text."""
+        from src.services.whitelist_service import enforce_core_claims_text
+
+        # Whitelist has straight quotes, input might have smart quotes
+        whitelist = [
+            _make_guest_quote(
+                "We have learned to live with the fact that everything improves",
+                speaker_name="David Deutsch"
+            ),
+        ]
+
+        # Input uses slightly different quote (smart quote normalized)
+        text = '''## Chapter 1
+
+### Core Claims
+
+- **Continuous improvement**: \u201cWe have learned to live with the fact that everything improves\u201d
+'''
+
+        result, report = enforce_core_claims_text(text, whitelist, chapter_index=0)
+
+        assert report["kept"] == 1
+        # Should use exact whitelist text
+        assert "We have learned to live with the fact that everything improves" in result
+
+    def test_only_guest_quotes_allowed(self):
+        """Test that HOST quotes are rejected even if in whitelist."""
+        from src.services.whitelist_service import enforce_core_claims_text
+
+        # Host quote in whitelist
+        whitelist = [
+            _make_host_quote("The interviewer asks about the Enlightenment and its impact")
+        ]
+
+        text = '''## Chapter 1
+
+### Core Claims
+
+- **Important question**: "The interviewer asks about the Enlightenment and its impact"
+'''
+
+        result, report = enforce_core_claims_text(text, whitelist, chapter_index=0)
+
+        # Should be dropped because it's from HOST
+        assert report["dropped"]
+        assert "Important question" not in result
+
+
+class TestFixQuoteArtifactsEnhanced:
+    """Tests for enhanced fix_quote_artifacts patterns."""
+
+    def test_fixes_quote_space_quote_pattern(self):
+        """Test ." " pattern is cleaned."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = 'The world expanded dramatically." " Before the Enlightenment, things were different.'
+
+        result, _ = fix_quote_artifacts(text)
+
+        assert '." "' not in result
+        assert 'dramatically. Before' in result
+
+    def test_fixes_double_punctuation_quote(self):
+        """Test wrong."." pattern is cleaned."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = 'That was wrong."." And then he continued.'
+
+        result, _ = fix_quote_artifacts(text)
+
+        # Should become wrong." And then
+        assert '."."' not in result
+
+    def test_fixes_double_trailing_quote_at_paragraph_end(self):
+        """Test double trailing quote at paragraph end is cleaned."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        # Double quote artifact: .""
+        text = 'The idea is clear.""\n\nNext paragraph starts here.'
+
+        result, _ = fix_quote_artifacts(text)
+
+        # Should have only one quote, not two
+        assert '.""' not in result
+        assert '."' in result
+
+    def test_fixes_tokenization_artifacts(self):
+        """Test ", artifacts are cleaned."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = '", he says that progress is possible.'
+
+        result, _ = fix_quote_artifacts(text)
+
+        assert not result.startswith('",')
+        assert 'he says' in result

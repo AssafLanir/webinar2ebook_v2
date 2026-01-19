@@ -552,6 +552,131 @@ def format_excerpts_markdown(excerpts: list[WhitelistQuote]) -> str:
     return '\n\n'.join(blocks)
 
 
+MIN_CORE_CLAIM_QUOTE_WORDS = 8
+MIN_CORE_CLAIM_QUOTE_CHARS = 50
+
+
+def enforce_core_claims_text(
+    text: str,
+    whitelist: list[WhitelistQuote],
+    chapter_index: int,
+) -> tuple[str, dict]:
+    """Enforce strict rules on Core Claims in markdown text.
+
+    Core Claims must have supporting quotes that:
+    1. EXACTLY match a whitelist entry (full span, not substring)
+    2. Meet minimum length requirement (≥8 words or ≥50 chars)
+    3. Are from GUEST speakers only
+
+    Invalid claims are DROPPED entirely (not unquoted like narrative).
+
+    Args:
+        text: Markdown text containing Core Claims section.
+        whitelist: Validated quote whitelist.
+        chapter_index: 0-based chapter index.
+
+    Returns:
+        Tuple of (cleaned text, report dict).
+    """
+    # Find Core Claims section
+    core_claims_match = re.search(r'### Core Claims\s*\n', text)
+    if not core_claims_match:
+        return text, {"section_found": False, "dropped": [], "kept": 0}
+
+    # Find end of Core Claims section (next ## or ### or end of text)
+    section_start = core_claims_match.end()
+    next_section = re.search(r'\n##', text[section_start:])
+    section_end = section_start + next_section.start() if next_section else len(text)
+
+    section_text = text[section_start:section_end]
+
+    # Build quote lookup for this chapter (GUEST only)
+    quote_to_entry: dict[str, WhitelistQuote] = {}
+    for q in whitelist:
+        if chapter_index in q.chapter_indices and q.speaker.speaker_role == SpeakerRole.GUEST:
+            quote_to_entry[q.quote_canonical] = q
+
+    # Parse Core Claims bullets
+    # Pattern: - **Claim text**: "supporting quote"
+    # Also handles: - **Claim text**: "supporting quote" — Attribution
+    bullet_pattern = re.compile(
+        r'^-\s*\*\*(?P<claim>[^*]+)\*\*[:\s]*["\u201c](?P<quote>[^"\u201d]+)["\u201d].*$',
+        re.MULTILINE
+    )
+
+    dropped = []
+    kept_bullets = []
+    other_lines = []
+
+    lines = section_text.split('\n')
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        match = bullet_pattern.match(line)
+
+        if match:
+            claim_text = match.group("claim")
+            quote_text = match.group("quote")
+            full_line = line
+
+            # Check 1: Minimum length
+            word_count = len(quote_text.split())
+            char_count = len(quote_text)
+
+            if word_count < MIN_CORE_CLAIM_QUOTE_WORDS and char_count < MIN_CORE_CLAIM_QUOTE_CHARS:
+                dropped.append({
+                    "claim": claim_text.strip(),
+                    "quote": quote_text,
+                    "reason": f"too_short ({word_count} words, {char_count} chars)"
+                })
+                i += 1
+                continue
+
+            # Check 2: EXACT full-span match to whitelist
+            quote_canonical = canonicalize_transcript(quote_text).casefold()
+            entry = quote_to_entry.get(quote_canonical)
+
+            if not entry:
+                dropped.append({
+                    "claim": claim_text.strip(),
+                    "quote": quote_text[:50] + "..." if len(quote_text) > 50 else quote_text,
+                    "reason": "not_in_whitelist"
+                })
+                i += 1
+                continue
+
+            # Valid - keep the bullet with exact whitelist text
+            # Reconstruct with exact quote_text from whitelist
+            kept_bullets.append(
+                f'- **{claim_text.strip()}**: "{entry.quote_text}"'
+            )
+            i += 1
+        else:
+            # Non-bullet line (empty or other content)
+            other_lines.append((i, line))
+            i += 1
+
+    # Reconstruct section
+    new_section_lines = []
+    for bullet in kept_bullets:
+        new_section_lines.append(bullet)
+
+    # Add back non-bullet lines (usually empty lines for spacing)
+    new_section = '\n'.join(new_section_lines)
+
+    # Reconstruct full text
+    result = text[:section_start] + new_section + '\n' + text[section_end:]
+
+    # Clean up excessive blank lines
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    return result, {
+        "section_found": True,
+        "dropped": dropped,
+        "kept": len(kept_bullets),
+    }
+
+
 def strip_llm_blockquotes(generated_text: str) -> str:
     """Remove blockquote syntax LLM added outside Key Excerpts.
 
@@ -606,7 +731,9 @@ def fix_quote_artifacts(text: str) -> tuple[str, dict]:
     Cleans up debris left by quote enforcement:
     - Lines containing only quote marks
     - Orphan closing quotes at start of sentences (word." Text)
-    - Mismatched quote marks
+    - Double punctuation with quotes (."." or wrong.".")
+    - Stray quote-space-quote patterns (." ")
+    - Tokenization artifacts (",)
 
     Args:
         text: Text to clean.
@@ -636,10 +763,29 @@ def fix_quote_artifacts(text: str) -> tuple[str, dict]:
     orphan_open_pattern = re.compile(r'["\u201c]([.!?,])')
     result = orphan_open_pattern.sub(r'\1', result)
 
-    # Fix 4: Collapse multiple consecutive blank lines
+    # Fix 4: Remove quote-space-quote patterns (." " → .)
+    # This catches: expanded dramatically." " Before...
+    quote_space_quote_pattern = re.compile(r'([.!?,])["\u201d]\s+["\u201c]\s*')
+    result = quote_space_quote_pattern.sub(r'\1 ', result)
+
+    # Fix 5: Remove double punctuation with quotes (wrong."." → wrong.")
+    double_punct_quote_pattern = re.compile(r'([.!?,])["\u201d]([.!?,])')
+    result = double_punct_quote_pattern.sub(r'\1"', result)
+
+    # Fix 6: Remove ORPHAN trailing quote at paragraph end
+    # Only match quotes that follow punctuation+quote (like ."") - clear artifact
+    # This is conservative to avoid removing valid quotes like "text."
+    double_trailing_quote = re.compile(r'([.!?])["\u201d]["\u201d]\s*(\n\n|\n$|$)')
+    result = double_trailing_quote.sub(r'\1"\2', result)
+
+    # Fix 7: Remove tokenization artifacts like ", at start of segments
+    token_artifact_pattern = re.compile(r'["\u201c],\s*')
+    result = token_artifact_pattern.sub('', result)
+
+    # Fix 8: Collapse multiple consecutive blank lines
     result = re.sub(r'\n{3,}', '\n\n', result)
 
-    # Fix 5: Remove trailing whitespace on lines
+    # Fix 9: Remove trailing whitespace on lines
     result = re.sub(r'[ \t]+$', '', result, flags=re.MULTILINE)
 
     report = {
