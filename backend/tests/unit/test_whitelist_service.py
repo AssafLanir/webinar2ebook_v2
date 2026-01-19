@@ -1,5 +1,10 @@
-import pytest
-from src.services.whitelist_service import canonicalize_transcript
+from src.models.edition import SpeakerRole
+from src.services.whitelist_service import (
+    canonicalize_transcript,
+    find_all_occurrences,
+    resolve_speaker,
+)
+
 
 class TestCanonicalizeTranscript:
     def test_normalizes_smart_quotes(self):
@@ -50,3 +55,57 @@ class TestCanonicalizeTranscript:
     def test_whitespace_only(self):
         """Test whitespace-only string returns empty string."""
         assert canonicalize_transcript("   \n\t  ") == ""
+
+
+class TestFindAllOccurrences:
+    def test_finds_single_occurrence(self):
+        """Test finding single occurrence."""
+        text = "hello world hello"
+        spans = find_all_occurrences(text, "world")
+        assert spans == [(6, 11)]
+
+    def test_finds_multiple_occurrences(self):
+        """Test finding multiple occurrences."""
+        text = "hello world hello world"
+        spans = find_all_occurrences(text, "hello")
+        assert len(spans) == 2
+        assert spans[0] == (0, 5)
+        assert spans[1] == (12, 17)
+
+    def test_returns_empty_for_no_match(self):
+        """Test returns empty list when not found."""
+        text = "hello world"
+        spans = find_all_occurrences(text, "xyz")
+        assert spans == []
+
+    def test_case_sensitive(self):
+        """Test search is case-sensitive."""
+        text = "Hello HELLO hello"
+        spans = find_all_occurrences(text, "hello")
+        assert len(spans) == 1
+        assert spans[0] == (12, 17)
+
+
+class TestResolveSpeaker:
+    def test_resolves_known_guest(self):
+        """Test resolving a known guest speaker."""
+        ref = resolve_speaker("David Deutsch", known_guests=["David Deutsch"])
+        assert ref.speaker_id == "david_deutsch"
+        assert ref.speaker_name == "David Deutsch"
+        assert ref.speaker_role == SpeakerRole.GUEST
+
+    def test_resolves_host(self):
+        """Test resolving host speaker."""
+        ref = resolve_speaker("Naval Ravikant", known_hosts=["Naval Ravikant"])
+        assert ref.speaker_role == SpeakerRole.HOST
+
+    def test_resolves_unknown_as_unclear(self):
+        """Test unknown speaker resolves as UNCLEAR."""
+        ref = resolve_speaker("Unknown")
+        assert ref.speaker_role == SpeakerRole.UNCLEAR
+
+    def test_generates_stable_id(self):
+        """Test speaker_id is stable."""
+        ref1 = resolve_speaker("David Deutsch", known_guests=["David Deutsch"])
+        ref2 = resolve_speaker("David Deutsch", known_guests=["David Deutsch"])
+        assert ref1.speaker_id == ref2.speaker_id
