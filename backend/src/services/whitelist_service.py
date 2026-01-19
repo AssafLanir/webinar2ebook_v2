@@ -470,10 +470,10 @@ def _validate_inline(
 
 
 def enforce_core_claims_guest_only(
-    claims: list,
+    claims: list[CoreClaimProtocol],
     whitelist: list[WhitelistQuote],
     chapter_index: int,
-) -> list:
+) -> list[CoreClaimProtocol]:
     """Filter Core Claims to only include GUEST quotes.
 
     Uses whitelist speaker role—doesn't parse attribution from text.

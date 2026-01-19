@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import pytest
 from src.models.edition import SpeakerRef, SpeakerRole, TranscriptPair, WhitelistQuote
 from src.services.whitelist_service import (
@@ -755,10 +757,7 @@ class TestEnforceQuoteWhitelist:
         assert len(result1.replaced) == 1
 
 
-from dataclasses import dataclass as dataclass_test
-
-
-@dataclass_test
+@dataclass
 class CoreClaimTest:
     """Simple CoreClaim for testing."""
     claim_text: str
@@ -803,3 +802,15 @@ class TestEnforceCoreClaimsGuestOnly:
 
         assert len(result0) == 1
         assert len(result1) == 0  # Not in chapter 1
+
+    def test_empty_claims_returns_empty(self):
+        """Test empty claims list returns empty."""
+        whitelist = [_make_guest_quote("Quote")]
+        result = enforce_core_claims_guest_only([], whitelist, chapter_index=0)
+        assert result == []
+
+    def test_empty_whitelist_returns_empty(self):
+        """Test empty whitelist returns empty."""
+        claims = [CoreClaimTest(claim_text="Test", supporting_quote="Quote")]
+        result = enforce_core_claims_guest_only(claims, [], chapter_index=0)
+        assert result == []
