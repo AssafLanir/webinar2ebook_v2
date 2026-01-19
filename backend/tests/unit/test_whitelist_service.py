@@ -1127,3 +1127,99 @@ class TestFormatExcerptsMarkdown:
         for line in result.strip().split('\n'):
             if line.strip():
                 assert line.startswith('>') or line == ''
+
+
+class TestExcerptInjectionHardGate:
+    """HARD GATE 3: Excerpt injection correctness tests.
+
+    These tests prove:
+    - Injected excerpts appear exactly once
+    - Injected excerpts appear in correct location
+    - LLM blockquotes are stripped while injected ones preserved
+    """
+
+    def test_injected_excerpts_appear_once(self):
+        """Test injected excerpts appear exactly once in output."""
+        excerpts = [_make_guest_quote("Unique test quote 12345")]
+        formatted = format_excerpts_markdown(excerpts)
+
+        # Simulate pipeline: inject + strip + enforce
+        template = '''## Chapter Title
+
+Narrative text here.
+
+### Key Excerpts
+
+{{KEY_EXCERPTS_PLACEHOLDER}}
+
+### Core Claims
+
+- **Claim**: "supporting quote"'''
+
+        injected = template.replace("{{KEY_EXCERPTS_PLACEHOLDER}}", formatted)
+
+        # After strip_llm_blockquotes, Key Excerpts should be preserved
+        result = strip_llm_blockquotes(injected)
+
+        # Count occurrences
+        count = result.count("Unique test quote 12345")
+        assert count == 1, f"Expected 1 occurrence, found {count}"
+
+    def test_injected_excerpts_in_correct_section(self):
+        """Test injected excerpts appear between Key Excerpts and Core Claims."""
+        excerpts = [_make_guest_quote("Injected quote here")]
+        formatted = format_excerpts_markdown(excerpts)
+
+        template = '''## Chapter
+
+Narrative.
+
+### Key Excerpts
+
+{{KEY_EXCERPTS_PLACEHOLDER}}
+
+### Core Claims
+
+Claims here.'''
+
+        injected = template.replace("{{KEY_EXCERPTS_PLACEHOLDER}}", formatted)
+
+        # Find positions
+        key_excerpts_pos = injected.find("### Key Excerpts")
+        core_claims_pos = injected.find("### Core Claims")
+        quote_pos = injected.find("Injected quote here")
+
+        assert key_excerpts_pos < quote_pos < core_claims_pos
+
+    def test_llm_blockquotes_stripped_injected_preserved(self):
+        """Test LLM-added blockquotes stripped while injected ones preserved."""
+        excerpts = [_make_guest_quote("Legitimate excerpt")]
+        formatted = format_excerpts_markdown(excerpts)
+
+        # Simulate LLM adding extra blockquotes
+        llm_output = f'''## Chapter
+
+> "LLM added this"
+> — Fabricated
+
+Narrative text.
+
+### Key Excerpts
+
+{formatted}
+
+### Core Claims
+
+> "LLM added in claims"
+> — Also fabricated
+
+- **Claim**: "quote"'''
+
+        result = strip_llm_blockquotes(llm_output)
+
+        # LLM blockquotes should be gone
+        assert "LLM added this" not in result
+        assert "LLM added in claims" not in result
+
+        # Legitimate excerpt should remain
+        assert "Legitimate excerpt" in result
