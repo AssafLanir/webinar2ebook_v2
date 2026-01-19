@@ -771,6 +771,19 @@ class TestCoverageModels:
             )
         assert "target_words" in str(exc_info.value)
 
+    def test_chapter_coverage_validation_invalid_generation_mode(self):
+        """Test invalid generation_mode raises ValidationError."""
+        with pytest.raises(ValidationError):
+            ChapterCoverage(
+                chapter_index=0,
+                level=CoverageLevel.WEAK,
+                usable_quotes=1,
+                quote_words_per_claim=10.0,
+                quotes_per_claim=0.5,
+                target_words=200,
+                generation_mode="invalid",
+            )
+
     def test_chapter_coverage_forbids_extra_fields(self):
         """Test ChapterCoverage forbids extra fields."""
         with pytest.raises(ValidationError) as exc_info:

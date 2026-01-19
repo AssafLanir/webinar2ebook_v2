@@ -13,7 +13,7 @@ Models include:
 """
 
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -77,7 +77,9 @@ class ChapterCoverage(BaseModel):
     quote_words_per_claim: float = Field(ge=0)
     quotes_per_claim: float = Field(ge=0)
     target_words: int = Field(ge=0)
-    generation_mode: str = Field(description="normal | thin | excerpt_only")
+    generation_mode: Literal["normal", "thin", "excerpt_only"] = Field(
+        description="Generation mode based on coverage level"
+    )
 
 
 class SpeakerRole(str, Enum):
