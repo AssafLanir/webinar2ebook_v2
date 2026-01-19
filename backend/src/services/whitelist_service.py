@@ -145,14 +145,27 @@ def build_quote_whitelist(
                 # Canonicalize quote for matching
                 quote_for_match = canonicalize_transcript(support.quote).casefold()
 
-                # Find in canonical transcript
-                spans = find_all_occurrences(canonical_lower, quote_for_match)
-                if not spans:
+                # Find quote in canonical for validation
+                spans_canonical = find_all_occurrences(canonical_lower, quote_for_match)
+                if not spans_canonical:
                     continue  # Not in transcript
 
-                # Extract exact text from raw transcript at same position
-                start, end = spans[0]
-                exact_quote = transcript.raw[start:end]
+                # Find the ORIGINAL quote text in raw transcript for extraction
+                # The support.quote should match the raw transcript verbatim or with minor variations
+                raw_lower = transcript.raw.casefold()
+                raw_quote_search = support.quote.casefold()
+                spans_raw = find_all_occurrences(raw_lower, raw_quote_search)
+
+                if spans_raw:
+                    # Found exact quote in raw
+                    start, end = spans_raw[0]
+                    exact_quote = transcript.raw[start:end]
+                    spans = spans_raw
+                else:
+                    # Fallback: use canonical match position on canonical transcript
+                    start, end = spans_canonical[0]
+                    exact_quote = transcript.canonical[start:end]
+                    spans = spans_canonical
 
                 key = (speaker_ref.speaker_id, quote_for_match)
 
@@ -161,7 +174,8 @@ def build_quote_whitelist(
                     existing = whitelist_map[key]
                     if chapter_idx not in existing.chapter_indices:
                         existing.chapter_indices.append(chapter_idx)
-                    existing.source_evidence_ids.append(claim.id)
+                    if claim.id not in existing.source_evidence_ids:
+                        existing.source_evidence_ids.append(claim.id)
                 else:
                     # Create new entry with stable ID
                     quote_id = sha256(

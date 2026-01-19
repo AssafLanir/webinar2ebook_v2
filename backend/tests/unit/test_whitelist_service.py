@@ -211,6 +211,27 @@ class TestBuildQuoteWhitelist:
         whitelist = build_quote_whitelist(evidence, transcript)
         assert len(whitelist) == 0
 
+    def test_rejects_unclear_speaker(self):
+        """Test speaker resolving to UNCLEAR is excluded."""
+        transcript = TranscriptPair(raw="Wisdom is limitless", canonical="Wisdom is limitless")
+        evidence = EvidenceMap(
+            version=1, project_id="test", content_mode="essay", transcript_hash="abc",
+            chapters=[
+                ChapterEvidence(
+                    chapter_index=1, chapter_title="Ch1",
+                    claims=[
+                        EvidenceEntry(
+                            id="ev1", claim="Test",
+                            support=[SupportQuote(quote="Wisdom is limitless", speaker="Unknown")],
+                        )
+                    ],
+                )
+            ],
+        )
+        # "Unknown" resolves to UNCLEAR role
+        whitelist = build_quote_whitelist(evidence, transcript)
+        assert len(whitelist) == 0
+
     def test_merges_duplicate_quotes(self):
         """Test same quote from same speaker merges chapter_indices."""
         transcript = TranscriptPair(raw="Wisdom is limitless", canonical="Wisdom is limitless")
