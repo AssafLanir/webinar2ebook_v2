@@ -3,6 +3,7 @@ from src.models.edition import SpeakerRef, SpeakerRole, TranscriptPair, Whitelis
 from src.services.whitelist_service import (
     build_quote_whitelist,
     canonicalize_transcript,
+    enforce_core_claims_guest_only,
     enforce_quote_whitelist,
     EnforcementResult,
     find_all_occurrences,
@@ -752,3 +753,53 @@ class TestEnforceQuoteWhitelist:
         # Chapter 1 - should still match (fallback to any chapter)
         result1 = enforce_quote_whitelist(text, whitelist, chapter_index=1)
         assert len(result1.replaced) == 1
+
+
+from dataclasses import dataclass as dataclass_test
+
+
+@dataclass_test
+class CoreClaimTest:
+    """Simple CoreClaim for testing."""
+    claim_text: str
+    supporting_quote: str
+
+
+class TestEnforceCoreClaimsGuestOnly:
+    def test_keeps_guest_claims(self):
+        """Test claims with GUEST quotes are kept."""
+        whitelist = [_make_guest_quote("Wisdom is limitless")]
+        claims = [CoreClaimTest(claim_text="Wisdom has no bounds", supporting_quote="Wisdom is limitless")]
+
+        result = enforce_core_claims_guest_only(claims, whitelist, chapter_index=0)
+
+        assert len(result) == 1
+
+    def test_drops_host_claims(self):
+        """Test claims with HOST quotes are dropped."""
+        whitelist = [_make_host_quote("Welcome everyone")]
+        claims = [CoreClaimTest(claim_text="Greeting", supporting_quote="Welcome everyone")]
+
+        result = enforce_core_claims_guest_only(claims, whitelist, chapter_index=0)
+
+        assert len(result) == 0
+
+    def test_drops_claims_not_in_whitelist(self):
+        """Test claims with quotes not in whitelist are dropped."""
+        whitelist = [_make_guest_quote("Wisdom is limitless")]
+        claims = [CoreClaimTest(claim_text="Test", supporting_quote="Not in whitelist")]
+
+        result = enforce_core_claims_guest_only(claims, whitelist, chapter_index=0)
+
+        assert len(result) == 0
+
+    def test_filters_by_chapter(self):
+        """Test claims are filtered by chapter index."""
+        whitelist = [_make_guest_quote("Chapter 0 quote", chapter_indices=[0])]
+        claims = [CoreClaimTest(claim_text="Test", supporting_quote="Chapter 0 quote")]
+
+        result0 = enforce_core_claims_guest_only(claims, whitelist, chapter_index=0)
+        result1 = enforce_core_claims_guest_only(claims, whitelist, chapter_index=1)
+
+        assert len(result0) == 1
+        assert len(result1) == 0  # Not in chapter 1

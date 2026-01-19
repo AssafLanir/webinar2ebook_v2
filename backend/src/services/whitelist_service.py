@@ -9,9 +9,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from hashlib import sha256
+from typing import Protocol
 
 from src.models.edition import ChapterCoverage, CoverageLevel, SpeakerRef, SpeakerRole, TranscriptPair, WhitelistQuote
 from src.models.evidence_map import ChapterEvidence, EvidenceMap
+
+
+class CoreClaimProtocol(Protocol):
+    """Protocol for CoreClaim-like objects."""
+    claim_text: str
+    supporting_quote: str
 
 
 @dataclass
@@ -460,3 +467,42 @@ def _validate_inline(
 
     # Fall back to any candidate
     return candidates[0] if candidates else None
+
+
+def enforce_core_claims_guest_only(
+    claims: list,
+    whitelist: list[WhitelistQuote],
+    chapter_index: int,
+) -> list:
+    """Filter Core Claims to only include GUEST quotes.
+
+    Uses whitelist speaker role—doesn't parse attribution from text.
+
+    Args:
+        claims: List of CoreClaim objects (anything with supporting_quote).
+        whitelist: Validated quote whitelist.
+        chapter_index: 0-based chapter index.
+
+    Returns:
+        Filtered list of claims with GUEST quotes only.
+    """
+    # Build quote lookup for this chapter
+    quote_to_entry: dict[str, WhitelistQuote] = {}
+    for q in whitelist:
+        if chapter_index in q.chapter_indices:
+            quote_to_entry[q.quote_canonical] = q
+
+    valid_claims = []
+    for claim in claims:
+        quote_canonical = canonicalize_transcript(claim.supporting_quote).casefold()
+
+        entry = quote_to_entry.get(quote_canonical)
+        if not entry:
+            continue  # Quote not in whitelist
+
+        if entry.speaker.speaker_role != SpeakerRole.GUEST:
+            continue  # Not from guest
+
+        valid_claims.append(claim)
+
+    return valid_claims
