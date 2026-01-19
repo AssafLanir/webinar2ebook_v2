@@ -522,7 +522,7 @@ class TestWhitelistModels:
 
     def test_whitelist_quote_creation(self):
         """Test WhitelistQuote model creation."""
-        from src.models.edition import TranscriptPair, WhitelistQuote
+        from src.models.edition import WhitelistQuote
 
         speaker = SpeakerRef(
             speaker_id="david_deutsch",
@@ -530,7 +530,7 @@ class TestWhitelistModels:
             speaker_role=SpeakerRole.GUEST,
         )
         quote = WhitelistQuote(
-            quote_id="abc123def456",
+            quote_id="abc123def4567890",
             quote_text="Wisdom is limitless",
             quote_canonical="wisdom is limitless",
             speaker=speaker,
@@ -538,6 +538,124 @@ class TestWhitelistModels:
             chapter_indices=[0, 1],
             match_spans=[(100, 120)],
         )
-        assert quote.quote_id == "abc123def456"
+        assert quote.quote_id == "abc123def4567890"
         assert quote.speaker.speaker_role == SpeakerRole.GUEST
         assert 0 in quote.chapter_indices
+
+    def test_transcript_pair_forbids_extra_fields(self):
+        """Test TranscriptPair rejects extra fields with ValidationError."""
+        from src.models.edition import TranscriptPair
+
+        with pytest.raises(ValidationError) as exc_info:
+            TranscriptPair(
+                raw="raw text",
+                canonical="canonical text",
+                extra_field="not allowed",
+            )
+        assert "extra_field" in str(exc_info.value).lower() or "extra" in str(exc_info.value).lower()
+
+    def test_whitelist_quote_forbids_extra_fields(self):
+        """Test WhitelistQuote rejects extra fields with ValidationError."""
+        from src.models.edition import WhitelistQuote
+
+        speaker = SpeakerRef(
+            speaker_id="test_speaker",
+            speaker_name="Test Speaker",
+            speaker_role=SpeakerRole.HOST,
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            WhitelistQuote(
+                quote_id="0123456789abcdef",
+                quote_text="Test quote",
+                quote_canonical="test quote",
+                speaker=speaker,
+                extra_field="not allowed",
+            )
+        assert "extra_field" in str(exc_info.value).lower() or "extra" in str(exc_info.value).lower()
+
+    def test_whitelist_quote_serialization_roundtrip_with_match_spans(self):
+        """Test WhitelistQuote serializes/deserializes with match_spans preserved as tuples."""
+        from src.models.edition import WhitelistQuote
+
+        speaker = SpeakerRef(
+            speaker_id="speaker_one",
+            speaker_name="Speaker One",
+            speaker_role=SpeakerRole.GUEST,
+        )
+        original = WhitelistQuote(
+            quote_id="fedcba9876543210",
+            quote_text="This is the exact quote text",
+            quote_canonical="this is the exact quote text",
+            speaker=speaker,
+            source_evidence_ids=["evidence_1"],
+            chapter_indices=[0, 2],
+            match_spans=[(50, 78), (200, 228)],
+        )
+
+        # Serialize to JSON
+        json_str = original.model_dump_json()
+
+        # Deserialize back
+        restored = WhitelistQuote.model_validate_json(json_str)
+
+        # Verify all fields match
+        assert restored.quote_id == original.quote_id
+        assert restored.quote_text == original.quote_text
+        assert restored.quote_canonical == original.quote_canonical
+        assert restored.speaker.speaker_id == original.speaker.speaker_id
+        assert restored.source_evidence_ids == original.source_evidence_ids
+        assert restored.chapter_indices == original.chapter_indices
+
+        # Verify match_spans are preserved as tuples
+        assert len(restored.match_spans) == 2
+        assert restored.match_spans[0] == (50, 78)
+        assert restored.match_spans[1] == (200, 228)
+        # Verify they are tuples (not lists)
+        assert isinstance(restored.match_spans[0], tuple)
+        assert isinstance(restored.match_spans[1], tuple)
+
+    def test_whitelist_quote_invalid_quote_id_format(self):
+        """Test WhitelistQuote rejects invalid quote_id formats."""
+        from src.models.edition import WhitelistQuote
+
+        speaker = SpeakerRef(
+            speaker_id="test_speaker",
+            speaker_name="Test Speaker",
+            speaker_role=SpeakerRole.HOST,
+        )
+
+        # Too short
+        with pytest.raises(ValidationError):
+            WhitelistQuote(
+                quote_id="abc123",
+                quote_text="Test quote",
+                quote_canonical="test quote",
+                speaker=speaker,
+            )
+
+        # Too long
+        with pytest.raises(ValidationError):
+            WhitelistQuote(
+                quote_id="abc123def456789012",
+                quote_text="Test quote",
+                quote_canonical="test quote",
+                speaker=speaker,
+            )
+
+        # Invalid characters (uppercase)
+        with pytest.raises(ValidationError):
+            WhitelistQuote(
+                quote_id="ABC123DEF4567890",
+                quote_text="Test quote",
+                quote_canonical="test quote",
+                speaker=speaker,
+            )
+
+        # Invalid characters (non-hex)
+        with pytest.raises(ValidationError):
+            WhitelistQuote(
+                quote_id="ghij123456789012",
+                quote_text="Test quote",
+                quote_canonical="test quote",
+                speaker=speaker,
+            )

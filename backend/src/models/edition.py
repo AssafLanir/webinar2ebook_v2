@@ -97,7 +97,12 @@ class WhitelistQuote(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    quote_id: str = Field(description="Stable ID: sha256(speaker_id|quote_canonical)[:16]")
+    quote_id: str = Field(
+        min_length=16,
+        max_length=16,
+        pattern=r"^[a-f0-9]{16}$",
+        description="Stable ID: sha256(speaker_id|quote_canonical)[:16]"
+    )
     quote_text: str = Field(description="EXACT from raw transcript (for output)")
     quote_canonical: str = Field(description="Casefolded/normalized (for matching only)")
     speaker: SpeakerRef
