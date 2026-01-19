@@ -510,6 +510,26 @@ def enforce_core_claims_guest_only(
     return valid_claims
 
 
+def format_excerpts_markdown(excerpts: list[WhitelistQuote]) -> str:
+    """Format excerpts as markdown blockquotes for prompt injection.
+
+    Args:
+        excerpts: List of WhitelistQuote entries.
+
+    Returns:
+        Markdown-formatted blockquotes.
+    """
+    if not excerpts:
+        return "*No excerpts available for this chapter.*"
+
+    blocks = []
+    for excerpt in excerpts:
+        block = f'> "{excerpt.quote_text}"\n> — {excerpt.speaker.speaker_name}'
+        blocks.append(block)
+
+    return '\n\n'.join(blocks)
+
+
 def strip_llm_blockquotes(generated_text: str) -> str:
     """Remove blockquote syntax LLM added outside Key Excerpts.
 

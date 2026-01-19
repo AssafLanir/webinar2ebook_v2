@@ -9,6 +9,7 @@ from src.services.whitelist_service import (
     enforce_quote_whitelist,
     EnforcementResult,
     find_all_occurrences,
+    format_excerpts_markdown,
     resolve_speaker,
     select_deterministic_excerpts,
 )
@@ -1083,3 +1084,42 @@ The discussion continues.'''
 
         assert len(result2.replaced) == 1
         assert result2.replaced[0].speaker.speaker_name == "Naval"
+
+
+class TestFormatExcerptsMarkdown:
+    def test_formats_single_excerpt(self):
+        """Test single excerpt is formatted correctly."""
+        excerpts = [_make_guest_quote("Wisdom is limitless", speaker_name="David Deutsch")]
+        result = format_excerpts_markdown(excerpts)
+
+        assert '> "Wisdom is limitless"' in result
+        assert "— David Deutsch" in result
+
+    def test_formats_multiple_excerpts(self):
+        """Test multiple excerpts are formatted with separation."""
+        excerpts = [
+            _make_guest_quote("Quote one", speaker_name="Speaker A"),
+            _make_guest_quote("Quote two", speaker_name="Speaker B"),
+        ]
+        result = format_excerpts_markdown(excerpts)
+
+        assert '> "Quote one"' in result
+        assert '> "Quote two"' in result
+        assert "— Speaker A" in result
+        assert "— Speaker B" in result
+
+    def test_empty_list_returns_placeholder(self):
+        """Test empty excerpt list returns placeholder."""
+        result = format_excerpts_markdown([])
+
+        assert "No excerpts available" in result or result == ""
+
+    def test_output_is_valid_markdown(self):
+        """Test output is valid markdown blockquote format."""
+        excerpts = [_make_guest_quote("Test quote", speaker_name="Test Speaker")]
+        result = format_excerpts_markdown(excerpts)
+
+        # Each line of the blockquote should start with >
+        for line in result.strip().split('\n'):
+            if line.strip():
+                assert line.startswith('>') or line == ''
