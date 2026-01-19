@@ -912,3 +912,174 @@ Some text here.'''
         # Should not have more than 2 consecutive newlines
         assert '\n\n\n' not in result
         assert 'Some text here' in result
+
+
+class TestWhitelistEnforcerHardGate:
+    """HARD GATE 2: Enforcer correctness tests.
+
+    These tests prove:
+    - Multi-candidate lookup works correctly
+    - Chapter merge scoping (source_chapters) works
+    - Core Claims = GUEST-only
+    """
+
+    def test_multi_candidate_same_quote_selects_correct_speaker(self):
+        """When same quote said by HOST and GUEST, match by speaker."""
+        # Create whitelist with same quote from both HOST and GUEST
+        host_quote = _make_host_quote("The truth is important", chapter_indices=[0])
+        guest_quote = _make_guest_quote("The truth is important", chapter_indices=[0], speaker_name="David")
+
+        whitelist = [host_quote, guest_quote]
+
+        # Blockquote attributed to David (GUEST) should match David's entry
+        text = '> "The truth is important"\n> — David'
+        result = enforce_quote_whitelist(text, whitelist, chapter_index=0)
+
+        assert len(result.replaced) == 1
+        assert result.replaced[0].speaker.speaker_name == "David"
+        assert result.replaced[0].speaker.speaker_role == SpeakerRole.GUEST
+
+        # Blockquote attributed to Host Speaker should match HOST entry
+        text2 = '> "The truth is important"\n> — Host Speaker'
+        result2 = enforce_quote_whitelist(text2, whitelist, chapter_index=0)
+
+        assert len(result2.replaced) == 1
+        assert result2.replaced[0].speaker.speaker_name == "Host Speaker"
+        assert result2.replaced[0].speaker.speaker_role == SpeakerRole.HOST
+
+    def test_chapter_scoping_prefers_correct_chapter(self):
+        """source_chapters filtering prioritizes correct chapter."""
+        # Quote appears in chapters 0 and 2 (0-indexed)
+        quote_ch0 = _make_guest_quote("Knowledge expands infinitely", chapter_indices=[0], speaker_name="Expert")
+        quote_ch2 = _make_guest_quote("Knowledge expands infinitely", chapter_indices=[2], speaker_name="Expert")
+
+        # Merge them into a single quote with multiple chapters (as whitelist builder would)
+        merged_quote = _make_guest_quote("Knowledge expands infinitely", chapter_indices=[0, 2], speaker_name="Expert")
+        whitelist = [merged_quote]
+
+        text = '> "Knowledge expands infinitely"\n> — Expert'
+
+        # When enforcing chapter 0, should match (chapter 0 is in indices)
+        result0 = enforce_quote_whitelist(text, whitelist, chapter_index=0)
+        assert len(result0.replaced) == 1
+        assert 0 in result0.replaced[0].chapter_indices
+
+        # When enforcing chapter 2, should match (chapter 2 is in indices)
+        result2 = enforce_quote_whitelist(text, whitelist, chapter_index=2)
+        assert len(result2.replaced) == 1
+        assert 2 in result2.replaced[0].chapter_indices
+
+        # When enforcing chapter 4 (not in indices), should fall back to global match
+        result4 = enforce_quote_whitelist(text, whitelist, chapter_index=4)
+        assert len(result4.replaced) == 1  # Falls back to any candidate
+
+    def test_core_claims_guest_only_strict(self):
+        """Core claims must only contain GUEST quotes."""
+        # Mix of HOST and GUEST quotes in whitelist
+        host_quote = _make_host_quote("Welcome to the show", chapter_indices=[0])
+        guest_quote1 = _make_guest_quote("Innovation requires failure", chapter_indices=[0], speaker_name="Innovator")
+        guest_quote2 = _make_guest_quote("Learning never stops", chapter_indices=[0], speaker_name="Scholar")
+
+        whitelist = [host_quote, guest_quote1, guest_quote2]
+
+        # Claims with mix of HOST and GUEST supporting quotes
+        claims = [
+            CoreClaimTest(claim_text="Greeting", supporting_quote="Welcome to the show"),
+            CoreClaimTest(claim_text="Risk taking", supporting_quote="Innovation requires failure"),
+            CoreClaimTest(claim_text="Lifelong learning", supporting_quote="Learning never stops"),
+        ]
+
+        result = enforce_core_claims_guest_only(claims, whitelist, chapter_index=0)
+
+        # Only GUEST claims should survive
+        assert len(result) == 2
+        assert all(c.supporting_quote != "Welcome to the show" for c in result)
+        assert any(c.supporting_quote == "Innovation requires failure" for c in result)
+        assert any(c.supporting_quote == "Learning never stops" for c in result)
+
+    def test_fabricated_quote_always_dropped(self):
+        """Quotes not in whitelist are removed."""
+        # Whitelist has one quote
+        whitelist = [_make_guest_quote("Real quote from transcript", chapter_indices=[0])]
+
+        # Text has a fabricated quote not in transcript
+        text = '''## Discussion
+
+> "This quote was completely fabricated by the LLM"
+> — Fake Speaker
+
+The discussion continues.'''
+
+        result = enforce_quote_whitelist(text, whitelist, chapter_index=0)
+
+        # Fabricated quote should be dropped
+        assert "fabricated" not in result.text
+        assert "Fake Speaker" not in result.text
+        assert len(result.dropped) == 1
+        assert "fabricated" in result.dropped[0].lower()
+        # Regular text preserved
+        assert "The discussion continues" in result.text
+
+    def test_valid_quote_uses_exact_whitelist_text(self):
+        """Even with different casing, use whitelist text."""
+        # Whitelist has exact quote with specific casing
+        whitelist = [_make_guest_quote("He Said This Exactly", chapter_indices=[0], speaker_name="Speaker")]
+
+        # LLM generates with ALL CAPS
+        text = '> "HE SAID THIS EXACTLY"\n> — Speaker'
+
+        result = enforce_quote_whitelist(text, whitelist, chapter_index=0)
+
+        # Output should use exact whitelist text (preserving original casing)
+        assert "He Said This Exactly" in result.text
+        assert "HE SAID THIS EXACTLY" not in result.text
+        assert len(result.replaced) == 1
+
+    def test_inline_quote_uses_exact_whitelist_text(self):
+        """Inline quotes also use exact whitelist text."""
+        whitelist = [_make_guest_quote("Wisdom Is Limitless", chapter_indices=[0])]
+
+        # LLM generates inline with lowercase
+        text = 'The guest mentioned "wisdom is limitless" during the talk.'
+
+        result = enforce_quote_whitelist(text, whitelist, chapter_index=0)
+
+        # Should use exact whitelist text
+        assert '"Wisdom Is Limitless"' in result.text
+        assert '"wisdom is limitless"' not in result.text
+
+    def test_fabricated_inline_quote_unquoted(self):
+        """Fabricated inline quotes have quotes removed but text kept."""
+        whitelist = [_make_guest_quote("Valid quote here", chapter_indices=[0])]
+
+        # LLM adds fabricated inline quote
+        text = 'He said "this fabricated inline quote" yesterday.'
+
+        result = enforce_quote_whitelist(text, whitelist, chapter_index=0)
+
+        # Quote marks removed but text preserved
+        assert '"this fabricated inline quote"' not in result.text
+        assert 'this fabricated inline quote' in result.text
+        assert len(result.dropped) == 1
+
+    def test_multi_speaker_chapter_scoping_combined(self):
+        """Multi-candidate lookup with chapter scoping combined."""
+        # Same quote, different speakers, different chapters
+        david_ch0 = _make_guest_quote("The answer is clear", chapter_indices=[0], speaker_name="David")
+        naval_ch1 = _make_guest_quote("The answer is clear", chapter_indices=[1], speaker_name="Naval")
+
+        whitelist = [david_ch0, naval_ch1]
+
+        # Quote attributed to David in chapter 0
+        text = '> "The answer is clear"\n> — David'
+        result = enforce_quote_whitelist(text, whitelist, chapter_index=0)
+
+        assert len(result.replaced) == 1
+        assert result.replaced[0].speaker.speaker_name == "David"
+
+        # Same quote attributed to Naval in chapter 1
+        text2 = '> "The answer is clear"\n> — Naval'
+        result2 = enforce_quote_whitelist(text2, whitelist, chapter_index=1)
+
+        assert len(result2.replaced) == 1
+        assert result2.replaced[0].speaker.speaker_name == "Naval"
