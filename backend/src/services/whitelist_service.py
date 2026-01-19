@@ -541,9 +541,18 @@ def strip_llm_blockquotes(generated_text: str) -> str:
             # Strip blockquotes from Core Claims too (quotes should be inline only)
             claims_and_rest = BLOCKQUOTE_LINE_PATTERN.sub('', claims_and_rest)
 
-            return before + excerpts_section + claims_and_rest
+            result = before + excerpts_section + claims_and_rest
+            # Collapse multiple consecutive blank lines to double newline
+            result = re.sub(r'\n{3,}', '\n\n', result)
+            return result
 
-        return before + after
+        result = before + after
+        # Collapse multiple consecutive blank lines to double newline
+        result = re.sub(r'\n{3,}', '\n\n', result)
+        return result
 
     # No Key Excerpts found—strip all blockquotes
-    return BLOCKQUOTE_LINE_PATTERN.sub('', generated_text)
+    result = BLOCKQUOTE_LINE_PATTERN.sub('', generated_text)
+    # Collapse multiple consecutive blank lines to double newline
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    return result

@@ -891,3 +891,24 @@ Regular text.'''
 
         assert '> "Some blockquote"' not in result
         assert "Regular text" in result
+
+    def test_handles_empty_input(self):
+        """Test empty input returns empty."""
+        assert strip_llm_blockquotes('') == ''
+
+    def test_normalizes_excessive_whitespace(self):
+        """Test excessive blank lines are normalized after stripping."""
+        text = '''## Narrative
+
+> "Stripped quote"
+> — Someone
+
+
+
+Some text here.'''
+
+        result = strip_llm_blockquotes(text)
+
+        # Should not have more than 2 consecutive newlines
+        assert '\n\n\n' not in result
+        assert 'Some text here' in result
