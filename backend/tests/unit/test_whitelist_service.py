@@ -277,3 +277,185 @@ class TestBuildQuoteWhitelist:
         whitelist1 = build_quote_whitelist(evidence, transcript, known_guests=["David"])
         whitelist2 = build_quote_whitelist(evidence, transcript, known_guests=["David"])
         assert whitelist1[0].quote_id == whitelist2[0].quote_id
+
+
+class TestWhitelistBuilderHardGate:
+    """HARD GATE 1: Whitelist builder correctness tests.
+
+    These tests prove:
+    - quote_text is exact raw substring
+    - quote_canonical matches canonical transcript
+    - Curly quotes/dashes/whitespace handled correctly
+    - Duplicates merged properly
+    """
+
+    def test_curly_quotes_matched_correctly(self):
+        """Test curly quotes in raw don't break matching."""
+        raw = 'He said "Wisdom is limitless" today'  # curly quotes
+        canonical = 'He said "Wisdom is limitless" today'  # straight quotes
+        transcript = TranscriptPair(raw=raw, canonical=canonical)
+
+        evidence = EvidenceMap(
+            version=1, project_id="test", content_mode="essay", transcript_hash="abc",
+            chapters=[ChapterEvidence(
+                chapter_index=1, chapter_title="Ch1",
+                claims=[EvidenceEntry(
+                    id="ev1", claim="Test",
+                    support=[SupportQuote(quote="Wisdom is limitless", speaker="David")],
+                )],
+            )],
+        )
+        whitelist = build_quote_whitelist(evidence, transcript, known_guests=["David"])
+        assert len(whitelist) == 1
+        # quote_text from raw should preserve curly quotes
+        assert "Wisdom is limitless" in whitelist[0].quote_text
+
+    def test_em_dash_matched_correctly(self):
+        """Test em-dash in raw doesn't break matching."""
+        raw = "Knowledge—the key—unlocks everything"  # em-dashes
+        canonical = "Knowledge-the key-unlocks everything"  # hyphens
+        transcript = TranscriptPair(raw=raw, canonical=canonical)
+
+        evidence = EvidenceMap(
+            version=1, project_id="test", content_mode="essay", transcript_hash="abc",
+            chapters=[ChapterEvidence(
+                chapter_index=1, chapter_title="Ch1",
+                claims=[EvidenceEntry(
+                    id="ev1", claim="Test",
+                    support=[SupportQuote(quote="the key", speaker="David")],
+                )],
+            )],
+        )
+        whitelist = build_quote_whitelist(evidence, transcript, known_guests=["David"])
+        assert len(whitelist) == 1
+
+    def test_whitespace_variations_matched(self):
+        """Test whitespace variations don't break matching."""
+        raw = "Wisdom   is\nlimitless"  # extra spaces, newline
+        canonical = "Wisdom is limitless"  # normalized
+        transcript = TranscriptPair(raw=raw, canonical=canonical)
+
+        evidence = EvidenceMap(
+            version=1, project_id="test", content_mode="essay", transcript_hash="abc",
+            chapters=[ChapterEvidence(
+                chapter_index=1, chapter_title="Ch1",
+                claims=[EvidenceEntry(
+                    id="ev1", claim="Test",
+                    support=[SupportQuote(quote="Wisdom is limitless", speaker="David")],
+                )],
+            )],
+        )
+        whitelist = build_quote_whitelist(evidence, transcript, known_guests=["David"])
+        assert len(whitelist) == 1
+
+    def test_quote_text_is_exact_raw_substring(self):
+        """CRITICAL: quote_text must be exact substring from raw transcript."""
+        raw = 'The "truth" is—complex'
+        canonical = 'The "truth" is-complex'
+        transcript = TranscriptPair(raw=raw, canonical=canonical)
+
+        evidence = EvidenceMap(
+            version=1, project_id="test", content_mode="essay", transcript_hash="abc",
+            chapters=[ChapterEvidence(
+                chapter_index=1, chapter_title="Ch1",
+                claims=[EvidenceEntry(
+                    id="ev1", claim="Test",
+                    support=[SupportQuote(quote="truth", speaker="David")],
+                )],
+            )],
+        )
+        whitelist = build_quote_whitelist(evidence, transcript, known_guests=["David"])
+        assert len(whitelist) == 1
+
+        # Verify quote_text is extractable from raw
+        quote_text = whitelist[0].quote_text
+        assert quote_text in raw, f"quote_text '{quote_text}' not found in raw transcript"
+
+    def test_quote_canonical_matches_canonical_transcript(self):
+        """CRITICAL: quote_canonical must be findable in canonical transcript."""
+        raw = 'He said "Wisdom is limitless"'
+        canonical = 'He said "Wisdom is limitless"'
+        transcript = TranscriptPair(raw=raw, canonical=canonical)
+
+        evidence = EvidenceMap(
+            version=1, project_id="test", content_mode="essay", transcript_hash="abc",
+            chapters=[ChapterEvidence(
+                chapter_index=1, chapter_title="Ch1",
+                claims=[EvidenceEntry(
+                    id="ev1", claim="Test",
+                    support=[SupportQuote(quote="Wisdom is limitless", speaker="David")],
+                )],
+            )],
+        )
+        whitelist = build_quote_whitelist(evidence, transcript, known_guests=["David"])
+        assert len(whitelist) == 1
+
+        quote_canonical = whitelist[0].quote_canonical
+        assert quote_canonical in canonical.casefold()
+
+    def test_duplicate_quotes_different_chapters_merged(self):
+        """Test same quote in different chapters creates single entry with both indices."""
+        transcript = TranscriptPair(raw="Wisdom is limitless", canonical="Wisdom is limitless")
+        evidence = EvidenceMap(
+            version=1, project_id="test", content_mode="essay", transcript_hash="abc",
+            chapters=[
+                ChapterEvidence(
+                    chapter_index=1, chapter_title="Ch1",
+                    claims=[EvidenceEntry(
+                        id="ev1", claim="Claim 1",
+                        support=[SupportQuote(quote="Wisdom is limitless", speaker="David")],
+                    )],
+                ),
+                ChapterEvidence(
+                    chapter_index=2, chapter_title="Ch2",
+                    claims=[EvidenceEntry(
+                        id="ev2", claim="Claim 2",
+                        support=[SupportQuote(quote="Wisdom is limitless", speaker="David")],
+                    )],
+                ),
+                ChapterEvidence(
+                    chapter_index=3, chapter_title="Ch3",
+                    claims=[EvidenceEntry(
+                        id="ev3", claim="Claim 3",
+                        support=[SupportQuote(quote="Wisdom is limitless", speaker="David")],
+                    )],
+                ),
+            ],
+        )
+        whitelist = build_quote_whitelist(evidence, transcript, known_guests=["David"])
+
+        # Should be single entry
+        assert len(whitelist) == 1
+        # With all three chapter indices (0-indexed)
+        assert set(whitelist[0].chapter_indices) == {0, 1, 2}
+        # With all three evidence IDs
+        assert set(whitelist[0].source_evidence_ids) == {"ev1", "ev2", "ev3"}
+
+    def test_same_quote_different_speakers_separate_entries(self):
+        """Test same quote from different speakers creates separate entries."""
+        transcript = TranscriptPair(raw="The truth matters", canonical="The truth matters")
+        evidence = EvidenceMap(
+            version=1, project_id="test", content_mode="essay", transcript_hash="abc",
+            chapters=[ChapterEvidence(
+                chapter_index=1, chapter_title="Ch1",
+                claims=[
+                    EvidenceEntry(
+                        id="ev1", claim="Claim 1",
+                        support=[SupportQuote(quote="The truth matters", speaker="David")],
+                    ),
+                    EvidenceEntry(
+                        id="ev2", claim="Claim 2",
+                        support=[SupportQuote(quote="The truth matters", speaker="Naval")],
+                    ),
+                ],
+            )],
+        )
+        whitelist = build_quote_whitelist(
+            evidence, transcript,
+            known_guests=["David", "Naval"],
+        )
+
+        # Should be two entries (one per speaker)
+        assert len(whitelist) == 2
+        speakers = {w.speaker.speaker_name for w in whitelist}
+        assert speakers == {"David", "Naval"}
