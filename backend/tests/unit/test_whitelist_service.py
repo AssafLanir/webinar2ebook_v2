@@ -1,5 +1,5 @@
 import pytest
-from src.models.edition import SpeakerRole, TranscriptPair, WhitelistQuote
+from src.models.edition import SpeakerRef, SpeakerRole, TranscriptPair, WhitelistQuote
 from src.services.whitelist_service import (
     build_quote_whitelist,
     canonicalize_transcript,
@@ -279,6 +279,78 @@ class TestBuildQuoteWhitelist:
         assert whitelist1[0].quote_id == whitelist2[0].quote_id
 
 
+from src.services.whitelist_service import compute_chapter_coverage
+from src.models.edition import CoverageLevel, ChapterCoverage
+
+
+class TestComputeChapterCoverage:
+    def test_strong_coverage(self):
+        """Test STRONG coverage with >= 5 quotes and >= 50 words/claim."""
+        whitelist = [
+            _make_quote(f"Quote {i} " * 15, chapter_indices=[0])  # ~15 words each
+            for i in range(6)
+        ]
+        chapter = _make_chapter_evidence(claim_count=2)
+
+        coverage = compute_chapter_coverage(chapter, whitelist, chapter_index=0)
+
+        assert coverage.level == CoverageLevel.STRONG
+        assert coverage.usable_quotes >= 5
+        assert coverage.target_words == 800
+        assert coverage.generation_mode == "normal"
+
+    def test_medium_coverage(self):
+        """Test MEDIUM coverage with 3-4 quotes."""
+        whitelist = [
+            _make_quote(f"Quote {i} " * 10, chapter_indices=[0])
+            for i in range(3)
+        ]
+        chapter = _make_chapter_evidence(claim_count=2)
+
+        coverage = compute_chapter_coverage(chapter, whitelist, chapter_index=0)
+
+        assert coverage.level == CoverageLevel.MEDIUM
+        assert coverage.target_words == 500
+        assert coverage.generation_mode == "thin"
+
+    def test_weak_coverage(self):
+        """Test WEAK coverage with < 3 quotes."""
+        whitelist = [
+            _make_quote("Short quote", chapter_indices=[0])
+        ]
+        chapter = _make_chapter_evidence(claim_count=2)
+
+        coverage = compute_chapter_coverage(chapter, whitelist, chapter_index=0)
+
+        assert coverage.level == CoverageLevel.WEAK
+        assert coverage.target_words == 250
+        assert coverage.generation_mode == "excerpt_only"
+
+    def test_filters_short_quotes(self):
+        """Test quotes < 8 words are not counted as usable."""
+        whitelist = [
+            _make_quote("Short", chapter_indices=[0]),  # 1 word - not usable
+            _make_quote("This is a longer quote with enough words", chapter_indices=[0]),  # 8 words
+        ]
+        chapter = _make_chapter_evidence(claim_count=1)
+
+        coverage = compute_chapter_coverage(chapter, whitelist, chapter_index=0)
+
+        assert coverage.usable_quotes == 1  # Only the long one
+
+    def test_filters_by_chapter_index(self):
+        """Test only quotes for this chapter are counted."""
+        whitelist = [
+            _make_quote("Quote for chapter 0 with enough words here", chapter_indices=[0]),
+            _make_quote("Quote for chapter 1 with enough words here", chapter_indices=[1]),
+        ]
+        chapter = _make_chapter_evidence(claim_count=1)
+
+        coverage = compute_chapter_coverage(chapter, whitelist, chapter_index=0)
+
+        assert coverage.usable_quotes == 1
+
+
 class TestWhitelistBuilderHardGate:
     """HARD GATE 1: Whitelist builder correctness tests.
 
@@ -459,3 +531,39 @@ class TestWhitelistBuilderHardGate:
         assert len(whitelist) == 2
         speakers = {w.speaker.speaker_name for w in whitelist}
         assert speakers == {"David", "Naval"}
+
+
+# Helper functions for tests
+def _make_quote(text: str, chapter_indices: list[int]) -> WhitelistQuote:
+    """Create a WhitelistQuote for testing."""
+    from hashlib import sha256
+    quote_id = sha256(f"test|{text}".encode()).hexdigest()[:16]
+    return WhitelistQuote(
+        quote_id=quote_id,
+        quote_text=text,
+        quote_canonical=text.lower(),
+        speaker=SpeakerRef(
+            speaker_id="test_speaker",
+            speaker_name="Test Speaker",
+            speaker_role=SpeakerRole.GUEST,
+        ),
+        source_evidence_ids=["ev1"],
+        chapter_indices=chapter_indices,
+        match_spans=[(0, len(text))],
+    )
+
+
+def _make_chapter_evidence(claim_count: int) -> ChapterEvidence:
+    """Create ChapterEvidence for testing."""
+    return ChapterEvidence(
+        chapter_index=1,
+        chapter_title="Test Chapter",
+        claims=[
+            EvidenceEntry(
+                id=f"claim_{i}",
+                claim=f"Claim {i}",
+                support=[SupportQuote(quote="test", speaker="Test")],
+            )
+            for i in range(claim_count)
+        ],
+    )

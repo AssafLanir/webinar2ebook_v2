@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from hashlib import sha256
 
-from src.models.edition import SpeakerRef, SpeakerRole, TranscriptPair, WhitelistQuote
-from src.models.evidence_map import EvidenceMap
+from src.models.edition import ChapterCoverage, CoverageLevel, SpeakerRef, SpeakerRole, TranscriptPair, WhitelistQuote
+from src.models.evidence_map import ChapterEvidence, EvidenceMap
 
 
 def find_all_occurrences(text: str, substring: str) -> list[tuple[int, int]]:
@@ -193,3 +193,70 @@ def build_quote_whitelist(
                     )
 
     return list(whitelist_map.values())
+
+
+# Coverage thresholds
+MIN_USABLE_QUOTE_LENGTH = 8  # words
+STRONG_QUOTES = 5
+STRONG_WORDS_PER_CLAIM = 50
+MEDIUM_QUOTES = 3
+MEDIUM_WORDS_PER_CLAIM = 30
+
+
+def compute_chapter_coverage(
+    chapter_evidence: ChapterEvidence,
+    whitelist: list[WhitelistQuote],
+    chapter_index: int,
+) -> ChapterCoverage:
+    """Compute coverage metrics for a single chapter.
+
+    Args:
+        chapter_evidence: Evidence data for chapter.
+        whitelist: Full whitelist of validated quotes.
+        chapter_index: 0-based chapter index.
+
+    Returns:
+        ChapterCoverage with level and target_words.
+    """
+    # Filter whitelist to this chapter
+    chapter_quotes = [
+        q for q in whitelist
+        if chapter_index in q.chapter_indices
+    ]
+
+    # Filter by minimum length
+    usable_quotes = [
+        q for q in chapter_quotes
+        if len(q.quote_text.split()) >= MIN_USABLE_QUOTE_LENGTH
+    ]
+
+    claim_count = len(chapter_evidence.claims)
+    total_quote_words = sum(len(q.quote_text.split()) for q in usable_quotes)
+
+    # Compute metrics
+    quotes_per_claim = len(usable_quotes) / max(claim_count, 1)
+    quote_words_per_claim = total_quote_words / max(claim_count, 1)
+
+    # Determine level
+    if len(usable_quotes) >= STRONG_QUOTES and quote_words_per_claim >= STRONG_WORDS_PER_CLAIM:
+        level = CoverageLevel.STRONG
+        target_words = 800
+        mode = "normal"
+    elif len(usable_quotes) >= MEDIUM_QUOTES and quote_words_per_claim >= MEDIUM_WORDS_PER_CLAIM:
+        level = CoverageLevel.MEDIUM
+        target_words = 500
+        mode = "thin"
+    else:
+        level = CoverageLevel.WEAK
+        target_words = 250
+        mode = "excerpt_only"
+
+    return ChapterCoverage(
+        chapter_index=chapter_index,
+        level=level,
+        usable_quotes=len(usable_quotes),
+        quote_words_per_claim=quote_words_per_claim,
+        quotes_per_claim=quotes_per_claim,
+        target_words=target_words,
+        generation_mode=mode,
+    )
