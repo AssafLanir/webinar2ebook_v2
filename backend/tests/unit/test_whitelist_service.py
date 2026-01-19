@@ -1096,7 +1096,7 @@ class TestFormatExcerptsMarkdown:
         assert "— David Deutsch" in result
 
     def test_formats_multiple_excerpts(self):
-        """Test multiple excerpts are formatted with separation."""
+        """Test multiple excerpts are formatted with blank line separation."""
         excerpts = [
             _make_guest_quote("Quote one", speaker_name="Speaker A"),
             _make_guest_quote("Quote two", speaker_name="Speaker B"),
@@ -1107,6 +1107,10 @@ class TestFormatExcerptsMarkdown:
         assert '> "Quote two"' in result
         assert "— Speaker A" in result
         assert "— Speaker B" in result
+        # Verify blank line separation between blockquotes
+        assert '\n\n' in result
+        blocks = result.split('\n\n')
+        assert len(blocks) == 2
 
     def test_empty_list_returns_placeholder(self):
         """Test empty excerpt list returns placeholder."""
