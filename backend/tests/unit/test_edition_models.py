@@ -8,6 +8,7 @@ These tests verify:
 5. Theme model for Ideas Edition
 6. Project model edition fields (Task 3)
 7. UpdateProjectRequest edition fields (Task 3)
+8. SpeakerRole enum and SpeakerRef model for whitelist-based quote generation
 """
 
 from datetime import UTC, datetime
@@ -15,7 +16,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from src.models.edition import Coverage, Edition, Fidelity, SegmentRef, Theme
+from src.models.edition import Coverage, Edition, Fidelity, SegmentRef, SpeakerRef, SpeakerRole, Theme
 from src.models.project import Project, UpdateProjectRequest, WebinarType
 
 
@@ -411,3 +412,90 @@ class TestUpdateProjectRequestEditionFields:
         assert request.edition is None
         assert request.fidelity is None
         assert request.themes is None
+
+
+# =============================================================================
+# Task 1: SpeakerRole Enum and SpeakerRef Model Tests (Whitelist-based Quote Generation)
+# =============================================================================
+
+
+class TestSpeakerModels:
+    """Test SpeakerRole enum and SpeakerRef model for whitelist-based quote generation."""
+
+    def test_speaker_role_values(self):
+        """Test SpeakerRole enum has expected values."""
+        assert SpeakerRole.HOST == "host"
+        assert SpeakerRole.GUEST == "guest"
+        assert SpeakerRole.CALLER == "caller"
+        assert SpeakerRole.CLIP == "clip"
+        assert SpeakerRole.UNCLEAR == "unclear"
+
+    def test_speaker_role_from_string(self):
+        """Test SpeakerRole can be constructed from strings."""
+        assert SpeakerRole("host") == SpeakerRole.HOST
+        assert SpeakerRole("guest") == SpeakerRole.GUEST
+        assert SpeakerRole("caller") == SpeakerRole.CALLER
+        assert SpeakerRole("clip") == SpeakerRole.CLIP
+        assert SpeakerRole("unclear") == SpeakerRole.UNCLEAR
+
+    def test_speaker_role_invalid_value_rejected(self):
+        """Test invalid SpeakerRole value raises ValueError."""
+        with pytest.raises(ValueError):
+            SpeakerRole("invalid_role")
+
+    def test_speaker_ref_creation(self):
+        """Test SpeakerRef model creation."""
+        ref = SpeakerRef(
+            speaker_id="david_deutsch",
+            speaker_name="David Deutsch",
+            speaker_role=SpeakerRole.GUEST,
+        )
+        assert ref.speaker_id == "david_deutsch"
+        assert ref.speaker_name == "David Deutsch"
+        assert ref.speaker_role == SpeakerRole.GUEST
+
+    def test_speaker_ref_with_host_role(self):
+        """Test SpeakerRef with HOST role."""
+        ref = SpeakerRef(
+            speaker_id="sam_harris",
+            speaker_name="Sam Harris",
+            speaker_role=SpeakerRole.HOST,
+        )
+        assert ref.speaker_id == "sam_harris"
+        assert ref.speaker_name == "Sam Harris"
+        assert ref.speaker_role == SpeakerRole.HOST
+
+    def test_speaker_ref_requires_all_fields(self):
+        """Test SpeakerRef requires speaker_id, speaker_name, and speaker_role."""
+        with pytest.raises(ValidationError) as exc_info:
+            SpeakerRef(
+                speaker_id="test_id",
+                speaker_name="Test Name",
+                # speaker_role intentionally omitted
+            )
+        assert "speaker_role" in str(exc_info.value)
+
+    def test_speaker_ref_forbids_extra_fields(self):
+        """Test SpeakerRef forbids extra fields."""
+        with pytest.raises(ValidationError) as exc_info:
+            SpeakerRef(
+                speaker_id="test_id",
+                speaker_name="Test Name",
+                speaker_role=SpeakerRole.GUEST,
+                extra_field="not allowed",
+            )
+        assert "extra_field" in str(exc_info.value).lower() or "extra" in str(exc_info.value).lower()
+
+    def test_speaker_ref_serialization_roundtrip(self):
+        """Test SpeakerRef serializes and deserializes correctly."""
+        original = SpeakerRef(
+            speaker_id="brett_hall",
+            speaker_name="Brett Hall",
+            speaker_role=SpeakerRole.HOST,
+        )
+        serialized = original.model_dump()
+        restored = SpeakerRef.model_validate(serialized)
+
+        assert restored.speaker_id == original.speaker_id
+        assert restored.speaker_name == original.speaker_name
+        assert restored.speaker_role == original.speaker_role

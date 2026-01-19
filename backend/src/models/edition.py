@@ -6,6 +6,8 @@ and coverage strengths used throughout the system.
 Models include:
 - SegmentRef: Reference to a transcript segment with canonical_hash for offset drift protection
 - Theme: A theme/chapter for Ideas Edition
+- SpeakerRole: Role of speaker in transcript (host, guest, caller, clip, unclear)
+- SpeakerRef: Reference to a speaker with typed role for whitelist-based quote generation
 """
 
 from enum import Enum
@@ -49,6 +51,36 @@ class Coverage(str, Enum):
     WEAK = "weak"
 
 
+class SpeakerRole(str, Enum):
+    """Role of speaker in transcript.
+
+    HOST: The host/interviewer of the podcast/webinar
+    GUEST: A guest being interviewed or featured
+    CALLER: A caller or audience member
+    CLIP: Audio/video clip from another source
+    UNCLEAR: Speaker role cannot be determined
+    """
+
+    HOST = "host"
+    GUEST = "guest"
+    CALLER = "caller"
+    CLIP = "clip"
+    UNCLEAR = "unclear"
+
+
+class SpeakerRef(BaseModel):
+    """Reference to a speaker with typed role.
+
+    Used for whitelist-based quote generation to filter quotes by speaker role.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    speaker_id: str = Field(description="Canonical stable ID (e.g., 'david_deutsch')")
+    speaker_name: str = Field(description="Display name (e.g., 'David Deutsch')")
+    speaker_role: SpeakerRole = Field(description="Role for filtering")
+
+
 class SegmentRef(BaseModel):
     """Reference to a transcript segment.
 
@@ -84,3 +116,21 @@ class Theme(BaseModel):
         default=True,
         description="Whether to include this theme in generation"
     )
+
+
+def get_recommended_edition(webinar_type: str) -> Edition:
+    """Get recommended edition based on webinar type.
+
+    - Presentations and tutorials → Ideas Edition (thematic chapters)
+    - Interviews → Q&A Edition (speaker-labeled dialogue)
+
+    Args:
+        webinar_type: The webinar type string value
+
+    Returns:
+        The recommended Edition enum value
+    """
+    if webinar_type == "interview":
+        return Edition.QA
+    # standard_presentation, training_tutorial, or any other type
+    return Edition.IDEAS
