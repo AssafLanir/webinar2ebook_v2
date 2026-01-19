@@ -8,6 +8,8 @@ Models include:
 - Theme: A theme/chapter for Ideas Edition
 - SpeakerRole: Role of speaker in transcript (host, guest, caller, clip, unclear)
 - SpeakerRef: Reference to a speaker with typed role for whitelist-based quote generation
+- TranscriptPair: Both transcript forms needed for whitelist building
+- WhitelistQuote: A validated quote that can be used in generation
 """
 
 from enum import Enum
@@ -79,6 +81,29 @@ class SpeakerRef(BaseModel):
     speaker_id: str = Field(description="Canonical stable ID (e.g., 'david_deutsch')")
     speaker_name: str = Field(description="Display name (e.g., 'David Deutsch')")
     speaker_role: SpeakerRole = Field(description="Role for filtering")
+
+
+class TranscriptPair(BaseModel):
+    """Both transcript forms needed for whitelist building."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    raw: str = Field(description="Original transcript (for quote_text extraction)")
+    canonical: str = Field(description="Normalized (for matching)")
+
+
+class WhitelistQuote(BaseModel):
+    """A validated quote that can be used in generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    quote_id: str = Field(description="Stable ID: sha256(speaker_id|quote_canonical)[:16]")
+    quote_text: str = Field(description="EXACT from raw transcript (for output)")
+    quote_canonical: str = Field(description="Casefolded/normalized (for matching only)")
+    speaker: SpeakerRef
+    source_evidence_ids: list[str] = Field(default_factory=list)
+    chapter_indices: list[int] = Field(default_factory=list)
+    match_spans: list[tuple[int, int]] = Field(default_factory=list)
 
 
 class SegmentRef(BaseModel):

@@ -499,3 +499,45 @@ class TestSpeakerModels:
         assert restored.speaker_id == original.speaker_id
         assert restored.speaker_name == original.speaker_name
         assert restored.speaker_role == original.speaker_role
+
+
+# =============================================================================
+# Task 2: TranscriptPair and WhitelistQuote Models (Whitelist-based Quote Generation)
+# =============================================================================
+
+
+class TestWhitelistModels:
+    """Test TranscriptPair and WhitelistQuote models for whitelist-based quote generation."""
+
+    def test_transcript_pair_creation(self):
+        """Test TranscriptPair holds raw and canonical."""
+        from src.models.edition import TranscriptPair
+
+        pair = TranscriptPair(
+            raw='He said "hello"—goodbye',
+            canonical='he said "hello"-goodbye',
+        )
+        assert pair.raw == 'He said "hello"—goodbye'
+        assert pair.canonical == 'he said "hello"-goodbye'
+
+    def test_whitelist_quote_creation(self):
+        """Test WhitelistQuote model creation."""
+        from src.models.edition import TranscriptPair, WhitelistQuote
+
+        speaker = SpeakerRef(
+            speaker_id="david_deutsch",
+            speaker_name="David Deutsch",
+            speaker_role=SpeakerRole.GUEST,
+        )
+        quote = WhitelistQuote(
+            quote_id="abc123def456",
+            quote_text="Wisdom is limitless",
+            quote_canonical="wisdom is limitless",
+            speaker=speaker,
+            source_evidence_ids=["ev1", "ev2"],
+            chapter_indices=[0, 1],
+            match_spans=[(100, 120)],
+        )
+        assert quote.quote_id == "abc123def456"
+        assert quote.speaker.speaker_role == SpeakerRole.GUEST
+        assert 0 in quote.chapter_indices
