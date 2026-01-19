@@ -814,3 +814,80 @@ class TestEnforceCoreClaimsGuestOnly:
         claims = [CoreClaimTest(claim_text="Test", supporting_quote="Quote")]
         result = enforce_core_claims_guest_only(claims, [], chapter_index=0)
         assert result == []
+
+
+from src.services.whitelist_service import strip_llm_blockquotes
+
+
+class TestStripLlmBlockquotes:
+    def test_preserves_key_excerpts_section(self):
+        """Test Key Excerpts blockquotes are preserved."""
+        text = '''## Narrative
+
+Some text here.
+
+### Key Excerpts
+
+> "Valid excerpt"
+> — Speaker
+
+### Core Claims
+
+More text.'''
+
+        result = strip_llm_blockquotes(text)
+
+        assert '> "Valid excerpt"' in result
+        assert "— Speaker" in result
+
+    def test_strips_blockquotes_from_narrative(self):
+        """Test blockquotes in narrative are stripped."""
+        text = '''## Narrative
+
+> "LLM added this quote"
+> — Someone
+
+Some legitimate text.
+
+### Key Excerpts
+
+> "Valid excerpt"
+> — Speaker'''
+
+        result = strip_llm_blockquotes(text)
+
+        assert "LLM added this quote" not in result
+        assert '> "Valid excerpt"' in result
+
+    def test_strips_blockquotes_from_core_claims(self):
+        """Test blockquotes in Core Claims section are stripped."""
+        text = '''### Key Excerpts
+
+> "Valid excerpt"
+> — Speaker
+
+### Core Claims
+
+> "Should not be blockquote"
+> — Someone
+
+- **Claim**: "valid claim"'''
+
+        result = strip_llm_blockquotes(text)
+
+        assert '> "Valid excerpt"' in result
+        assert '> "Should not be blockquote"' not in result
+
+    def test_handles_no_key_excerpts(self):
+        """Test handles text without Key Excerpts section."""
+        text = '''## Chapter
+
+> "Some blockquote"
+> — Someone
+
+Regular text.'''
+
+        result = strip_llm_blockquotes(text)
+
+        assert '> "Some blockquote"' not in result
+        assert "Regular text" in result

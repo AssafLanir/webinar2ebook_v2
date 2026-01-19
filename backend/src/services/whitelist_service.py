@@ -36,6 +36,8 @@ BLOCKQUOTE_PATTERN = re.compile(
     re.MULTILINE
 )
 
+BLOCKQUOTE_LINE_PATTERN = re.compile(r'^>\s*.*$', re.MULTILINE)
+
 INLINE_QUOTE_PATTERN = re.compile(
     r'["\u201c](?P<quote>[^"\u201d]{5,})["\u201d]'
 )
@@ -506,3 +508,42 @@ def enforce_core_claims_guest_only(
         valid_claims.append(claim)
 
     return valid_claims
+
+
+def strip_llm_blockquotes(generated_text: str) -> str:
+    """Remove blockquote syntax LLM added outside Key Excerpts.
+
+    Key Excerpts section was injected deterministically and is preserved.
+    Narrative should paraphrase, not quote—strip any blockquotes there.
+
+    Args:
+        generated_text: LLM-generated text.
+
+    Returns:
+        Text with blockquotes stripped from non-Key Excerpts sections.
+    """
+    # Find Key Excerpts section
+    key_excerpts_match = re.search(r'### Key Excerpts', generated_text)
+
+    if key_excerpts_match:
+        before = generated_text[:key_excerpts_match.start()]
+        after = generated_text[key_excerpts_match.start():]
+
+        # Strip blockquotes from narrative (before Key Excerpts)
+        before = BLOCKQUOTE_LINE_PATTERN.sub('', before)
+
+        # Find Core Claims section within after
+        core_claims_match = re.search(r'### Core Claims', after)
+        if core_claims_match:
+            excerpts_section = after[:core_claims_match.start()]
+            claims_and_rest = after[core_claims_match.start():]
+
+            # Strip blockquotes from Core Claims too (quotes should be inline only)
+            claims_and_rest = BLOCKQUOTE_LINE_PATTERN.sub('', claims_and_rest)
+
+            return before + excerpts_section + claims_and_rest
+
+        return before + after
+
+    # No Key Excerpts found—strip all blockquotes
+    return BLOCKQUOTE_LINE_PATTERN.sub('', generated_text)
