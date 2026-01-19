@@ -16,7 +16,17 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from src.models.edition import Coverage, Edition, Fidelity, SegmentRef, SpeakerRef, SpeakerRole, Theme
+from src.models.edition import (
+    ChapterCoverage,
+    Coverage,
+    CoverageLevel,
+    Edition,
+    Fidelity,
+    SegmentRef,
+    SpeakerRef,
+    SpeakerRole,
+    Theme,
+)
 from src.models.project import Project, UpdateProjectRequest, WebinarType
 
 
@@ -659,3 +669,141 @@ class TestWhitelistModels:
                 quote_canonical="test quote",
                 speaker=speaker,
             )
+
+
+# =============================================================================
+# Task 3: CoverageLevel Enum and ChapterCoverage Model
+# =============================================================================
+
+
+class TestCoverageModels:
+    """Test CoverageLevel enum and ChapterCoverage model."""
+
+    def test_coverage_level_values(self):
+        """Test CoverageLevel enum values."""
+        assert CoverageLevel.STRONG == "strong"
+        assert CoverageLevel.MEDIUM == "medium"
+        assert CoverageLevel.WEAK == "weak"
+
+    def test_chapter_coverage_creation(self):
+        """Test ChapterCoverage model creation."""
+        coverage = ChapterCoverage(
+            chapter_index=0,
+            level=CoverageLevel.STRONG,
+            usable_quotes=5,
+            quote_words_per_claim=60.0,
+            quotes_per_claim=2.5,
+            target_words=800,
+            generation_mode="normal",
+        )
+        assert coverage.level == CoverageLevel.STRONG
+        assert coverage.target_words == 800
+
+    def test_coverage_level_from_string(self):
+        """Test CoverageLevel can be constructed from strings."""
+        assert CoverageLevel("strong") == CoverageLevel.STRONG
+        assert CoverageLevel("medium") == CoverageLevel.MEDIUM
+        assert CoverageLevel("weak") == CoverageLevel.WEAK
+
+    def test_coverage_level_invalid_value_rejected(self):
+        """Test invalid CoverageLevel value raises ValueError."""
+        with pytest.raises(ValueError):
+            CoverageLevel("invalid")
+
+    def test_chapter_coverage_all_fields(self):
+        """Test ChapterCoverage has all required fields."""
+        coverage = ChapterCoverage(
+            chapter_index=2,
+            level=CoverageLevel.MEDIUM,
+            usable_quotes=3,
+            quote_words_per_claim=35.5,
+            quotes_per_claim=1.5,
+            target_words=500,
+            generation_mode="thin",
+        )
+        assert coverage.chapter_index == 2
+        assert coverage.level == CoverageLevel.MEDIUM
+        assert coverage.usable_quotes == 3
+        assert coverage.quote_words_per_claim == 35.5
+        assert coverage.quotes_per_claim == 1.5
+        assert coverage.target_words == 500
+        assert coverage.generation_mode == "thin"
+
+    def test_chapter_coverage_validation_negative_chapter_index(self):
+        """Test chapter_index < 0 raises ValidationError."""
+        with pytest.raises(ValidationError) as exc_info:
+            ChapterCoverage(
+                chapter_index=-1,
+                level=CoverageLevel.WEAK,
+                usable_quotes=1,
+                quote_words_per_claim=10.0,
+                quotes_per_claim=0.5,
+                target_words=200,
+                generation_mode="excerpt_only",
+            )
+        assert "chapter_index" in str(exc_info.value)
+
+    def test_chapter_coverage_validation_negative_usable_quotes(self):
+        """Test usable_quotes < 0 raises ValidationError."""
+        with pytest.raises(ValidationError) as exc_info:
+            ChapterCoverage(
+                chapter_index=0,
+                level=CoverageLevel.WEAK,
+                usable_quotes=-1,
+                quote_words_per_claim=10.0,
+                quotes_per_claim=0.5,
+                target_words=200,
+                generation_mode="normal",
+            )
+        assert "usable_quotes" in str(exc_info.value)
+
+    def test_chapter_coverage_validation_negative_target_words(self):
+        """Test target_words < 0 raises ValidationError."""
+        with pytest.raises(ValidationError) as exc_info:
+            ChapterCoverage(
+                chapter_index=0,
+                level=CoverageLevel.WEAK,
+                usable_quotes=1,
+                quote_words_per_claim=10.0,
+                quotes_per_claim=0.5,
+                target_words=-100,
+                generation_mode="normal",
+            )
+        assert "target_words" in str(exc_info.value)
+
+    def test_chapter_coverage_forbids_extra_fields(self):
+        """Test ChapterCoverage forbids extra fields."""
+        with pytest.raises(ValidationError) as exc_info:
+            ChapterCoverage(
+                chapter_index=0,
+                level=CoverageLevel.STRONG,
+                usable_quotes=5,
+                quote_words_per_claim=60.0,
+                quotes_per_claim=2.5,
+                target_words=800,
+                generation_mode="normal",
+                extra_field="not allowed",
+            )
+        assert "extra_field" in str(exc_info.value).lower() or "extra" in str(exc_info.value).lower()
+
+    def test_chapter_coverage_serialization_roundtrip(self):
+        """Test ChapterCoverage serializes and deserializes correctly."""
+        original = ChapterCoverage(
+            chapter_index=1,
+            level=CoverageLevel.MEDIUM,
+            usable_quotes=4,
+            quote_words_per_claim=45.0,
+            quotes_per_claim=2.0,
+            target_words=600,
+            generation_mode="thin",
+        )
+        serialized = original.model_dump()
+        restored = ChapterCoverage.model_validate(serialized)
+
+        assert restored.chapter_index == original.chapter_index
+        assert restored.level == original.level
+        assert restored.usable_quotes == original.usable_quotes
+        assert restored.quote_words_per_claim == original.quote_words_per_claim
+        assert restored.quotes_per_claim == original.quotes_per_claim
+        assert restored.target_words == original.target_words
+        assert restored.generation_mode == original.generation_mode

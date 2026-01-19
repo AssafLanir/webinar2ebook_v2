@@ -53,6 +53,33 @@ class Coverage(str, Enum):
     WEAK = "weak"
 
 
+class CoverageLevel(str, Enum):
+    """Coverage strength for quote availability.
+
+    STRONG: >= 5 usable quotes, >= 50 words/claim
+    MEDIUM: >= 3 usable quotes, >= 30 words/claim
+    WEAK: Below MEDIUM thresholds
+    """
+
+    STRONG = "strong"
+    MEDIUM = "medium"
+    WEAK = "weak"
+
+
+class ChapterCoverage(BaseModel):
+    """Coverage metrics for a chapter."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    chapter_index: int = Field(ge=0)
+    level: CoverageLevel
+    usable_quotes: int = Field(ge=0)
+    quote_words_per_claim: float = Field(ge=0)
+    quotes_per_claim: float = Field(ge=0)
+    target_words: int = Field(ge=0)
+    generation_mode: str = Field(description="normal | thin | excerpt_only")
+
+
 class SpeakerRole(str, Enum):
     """Role of speaker in transcript.
 
