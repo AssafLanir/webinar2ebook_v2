@@ -6,7 +6,10 @@ against whitelist, and provides deterministic excerpt selection.
 
 from __future__ import annotations
 
-from src.models.edition import SpeakerRef, SpeakerRole
+from hashlib import sha256
+
+from src.models.edition import SpeakerRef, SpeakerRole, TranscriptPair, WhitelistQuote
+from src.models.evidence_map import EvidenceMap
 
 
 def find_all_occurrences(text: str, substring: str) -> list[tuple[int, int]]:
@@ -89,3 +92,90 @@ def canonicalize_transcript(text: str) -> str:
     # Collapse whitespace
     result = ' '.join(result.split())
     return result
+
+
+def build_quote_whitelist(
+    evidence_map: EvidenceMap,
+    transcript: TranscriptPair,
+    known_guests: list[str] | None = None,
+    known_hosts: list[str] | None = None,
+) -> list[WhitelistQuote]:
+    """Build whitelist of validated quotes from Evidence Map.
+
+    Only includes quotes that:
+    1. Have a speaker (None/Unknown attribution rejected)
+    2. Match as substring in canonical transcript
+    3. Have speaker resolved to non-UNCLEAR role
+
+    Args:
+        evidence_map: Evidence map with claims and support quotes.
+        transcript: Raw and canonical transcript pair.
+        known_guests: List of known guest names.
+        known_hosts: List of known host names.
+
+    Returns:
+        List of validated WhitelistQuote entries.
+    """
+    known_guests = known_guests or []
+    known_hosts = known_hosts or []
+
+    canonical_lower = transcript.canonical.casefold()
+    whitelist_map: dict[tuple[str, str], WhitelistQuote] = {}
+
+    for chapter in evidence_map.chapters:
+        # Convert 1-based chapter_index to 0-based
+        chapter_idx = chapter.chapter_index - 1
+
+        for claim in chapter.claims:
+            for support in claim.support:
+                # Reject None/Unknown attribution
+                if not support.speaker:
+                    continue
+
+                speaker_ref = resolve_speaker(
+                    support.speaker,
+                    known_guests=known_guests,
+                    known_hosts=known_hosts,
+                )
+
+                # Skip UNCLEAR speakers
+                if speaker_ref.speaker_role == SpeakerRole.UNCLEAR:
+                    continue
+
+                # Canonicalize quote for matching
+                quote_for_match = canonicalize_transcript(support.quote).casefold()
+
+                # Find in canonical transcript
+                spans = find_all_occurrences(canonical_lower, quote_for_match)
+                if not spans:
+                    continue  # Not in transcript
+
+                # Extract exact text from raw transcript at same position
+                start, end = spans[0]
+                exact_quote = transcript.raw[start:end]
+
+                key = (speaker_ref.speaker_id, quote_for_match)
+
+                if key in whitelist_map:
+                    # Merge: add chapter, evidence ID
+                    existing = whitelist_map[key]
+                    if chapter_idx not in existing.chapter_indices:
+                        existing.chapter_indices.append(chapter_idx)
+                    existing.source_evidence_ids.append(claim.id)
+                else:
+                    # Create new entry with stable ID
+                    quote_id = sha256(
+                        f"{speaker_ref.speaker_id}|{quote_for_match}".encode()
+                    ).hexdigest()[:16]
+
+                    whitelist_map[key] = WhitelistQuote(
+                        quote_id=quote_id,
+                        quote_text=exact_quote,
+                        quote_canonical=quote_for_match,
+                        speaker=speaker_ref,
+                        source_evidence_ids=[claim.id],
+                        chapter_indices=[chapter_idx],
+                        match_spans=spans,
+                    )
+
+    return list(whitelist_map.values())
