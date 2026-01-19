@@ -109,3 +109,13 @@ class TestResolveSpeaker:
         ref1 = resolve_speaker("David Deutsch", known_guests=["David Deutsch"])
         ref2 = resolve_speaker("David Deutsch", known_guests=["David Deutsch"])
         assert ref1.speaker_id == ref2.speaker_id
+
+    def test_resolves_empty_string_as_unclear(self):
+        """Test empty name resolves as UNCLEAR."""
+        ref = resolve_speaker("")
+        assert ref.speaker_role == SpeakerRole.UNCLEAR
+
+    def test_resolves_unclear_string_as_unclear(self):
+        """Test 'unclear' string resolves as UNCLEAR."""
+        ref = resolve_speaker("unclear")
+        assert ref.speaker_role == SpeakerRole.UNCLEAR
