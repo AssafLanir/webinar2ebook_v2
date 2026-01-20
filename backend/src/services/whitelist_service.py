@@ -729,11 +729,12 @@ def clean_placeholder_glue(text: str) -> tuple[str, dict]:
         # Remove matches and clean up orphan punctuation
         result = pattern.sub('', result)
 
-    # Clean up orphan punctuation and extra whitespace
-    result = re.sub(r'\s*[,]\s*[.]', '.', result)  # ", ." -> "."
-    result = re.sub(r'\s*[.]\s*[.]', '.', result)  # ". ." -> "."
-    result = re.sub(r'\s{2,}', ' ', result)  # Multiple spaces -> single
-    result = re.sub(r'^\s+', '', result, flags=re.MULTILINE)  # Leading spaces on lines
+    # Clean up orphan punctuation and extra horizontal whitespace
+    # IMPORTANT: Only target spaces, not newlines (preserve paragraph structure)
+    result = re.sub(r' *[,] *[.]', '.', result)  # ", ." -> "."
+    result = re.sub(r' *[.] *[.]', '.', result)  # ". ." -> "."
+    result = re.sub(r' {2,}', ' ', result)  # Multiple spaces -> single (NOT \s which includes newlines!)
+    result = re.sub(r'^[ \t]+', '', result, flags=re.MULTILINE)  # Leading spaces/tabs on lines (preserve newlines)
 
     report = {
         "glue_removed": len(removed_patterns),
