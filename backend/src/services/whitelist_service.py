@@ -343,6 +343,72 @@ EXCERPT_COUNTS = {
     CoverageLevel.WEAK: 2,
 }
 
+# Speaker quota constants
+GUEST_QUOTA_RATIO = 0.8  # 80% of excerpts should be GUEST
+MAX_NON_GUEST_RATIO = 0.2  # Maximum 20% non-GUEST
+
+
+def select_excerpts_with_speaker_quota(
+    whitelist: list[WhitelistQuote],
+    chapter_index: int,
+    count: int,
+    guest_quota_ratio: float = GUEST_QUOTA_RATIO,
+) -> list[WhitelistQuote]:
+    """Select excerpts with speaker quota enforcement.
+
+    Prefers GUEST speakers but allows HOST/other to meet minimum count.
+    This replaces the all-or-nothing approach of the original fallback chain.
+
+    Args:
+        whitelist: Validated quote whitelist.
+        chapter_index: 0-based chapter index.
+        count: Number of excerpts to select.
+        guest_quota_ratio: Minimum ratio of GUEST quotes (default 0.8).
+
+    Returns:
+        List of selected excerpts (may be less than count if insufficient quotes).
+    """
+    # Filter to chapter
+    chapter_quotes = [q for q in whitelist if chapter_index in q.chapter_indices]
+
+    if not chapter_quotes:
+        return []
+
+    # Separate by speaker role
+    guest_quotes = [q for q in chapter_quotes if q.speaker.speaker_role == SpeakerRole.GUEST]
+    non_guest_quotes = [q for q in chapter_quotes if q.speaker.speaker_role != SpeakerRole.GUEST]
+
+    # Sort each pool: longest first, then by quote_id for determinism
+    def sort_key(q: WhitelistQuote) -> tuple[int, str]:
+        return (-len(q.quote_text), q.quote_id)
+
+    guest_quotes.sort(key=sort_key)
+    non_guest_quotes.sort(key=sort_key)
+
+    # Calculate quotas
+    min_guest = int(count * guest_quota_ratio)
+    max_non_guest = count - min_guest  # e.g., for count=5, min_guest=4, max_non_guest=1
+
+    # Fill from GUEST first
+    selected = guest_quotes[:count]  # Take up to count GUEST quotes
+
+    # If we don't have enough, top up with non-GUEST (up to quota)
+    if len(selected) < count:
+        remaining_slots = count - len(selected)
+        non_guest_slots = min(remaining_slots, max_non_guest)
+
+        # If we have very few GUEST, allow more non-GUEST to meet minimum
+        if len(selected) < min_guest:
+            # Relax quota when GUEST is scarce
+            non_guest_slots = min(remaining_slots, len(non_guest_quotes))
+
+        selected.extend(non_guest_quotes[:non_guest_slots])
+
+    # Final sort for deterministic output
+    selected.sort(key=sort_key)
+
+    return selected[:count]
+
 
 def compute_chapter_coverage(
     chapter_evidence: ChapterEvidence,
