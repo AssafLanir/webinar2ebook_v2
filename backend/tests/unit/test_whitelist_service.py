@@ -1616,3 +1616,28 @@ class TestFixQuoteArtifactsEnhanced:
 
         # Should clean up the ," y pattern
         assert '," y' not in result
+
+    def test_fixes_curly_quote_orphan_close(self):
+        """Test curly quote orphan closing is cleaned."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        # Using actual curly right double quote \u201d
+        text = 'universe.\u201d This idea pushes us forward.'
+
+        result, _ = fix_quote_artifacts(text)
+
+        # Should remove the orphan curly closing quote
+        assert '.\u201d T' not in result
+        assert 'universe. This' in result
+
+    def test_fixes_curly_quote_mangled_attribution(self):
+        """Test curly quote mangled attribution is cleaned."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        # Using actual curly right double quote \u201d
+        text = 'our species began,\u201d n, he says. This shifts'
+
+        result, _ = fix_quote_artifacts(text)
+
+        # Should remove the mangled attribution
+        assert ',\u201d n,' not in result

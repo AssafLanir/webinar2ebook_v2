@@ -752,45 +752,51 @@ def fix_quote_artifacts(text: str) -> tuple[str, dict]:
         fixes.append({"type": "standalone_quote", "text": match.group().strip()})
         result = result[:match.start()] + result[match.end():]
 
+    # Quote character class for both straight and curly quotes
+    # Using actual Unicode chars since \u escapes don't work in raw strings
+    QUOTES_CLOSE = '"\u201d'  # " and "
+    QUOTES_OPEN = '"\u201c'   # " and "
+    QUOTES_ALL = '"\u201c\u201d'  # all quote types
+
     # Fix 2: Remove orphan closing quotes at word boundaries
     # Pattern: word followed by punctuation then quote (word." or word,") then space and capital
     # This catches: universe." This idea...
-    orphan_close_pattern = re.compile(r'(\w+)([.!?,])["\u201d]\s+([A-Z])')
+    orphan_close_pattern = re.compile(f'(\\w+)([.!?,])[{QUOTES_CLOSE}]\\s+([A-Z])')
     result = orphan_close_pattern.sub(r'\1\2 \3', result)
 
     # Fix 3: Remove orphan opening quotes before periods
     # Pattern: ." or "word where quote seems misplaced
-    orphan_open_pattern = re.compile(r'["\u201c]([.!?,])')
+    orphan_open_pattern = re.compile(f'[{QUOTES_OPEN}]([.!?,])')
     result = orphan_open_pattern.sub(r'\1', result)
 
     # Fix 4: Remove quote-space-quote patterns (." " → .)
     # This catches: expanded dramatically." " Before...
-    quote_space_quote_pattern = re.compile(r'([.!?,])["\u201d]\s+["\u201c]\s*')
+    quote_space_quote_pattern = re.compile(f'([.!?,])[{QUOTES_CLOSE}]\\s+[{QUOTES_OPEN}]\\s*')
     result = quote_space_quote_pattern.sub(r'\1 ', result)
 
     # Fix 5: Remove double punctuation with quotes (wrong."." → wrong.")
-    double_punct_quote_pattern = re.compile(r'([.!?,])["\u201d]([.!?,])')
+    double_punct_quote_pattern = re.compile(f'([.!?,])[{QUOTES_CLOSE}]([.!?,])')
     result = double_punct_quote_pattern.sub(r'\1"', result)
 
     # Fix 6: Remove ORPHAN trailing quote at paragraph end
     # Only match quotes that follow punctuation+quote (like ."") - clear artifact
     # This is conservative to avoid removing valid quotes like "text."
-    double_trailing_quote = re.compile(r'([.!?])["\u201d]["\u201d]\s*(\n\n|\n$|$)')
+    double_trailing_quote = re.compile(f'([.!?])[{QUOTES_CLOSE}][{QUOTES_CLOSE}]\\s*(\\n\\n|\\n$|$)')
     result = double_trailing_quote.sub(r'\1"\2', result)
 
     # Fix 7: Remove tokenization artifacts like ", at start of segments
-    token_artifact_pattern = re.compile(r'["\u201c],\s*')
+    token_artifact_pattern = re.compile(f'[{QUOTES_OPEN}],\\s*')
     result = token_artifact_pattern.sub('', result)
 
     # Fix 8: Remove mangled attribution artifacts like ," y, or ," s,
     # These are LLM tokenization bugs where "he says" becomes " y, he says"
     # Pattern: comma + quote + space + single letter + comma
-    mangled_attrib_pattern = re.compile(r',["\u201d]\s+[a-z],\s*')
+    mangled_attrib_pattern = re.compile(f',[{QUOTES_CLOSE}]\\s+[a-z],\\s*')
     result = mangled_attrib_pattern.sub(', ', result)
 
     # Fix 9: Remove orphan quote followed by single letter (like ." s or ," y)
     # Catches: technology," y he → technology, he
-    orphan_quote_letter = re.compile(r'([,.])["\u201d]\s+([a-z])\s+')
+    orphan_quote_letter = re.compile(f'([,.])[{QUOTES_CLOSE}]\\s+([a-z])\\s+')
     result = orphan_quote_letter.sub(r'\1 ', result)
 
     # Fix 10: Collapse multiple consecutive blank lines
