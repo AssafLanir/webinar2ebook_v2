@@ -1641,3 +1641,229 @@ class TestFixQuoteArtifactsEnhanced:
 
         # Should remove the mangled attribution
         assert ',\u201d n,' not in result
+
+    def test_fixes_naked_tokenization_artifact(self):
+        """Test naked ', n,' pattern without quote is cleaned.
+
+        Golden test from draft (6): After strip_prose_quote_chars removes quotes,
+        'generation," n, Deutsch' becomes 'generation, n, Deutsch'
+        """
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = 'everything improves in every generation, n, Deutsch explains.'
+
+        result, _ = fix_quote_artifacts(text)
+
+        # Should remove the , n, artifact
+        assert ', n,' not in result
+        assert 'generation, Deutsch' in result
+
+    def test_fixes_missing_space_after_period(self):
+        """Test missing space after period is fixed.
+
+        Golden test from draft (6): 'opposite.We have' should become 'opposite. We have'
+        """
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = 'it was the exact opposite.We have learned to live with change.'
+
+        result, _ = fix_quote_artifacts(text)
+
+        # Should add space after period
+        assert '.We' not in result
+        assert '. We' in result
+
+    def test_fixes_missing_space_multiple_occurrences(self):
+        """Test multiple missing spaces are all fixed."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = 'First sentence.Second sentence.Third sentence.'
+
+        result, _ = fix_quote_artifacts(text)
+
+        assert '. Second' in result
+        assert '. Third' in result
+
+
+class TestStripProseQuoteChars:
+    """Tests for strip_prose_quote_chars function - golden tests from actual failures."""
+
+    def test_strips_unclosed_inline_quote_in_prose(self):
+        """Golden test: Chapter 3 universality quote - unclosed inline quote.
+
+        Actual failure from draft (5): "The lesson of universality ... future.
+        (quote opens but never closes)
+        """
+        from src.services.whitelist_service import strip_prose_quote_chars
+
+        text = '''## Chapter 3: The Role of Knowledge
+
+David Deutsch captures this notion: "The lesson of universality is that there is only one set of laws of physics. This challenges old beliefs.
+
+### Key Excerpts
+
+> "Valid quote here"
+> — David Deutsch
+
+### Core Claims
+
+- **Claim**: "supporting quote"'''
+
+        result, report = strip_prose_quote_chars(text)
+
+        # Quote chars should be stripped from prose
+        assert '"The lesson' not in result
+        assert 'this notion: The lesson' in result
+
+        # Key Excerpts quotes preserved
+        assert '> "Valid quote here"' in result
+
+        # Core Claims quotes preserved
+        assert '"supporting quote"' in result
+
+        assert report["quotes_stripped"] > 0
+
+    def test_strips_stray_closing_quote_in_prose(self):
+        """Golden test: stray closing quote after self-doubt.
+
+        Actual failure from draft (5): fueled self-doubt." The avoidance of hubris
+        """
+        from src.services.whitelist_service import strip_prose_quote_chars
+
+        text = '''## Chapter 3
+
+For centuries, fear of overreaching stifled progress and fueled self-doubt." The avoidance of hubris is crucial.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker'''
+
+        result, _ = strip_prose_quote_chars(text)
+
+        # Stray closing quote should be stripped
+        assert 'self-doubt." The' not in result
+        assert 'self-doubt. The' in result
+
+    def test_strips_unclosed_quote_mid_sentence(self):
+        """Golden test: Deutsch notes unclosed quote.
+
+        Actual failure from draft (5): Deutsch notes, "The thing is that they...
+        Knowledge becomes... (no closing ")
+        """
+        from src.services.whitelist_service import strip_prose_quote_chars
+
+        text = '''## Chapter
+
+Deutsch notes, "The thing is that they gain their ability. Knowledge becomes a shared currency.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker'''
+
+        result, _ = strip_prose_quote_chars(text)
+
+        # Opening quote should be stripped from prose
+        assert 'Deutsch notes, "The thing' not in result
+        assert 'Deutsch notes, The thing' in result
+
+    def test_preserves_key_excerpts_blockquotes(self):
+        """Test blockquote lines in Key Excerpts preserve their quotes."""
+        from src.services.whitelist_service import strip_prose_quote_chars
+
+        text = '''## Chapter
+
+Some prose.
+
+### Key Excerpts
+
+> "This is a valid excerpt with quotes"
+> — David Deutsch
+
+### Core Claims'''
+
+        result, _ = strip_prose_quote_chars(text)
+
+        # Blockquote line should keep its quotes
+        assert '> "This is a valid excerpt with quotes"' in result
+
+    def test_preserves_core_claims_bullet_quotes(self):
+        """Test bullet lines in Core Claims preserve their quotes."""
+        from src.services.whitelist_service import strip_prose_quote_chars
+
+        text = '''## Chapter
+
+Some prose.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **The universe is governed by laws**: "One set of laws of physics."
+- **Progress is possible**: "We can achieve anything."'''
+
+        result, _ = strip_prose_quote_chars(text)
+
+        # Bullet lines should keep their quotes
+        assert '"One set of laws of physics."' in result
+        assert '"We can achieve anything."' in result
+
+    def test_strips_quotes_after_core_claims_in_new_chapter(self):
+        """Test that a new chapter resets section tracking."""
+        from src.services.whitelist_service import strip_prose_quote_chars
+
+        text = '''### Core Claims
+
+- **Claim**: "quote"
+
+## Chapter 2
+
+This has an "inline quote" that should be stripped.
+
+### Key Excerpts
+
+> "Valid"
+> — Speaker'''
+
+        result, _ = strip_prose_quote_chars(text)
+
+        # Chapter 2 prose should have quotes stripped
+        assert 'an "inline quote"' not in result
+        assert 'an inline quote' in result
+
+        # Key Excerpts preserved
+        assert '> "Valid"' in result
+
+    def test_handles_curly_quotes(self):
+        """Test both straight and curly quotes are handled."""
+        from src.services.whitelist_service import strip_prose_quote_chars
+
+        # Using actual curly quotes
+        text = '''## Chapter
+
+He said, \u201cThis is important.\u201d And it was.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker'''
+
+        result, _ = strip_prose_quote_chars(text)
+
+        # Curly quotes should be stripped from prose
+        assert '\u201c' not in result.split('### Key Excerpts')[0]
+        assert '\u201d' not in result.split('### Key Excerpts')[0]
+        assert 'He said, This is important. And it was.' in result
+
+    def test_empty_input_returns_empty(self):
+        """Test empty input returns empty."""
+        from src.services.whitelist_service import strip_prose_quote_chars
+
+        result, report = strip_prose_quote_chars('')
+
+        assert result == ''
+        assert report["quotes_stripped"] == 0

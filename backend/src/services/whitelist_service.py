@@ -741,7 +741,12 @@ def fix_quote_artifacts(text: str) -> tuple[str, dict]:
     Returns:
         Tuple of (cleaned text, report dict).
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"fix_quote_artifacts called with {len(text)} chars")
+
     result = text
+    original = text
     fixes = []
 
     # Fix 1: Remove lines that are just quote marks (straight or smart)
@@ -799,15 +804,123 @@ def fix_quote_artifacts(text: str) -> tuple[str, dict]:
     orphan_quote_letter = re.compile(f'([,.])[{QUOTES_CLOSE}]\\s+([a-z])\\s+')
     result = orphan_quote_letter.sub(r'\1 ', result)
 
-    # Fix 10: Collapse multiple consecutive blank lines
+    # Fix 10: Remove naked tokenization artifacts like ", n," or ", y," or ", s,"
+    # These can appear after strip_prose_quote_chars removes quote chars
+    # Pattern: comma + space + single letter + comma (no quote required)
+    naked_token_artifact = re.compile(r',\s+[a-z],\s*')
+    result = naked_token_artifact.sub(', ', result)
+
+    # Fix 11: Fix missing space after sentence-ending punctuation
+    # Pattern: period/exclamation/question followed immediately by capital letter
+    # This catches: "wrong.Recognizing" -> "wrong. Recognizing"
+    missing_space_pattern = re.compile(r'([.!?])([A-Z])')
+    result = missing_space_pattern.sub(r'\1 \2', result)
+
+    # Fix 12: Collapse multiple consecutive blank lines
     result = re.sub(r'\n{3,}', '\n\n', result)
 
-    # Fix 11: Remove trailing whitespace on lines
+    # Fix 13: Remove trailing whitespace on lines
     result = re.sub(r'[ \t]+$', '', result, flags=re.MULTILINE)
+
+    # Log if changes were made
+    if result != original:
+        diff_chars = len(original) - len(result)
+        logger.info(f"fix_quote_artifacts: text changed by {diff_chars} chars")
+    else:
+        logger.info("fix_quote_artifacts: no changes made")
 
     report = {
         "fixes_applied": len(fixes),
         "details": fixes[:10],  # First 10 fixes
+    }
+
+    return result, report
+
+
+def strip_prose_quote_chars(text: str) -> tuple[str, dict]:
+    """Strip quote characters from narrative prose, preserving them only in allowed contexts.
+
+    Policy: Quote characters are ONLY allowed in:
+    - Key Excerpts blockquote lines (lines starting with ">")
+    - Core Claims bullet lines (lines starting with "- **")
+
+    Everywhere else (regular narrative paragraphs), quote characters are stripped.
+    This fixes:
+    - Unclosed inline quotes
+    - Orphan closing quotes
+    - Half-quoted claims the LLM embeds in narrative
+
+    This is safer than trying to "auto-close" quotes, which could create fake-looking quotations.
+
+    Args:
+        text: Text to process.
+
+    Returns:
+        Tuple of (cleaned text, report dict with stats).
+    """
+    # Quote characters to strip (straight and curly)
+    QUOTE_CHARS = set('""\u201c\u201d\u2018\u2019\'')
+
+    lines = text.split('\n')
+    result_lines = []
+    stripped_count = 0
+
+    # Track which section we're in
+    in_key_excerpts = False
+    in_core_claims = False
+
+    for line in lines:
+        stripped_line = line.strip()
+
+        # Detect section changes
+        if stripped_line.startswith('### Key Excerpts'):
+            in_key_excerpts = True
+            in_core_claims = False
+            result_lines.append(line)
+            continue
+        elif stripped_line.startswith('### Core Claims'):
+            in_key_excerpts = False
+            in_core_claims = True
+            result_lines.append(line)
+            continue
+        elif stripped_line.startswith('## ') or stripped_line.startswith('### '):
+            # New chapter or other section - reset
+            in_key_excerpts = False
+            in_core_claims = False
+            result_lines.append(line)
+            continue
+
+        # Determine if this line is allowed to have quotes
+        allow_quotes = False
+
+        if in_key_excerpts:
+            # In Key Excerpts: only blockquote lines and attribution lines can have quotes
+            # Blockquote lines start with ">"
+            # Attribution lines start with "> —" or "> —"
+            if stripped_line.startswith('>'):
+                allow_quotes = True
+
+        elif in_core_claims:
+            # In Core Claims: only bullet lines can have quotes
+            # Bullet lines start with "- **"
+            if stripped_line.startswith('- **'):
+                allow_quotes = True
+
+        # Process the line
+        if allow_quotes:
+            result_lines.append(line)
+        else:
+            # Strip quote characters from this line
+            new_line = ''.join(c for c in line if c not in QUOTE_CHARS)
+            if new_line != line:
+                stripped_count += len(line) - len(new_line)
+            result_lines.append(new_line)
+
+    result = '\n'.join(result_lines)
+
+    report = {
+        "quotes_stripped": stripped_count,
+        "lines_processed": len(lines),
     }
 
     return result, report

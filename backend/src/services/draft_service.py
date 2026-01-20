@@ -54,6 +54,7 @@ from .whitelist_service import (
     format_excerpts_markdown,
     compute_chapter_coverage,
     fix_quote_artifacts,
+    strip_prose_quote_chars,
     detect_verbatim_leakage,
 )
 from .prompts import (
@@ -3536,18 +3537,7 @@ async def _generate_draft_task(
                 except Exception as e:
                     logger.warning(f"Job {job_id}: Core Claims enforcement failed (non-fatal): {e}")
 
-                # Step 3: Fix quote artifacts (markdown hygiene)
-                # Remove stray quote marks, orphan quotes, and other artifacts
-                try:
-                    final_markdown, artifact_report = fix_quote_artifacts(final_markdown)
-                    if artifact_report.get("fixes_applied", 0) > 0:
-                        logger.info(
-                            f"Job {job_id}: Quote artifact cleanup - applied {artifact_report['fixes_applied']} fixes"
-                        )
-                except Exception as e:
-                    logger.warning(f"Job {job_id}: Quote artifact cleanup failed (non-fatal): {e}")
-
-                # Step 4: Detect verbatim leakage (unquoted whitelist text in prose)
+                # Step 3: Detect verbatim leakage (unquoted whitelist text in prose)
                 # Log warnings but don't modify text - leakage detection is informational
                 try:
                     _, leakage_report = detect_verbatim_leakage(final_markdown, whitelist, min_words=6)
@@ -3712,6 +3702,32 @@ async def _generate_draft_task(
                     await update_job(job_id, constraint_warnings=constraint_warnings)
             except Exception as e:
                 logger.error(f"Job {job_id}: Anachronism filter failed (non-fatal): {e}", exc_info=True)
+
+        # Strip quote characters from prose (Ideas Edition only)
+        # Policy: quotes only allowed in Key Excerpts blockquotes and Core Claims bullets
+        # Everywhere else (narrative paragraphs), quote characters are stripped
+        # This fixes unclosed inline quotes, orphan quotes, and half-quoted claims
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, prose_quote_report = strip_prose_quote_chars(final_markdown)
+                if prose_quote_report.get("quotes_stripped", 0) > 0:
+                    logger.info(
+                        f"Job {job_id}: Prose quote cleanup - stripped {prose_quote_report['quotes_stripped']} quote chars"
+                    )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Prose quote cleanup failed (non-fatal): {e}")
+
+        # Quote artifact cleanup (final pass) - must run LAST after all other processing
+        # Cleans up orphan quotes, stray punctuation, and mangled attributions
+        # that may have been introduced by upstream enforcement steps
+        try:
+            final_markdown, artifact_report = fix_quote_artifacts(final_markdown)
+            if artifact_report.get("fixes_applied", 0) > 0:
+                logger.info(
+                    f"Job {job_id}: Quote artifact cleanup - applied {artifact_report['fixes_applied']} fixes"
+                )
+        except Exception as e:
+            logger.warning(f"Job {job_id}: Quote artifact cleanup failed (non-fatal): {e}")
 
         # Final whitespace repair pass - fix formatting issues from deletions
         try:
