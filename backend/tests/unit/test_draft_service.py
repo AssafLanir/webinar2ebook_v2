@@ -1178,6 +1178,23 @@ class TestAttributedSpeechEnforcement:
         assert 'wisdom is limitless' in attributed[0]['content']
         assert attributed[0]['pattern_type'] == 'mid'
 
+    def test_finds_saying_verb_form(self):
+        """Test detection of 'saying' verb form (participial pattern)."""
+        text = "Deutsch agrees with Hawking, saying we should hedge our bets by moving away from the Earth."
+        attributed = draft_service.find_attributed_speech(text)
+        assert len(attributed) >= 1
+        assert any('hedge our bets' in a['content'] for a in attributed)
+        assert any(a['pattern_type'] == 'participial' for a in attributed)
+
+    def test_finds_extended_colon_attribution(self):
+        """Test detection of 'Speaker's thoughts illustrate this: X' pattern."""
+        text = "Deutsch's thoughts on our environmental history illustrate this: Ironically, the reverse is the case and the Earth was killing us."
+        attributed = draft_service.find_attributed_speech(text)
+        assert len(attributed) == 1
+        assert attributed[0]['speaker'] == 'Deutsch'
+        assert 'Ironically' in attributed[0]['content']
+        assert attributed[0]['pattern_type'] == 'colon_extended'
+
     def test_finds_various_verbs(self):
         """Test detection with different attribution verbs."""
         verbs = ['argues', 'says', 'notes', 'observes', 'warns', 'asserts', 'claims', 'explains']
@@ -1185,6 +1202,16 @@ class TestAttributedSpeechEnforcement:
             text = f"Deutsch {verb}, this is important content here."
             attributed = draft_service.find_attributed_speech(text)
             assert len(attributed) == 1, f"Failed to detect verb: {verb}"
+
+    def test_finds_ing_verb_forms(self):
+        """Test detection with -ing verb forms (participial patterns)."""
+        verbs = ['arguing', 'saying', 'noting', 'observing', 'warning', 'explaining']
+        for verb in verbs:
+            # Participial pattern: "Speaker verbs, verb_ing content."
+            text = f"Deutsch agrees with this point, {verb} this is important content here."
+            attributed = draft_service.find_attributed_speech(text)
+            assert len(attributed) >= 1, f"Failed to detect -ing verb: {verb}"
+            assert any(a['pattern_type'] == 'participial' for a in attributed), f"No participial pattern for {verb}"
 
     def test_validates_against_transcript(self):
         """Test validation of attributed content against transcript."""

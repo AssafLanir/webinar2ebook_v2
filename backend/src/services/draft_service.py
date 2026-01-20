@@ -1146,8 +1146,8 @@ def enforce_ellipsis_ban(text: str, remove_sentences: bool = True) -> tuple[str,
 # Treats these as quote candidates - validates X against transcript.
 # If valid: wraps X in quotes. If invalid: DELETES entire clause.
 
-# Attribution verbs commonly used
-ATTRIBUTION_VERBS = r'(?:argues?|says?|notes?|observes?|warns?|asserts?|claims?|explains?|points?\s+out|suggests?|states?|contends?|believes?|maintains?|emphasizes?|stresses?|highlights?|insists?|remarks?|cautions?|envisions?|tells?|adds?|writes?|acknowledges?|reflects?|challenges?|sees?|views?|thinks?|considers?|describes?|calls?|puts?)'
+# Attribution verbs commonly used (includes base, -s, and -ing forms)
+ATTRIBUTION_VERBS = r'(?:argu(?:es?|ing)|say(?:s|ing)?|not(?:es?|ing)|observ(?:es?|ing)|warn(?:s|ing)?|assert(?:s|ing)?|claim(?:s|ing)?|explain(?:s|ing)?|point(?:s|ing)?\s+out|suggest(?:s|ing)?|stat(?:es?|ing)|contend(?:s|ing)?|believ(?:es?|ing)|maintain(?:s|ing)?|emphasiz(?:es?|ing)|stress(?:es?|ing)|highlight(?:s|ing)?|insist(?:s|ing)?|remark(?:s|ing)?|caution(?:s|ing)?|envision(?:s|ing)?|tell(?:s|ing)?|add(?:s|ing)?|writ(?:es?|ing)|acknowledg(?:es?|ing)|reflect(?:s|ing)?|challeng(?:es?|ing)|see(?:s|ing)?|view(?:s|ing)?|think(?:s|ing)?|consider(?:s|ing)?|describ(?:es?|ing)|call(?:s|ing)?|put(?:s|ting)?)'
 
 # Pattern 1: "Speaker verb, X" or "Speaker verb that X" or "Speaker verb: X"
 # Matches: Deutsch argues, X / Deutsch says that X / Deutsch notes: X
@@ -1176,6 +1176,24 @@ ATTRIBUTED_SPEECH_PATTERN_MID = re.compile(
 ATTRIBUTED_SPEECH_PATTERN_COLON = re.compile(
     r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*:\s+([^.!?]+[.!?])',
     re.MULTILINE
+)
+
+# Pattern 4: "Speaker's [thoughts/views/etc] ... : X" (extended colon attribution)
+# Catches: "Deutsch's thoughts on X illustrate this: Content"
+# The content after colon is likely verbatim if it contains first-person language
+ATTRIBUTED_SPEECH_PATTERN_COLON_EXTENDED = re.compile(
+    r"([A-Z][a-z]+)'s\s+(?:thoughts?|views?|ideas?|words?|arguments?|observations?|insights?|comments?|reflections?|remarks?)"
+    r"[^:]{0,60}:\s+([^.!?]{30,}[.!?])",
+    re.MULTILINE
+)
+
+# Pattern 5: "Speaker [verb phrase], verb_ing Content" (participial -ing attribution)
+# Catches: "Deutsch agrees with Hawking, saying we should hedge our bets."
+# The -ing verb introduces reported speech
+ATTRIBUTION_ING_VERBS = r'(?:saying|noting|arguing|observing|warning|explaining|claiming|asserting|adding|suggesting|stating|emphasizing|stressing|insisting|remarking|pointing\s+out)'
+ATTRIBUTED_SPEECH_PATTERN_PARTICIPIAL = re.compile(
+    r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)[^,]{0,40},\s+' + ATTRIBUTION_ING_VERBS + r'\s+([^.!?]{20,}[.!?])',
+    re.MULTILINE | re.IGNORECASE
 )
 
 
@@ -1272,6 +1290,36 @@ def find_attributed_speech(text: str) -> list[dict]:
             'start': match.start(),
             'end': match.end(),
             'pattern_type': 'colon',
+        })
+
+    # Find extended colon patterns: "Deutsch's thoughts illustrate this: X"
+    for match in ATTRIBUTED_SPEECH_PATTERN_COLON_EXTENDED.finditer(text):
+        speaker = match.group(1)  # Just the name (e.g., "Deutsch")
+        content = match.group(2).strip()
+        if content.startswith('"') or content.startswith('\u201c'):
+            continue
+        attributed.append({
+            'speaker': speaker,
+            'content': content,
+            'full_match': match.group(0),
+            'start': match.start(),
+            'end': match.end(),
+            'pattern_type': 'colon_extended',
+        })
+
+    # Find participial patterns: "Deutsch agrees with Hawking, saying X"
+    for match in ATTRIBUTED_SPEECH_PATTERN_PARTICIPIAL.finditer(text):
+        speaker = match.group(1)  # Just the name (e.g., "Deutsch")
+        content = match.group(2).strip()
+        if content.startswith('"') or content.startswith('\u201c'):
+            continue
+        attributed.append({
+            'speaker': speaker,
+            'content': content,
+            'full_match': match.group(0),
+            'start': match.start(),
+            'end': match.end(),
+            'pattern_type': 'participial',
         })
 
     # Sort by position and deduplicate overlapping matches
@@ -1415,6 +1463,21 @@ def enforce_attributed_speech_hard(
                 # We wrap the content in quotes and keep the trailing comma
                 verb = _extract_verb(full_match, speaker)
                 quoted_version = f'"{content}," {speaker} {verb}, '
+            elif attr['pattern_type'] == 'colon':
+                # "Deutsch: X" → "Deutsch: "X""
+                quoted_version = f'{speaker}: "{content}"'
+            elif attr['pattern_type'] == 'colon_extended':
+                # "Deutsch's thoughts illustrate this: X" → preserve lead-in, quote content
+                # Extract everything before the colon + content
+                colon_pos = full_match.rfind(':')
+                lead_in = full_match[:colon_pos + 1].strip()
+                quoted_version = f'{lead_in} "{content}"'
+            elif attr['pattern_type'] == 'participial':
+                # "Deutsch agrees with X, saying Content." → "Deutsch agrees with X, saying "Content.""
+                # Extract lead-in (everything before content)
+                content_start = full_match.find(content)
+                lead_in = full_match[:content_start].strip()
+                quoted_version = f'{lead_in} "{content}"'
             else:
                 # "Deutsch argues, X." → "Deutsch argues, "X.""
                 verb = _extract_verb(full_match, speaker)
