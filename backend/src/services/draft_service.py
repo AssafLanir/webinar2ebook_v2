@@ -390,6 +390,75 @@ def compile_key_excerpts_section(
 
 
 # ==============================================================================
+# Render Guard: Strip Empty Section Headers
+# ==============================================================================
+
+
+def strip_empty_section_headers(markdown: str) -> str:
+    """Remove section headers that have no content.
+
+    Section headers (### Key Excerpts, ### Core Claims) are removed
+    if they have only whitespace before the next section or chapter header.
+
+    This is the render guard that ensures empty sections don't appear
+    in final output.
+
+    Args:
+        markdown: The draft markdown text.
+
+    Returns:
+        Markdown with empty section headers removed.
+    """
+    result = markdown
+
+    # Remove empty Key Excerpts
+    # Pattern: "### Key Excerpts\n" + whitespace only + lookahead for next header or EOF
+    result = re.sub(
+        r'### Key Excerpts\s*\n(?:\s*\n)*(?=### |## |\Z)',
+        '',
+        result
+    )
+
+    # Remove empty Core Claims (but preserve placeholders)
+    # Pattern: "### Core Claims\n" + whitespace only (no bullets, no placeholder) + next header
+    def remove_empty_core_claims(text: str) -> str:
+        """Remove Core Claims sections that are truly empty (no bullets, no placeholder)."""
+        # Find all Core Claims sections
+        pattern = re.compile(
+            r'(### Core Claims\s*\n)(.*?)(?=### |## |\Z)',
+            re.DOTALL
+        )
+
+        def replace_if_empty(match):
+            content = match.group(2)
+
+            # Check if content is truly empty (only whitespace)
+            stripped = content.strip()
+            if not stripped:
+                return ''  # Remove entirely
+
+            # Check if it has actual content (bullets or placeholder)
+            has_bullets = bool(re.search(r'^- \*\*', stripped, re.MULTILINE))
+            has_placeholder = '*No fully grounded claims' in stripped
+
+            if has_bullets or has_placeholder:
+                return match.group(0)  # Keep as-is
+
+            # Has some text but not valid content - keep it for now
+            # (could be malformed, let other validators catch it)
+            return match.group(0)
+
+        return pattern.sub(replace_if_empty, text)
+
+    result = remove_empty_core_claims(result)
+
+    # Clean up any double blank lines created by removal
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    return result
+
+
+# ==============================================================================
 # Quote Substring Validation (Grounding Enforcement)
 # ==============================================================================
 
