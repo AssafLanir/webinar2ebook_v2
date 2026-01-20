@@ -122,6 +122,27 @@ def resolve_speaker(
     )
 
 
+def format_speaker_attribution(speaker: SpeakerRef) -> str:
+    """Format speaker attribution with typed role label.
+
+    Produces unambiguous attributions like:
+    - "David Deutsch (GUEST)"
+    - "Lex Fridman (HOST)"
+    - "David (CALLER)"
+
+    This prevents ambiguity when names could refer to multiple people
+    (e.g., "David" could be David Deutsch or a caller named David).
+
+    Args:
+        speaker: SpeakerRef with name and role.
+
+    Returns:
+        Formatted attribution string.
+    """
+    role_label = speaker.speaker_role.value.upper()
+    return f"{speaker.speaker_name} ({role_label})"
+
+
 def canonicalize_transcript(text: str) -> str:
     """Normalize transcript for matching.
 
@@ -394,7 +415,7 @@ def enforce_quote_whitelist(
 
         if validated:
             # Replace with exact quote_text
-            replacement = f'> "{validated.quote_text}"\n> — {validated.speaker.speaker_name}'
+            replacement = f'> "{validated.quote_text}"\n> — {format_speaker_attribution(validated.speaker)}'
             result = result[:match.start()] + replacement + result[match.end():]
             replaced.append(validated)
             # Track new blockquote range
@@ -546,7 +567,7 @@ def format_excerpts_markdown(excerpts: list[WhitelistQuote]) -> str:
 
     blocks = []
     for excerpt in excerpts:
-        block = f'> "{excerpt.quote_text}"\n> — {excerpt.speaker.speaker_name}'
+        block = f'> "{excerpt.quote_text}"\n> — {format_speaker_attribution(excerpt.speaker)}'
         blocks.append(block)
 
     return '\n\n'.join(blocks)
@@ -858,8 +879,11 @@ def strip_prose_quote_chars(text: str) -> tuple[str, dict]:
     Returns:
         Tuple of (cleaned text, report dict with stats).
     """
-    # Quote characters to strip (straight and curly)
-    QUOTE_CHARS = set('""\u201c\u201d\u2018\u2019\'')
+    # Quote characters to strip (double quotes only - NOT apostrophes)
+    # We preserve single quotes/apostrophes because they're needed for:
+    # - Contractions: that's, isn't, doesn't
+    # - Possessives: Deutsch's, humanity's
+    QUOTE_CHARS = {'"', '\u201c', '\u201d'}  # straight and curly double quotes only
 
     lines = text.split('\n')
     result_lines = []

@@ -1086,14 +1086,74 @@ The discussion continues.'''
         assert result2.replaced[0].speaker.speaker_name == "Naval"
 
 
+class TestFormatSpeakerAttribution:
+    """Tests for format_speaker_attribution function."""
+
+    def test_formats_guest_attribution(self):
+        """Test GUEST speaker includes role label."""
+        from src.services.whitelist_service import format_speaker_attribution
+        from src.models.edition import SpeakerRef, SpeakerRole
+
+        speaker = SpeakerRef(
+            speaker_id="david_deutsch",
+            speaker_name="David Deutsch",
+            speaker_role=SpeakerRole.GUEST,
+        )
+        result = format_speaker_attribution(speaker)
+
+        assert result == "David Deutsch (GUEST)"
+
+    def test_formats_host_attribution(self):
+        """Test HOST speaker includes role label."""
+        from src.services.whitelist_service import format_speaker_attribution
+        from src.models.edition import SpeakerRef, SpeakerRole
+
+        speaker = SpeakerRef(
+            speaker_id="lex_fridman",
+            speaker_name="Lex Fridman",
+            speaker_role=SpeakerRole.HOST,
+        )
+        result = format_speaker_attribution(speaker)
+
+        assert result == "Lex Fridman (HOST)"
+
+    def test_formats_caller_attribution(self):
+        """Test CALLER speaker includes role label - disambiguates 'David' from 'David Deutsch'."""
+        from src.services.whitelist_service import format_speaker_attribution
+        from src.models.edition import SpeakerRef, SpeakerRole
+
+        speaker = SpeakerRef(
+            speaker_id="david",
+            speaker_name="David",
+            speaker_role=SpeakerRole.CALLER,
+        )
+        result = format_speaker_attribution(speaker)
+
+        assert result == "David (CALLER)"
+
+    def test_formats_clip_attribution(self):
+        """Test CLIP speaker includes role label."""
+        from src.services.whitelist_service import format_speaker_attribution
+        from src.models.edition import SpeakerRef, SpeakerRole
+
+        speaker = SpeakerRef(
+            speaker_id="archival_clip",
+            speaker_name="Archival Clip",
+            speaker_role=SpeakerRole.CLIP,
+        )
+        result = format_speaker_attribution(speaker)
+
+        assert result == "Archival Clip (CLIP)"
+
+
 class TestFormatExcerptsMarkdown:
     def test_formats_single_excerpt(self):
-        """Test single excerpt is formatted correctly."""
+        """Test single excerpt is formatted correctly with typed attribution."""
         excerpts = [_make_guest_quote("Wisdom is limitless", speaker_name="David Deutsch")]
         result = format_excerpts_markdown(excerpts)
 
         assert '> "Wisdom is limitless"' in result
-        assert "— David Deutsch" in result
+        assert "— David Deutsch (GUEST)" in result
 
     def test_formats_multiple_excerpts(self):
         """Test multiple excerpts are formatted with blank line separation."""
@@ -1105,8 +1165,8 @@ class TestFormatExcerptsMarkdown:
 
         assert '> "Quote one"' in result
         assert '> "Quote two"' in result
-        assert "— Speaker A" in result
-        assert "— Speaker B" in result
+        assert "— Speaker A (GUEST)" in result
+        assert "— Speaker B (GUEST)" in result
         # Verify blank line separation between blockquotes
         assert '\n\n' in result
         blocks = result.split('\n\n')
@@ -1867,3 +1927,36 @@ He said, \u201cThis is important.\u201d And it was.
 
         assert result == ''
         assert report["quotes_stripped"] == 0
+
+    def test_preserves_apostrophes_in_prose(self):
+        """Regression test: apostrophes must NOT be stripped from prose.
+
+        Bug: QUOTE_CHARS originally included ' and \\u2019, which stripped
+        apostrophes from contractions (that's, isn't) and possessives (Deutsch's).
+
+        Fix: Only strip double quotes, not single quotes/apostrophes.
+        """
+        from src.services.whitelist_service import strip_prose_quote_chars
+
+        text = '''## Chapter 1: The Impact of the Enlightenment
+
+David Deutsch captures this shift, stating that this line is the most important thing that's ever happened. Before this era, humanity's potential wasn't recognized. The world isn't what it used to be, and Deutsch's insights show why.
+
+### Key Excerpts
+
+> "This is important"
+> — David Deutsch'''
+
+        result, report = strip_prose_quote_chars(text)
+
+        # Contractions preserved
+        assert "that's" in result
+        assert "isn't" in result
+        assert "wasn't" in result
+
+        # Possessives preserved
+        assert "humanity's" in result
+        assert "Deutsch's" in result
+
+        # Double quotes in prose should still be stripped
+        assert report["quotes_stripped"] == 0  # No double quotes in prose to strip
