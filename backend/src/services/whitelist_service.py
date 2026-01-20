@@ -1421,6 +1421,7 @@ def derive_claims_from_excerpts(chapter_text: str) -> list[str]:
     # Find Key Excerpts section
     excerpts_match = re.search(r'### Key Excerpts\s*\n', chapter_text)
     if not excerpts_match:
+        logger.debug("derive_claims_from_excerpts: No Key Excerpts section found")
         return []
 
     # Find end of Key Excerpts (next ### or ## or end)
@@ -1430,29 +1431,64 @@ def derive_claims_from_excerpts(chapter_text: str) -> list[str]:
 
     excerpts_text = chapter_text[section_start:section_end]
 
-    # Parse blockquotes: > "quote text" \n > — Speaker
-    blockquote_pattern = re.compile(
-        r'>\s*["\u201c]([^"\u201d]+)["\u201d]\s*\n>\s*[—\-]\s*(.+)',
-        re.MULTILINE
-    )
+    # Multiple patterns to handle different quote formats
+    # Pattern 1: Standard format > "quote" \n > — Speaker
+    patterns = [
+        # Standard with straight or smart quotes
+        re.compile(
+            r'>\s*["\u201c]([^"\u201d\n]{20,})["\u201d]\s*\n>\s*[—\-–]\s*(.+)',
+            re.MULTILINE
+        ),
+        # Pattern with continuation lines (multi-line quotes)
+        re.compile(
+            r'>\s*["\u201c](.+?)["\u201d]\s*\n>\s*[—\-–]\s*(.+)',
+            re.MULTILINE | re.DOTALL
+        ),
+        # Fallback: just find blockquotes with attribution
+        re.compile(
+            r'>\s*["\u201c\u201f"](.{20,}?)["\u201d\u201e"]\s*\n>\s*[—–\-]\s*(\S.+)',
+            re.MULTILINE
+        ),
+    ]
 
     derived_claims = []
+    seen_quotes = set()  # Avoid duplicates
 
-    for match in blockquote_pattern.finditer(excerpts_text):
-        quote_text = match.group(1).strip()
-        speaker = match.group(2).strip()
+    for pattern in patterns:
+        for match in pattern.finditer(excerpts_text):
+            quote_text = match.group(1).strip()
+            # Clean up any embedded > from multi-line
+            quote_text = re.sub(r'\n>\s*', ' ', quote_text)
+            quote_text = ' '.join(quote_text.split())  # Normalize whitespace
 
-        # Skip if quote is too short to derive a claim
-        if len(quote_text.split()) < 8:
-            continue
+            # Skip duplicates
+            quote_key = quote_text[:50].lower()
+            if quote_key in seen_quotes:
+                continue
+            seen_quotes.add(quote_key)
 
-        # Extract a claim from the quote
-        # Strategy: Use first sentence or clause as the claim topic
-        claim_text = _extract_claim_topic(quote_text)
-        if claim_text:
-            derived_claims.append(
-                f'- **{claim_text}**: "{quote_text}"'
-            )
+            speaker = match.group(2).strip()
+
+            # Skip if quote is too short to derive a claim
+            if len(quote_text.split()) < 8:
+                logger.debug(f"derive_claims_from_excerpts: Skipping short quote ({len(quote_text.split())} words)")
+                continue
+
+            # Extract a claim from the quote
+            # Strategy: Use first sentence or clause as the claim topic
+            claim_text = _extract_claim_topic(quote_text)
+            if claim_text:
+                derived_claims.append(
+                    f'- **{claim_text}**: "{quote_text}"'
+                )
+                logger.debug(f"derive_claims_from_excerpts: Derived claim: {claim_text[:50]}...")
+            else:
+                logger.debug(f"derive_claims_from_excerpts: Could not extract topic from: {quote_text[:50]}...")
+
+    if not derived_claims:
+        logger.warning(
+            f"derive_claims_from_excerpts: No claims derived from {len(excerpts_text)} chars of excerpts text"
+        )
 
     return derived_claims
 
@@ -1463,42 +1499,69 @@ def _extract_claim_topic(quote_text: str) -> str:
     Strategies (in order):
     1. Find first sentence ending with period
     2. Find first clause before comma
-    3. Take first N words
+    3. Take first N words with ellipsis
 
     Args:
         quote_text: The full quote text.
 
     Returns:
-        A concise topic string suitable for a claim header.
+        A concise topic string suitable for a claim header, or empty string if extraction fails.
     """
+    if not quote_text or len(quote_text.strip()) < 10:
+        return ""
+
+    # Clean the text
+    text = quote_text.strip()
+
     # Try to find first sentence
-    sentence_match = re.match(r'^([^.!?]+[.!?])', quote_text)
+    sentence_match = re.match(r'^([^.!?]+[.!?])', text)
     if sentence_match:
         sentence = sentence_match.group(1).strip()
         # If sentence is reasonable length, use it
-        if 5 <= len(sentence.split()) <= 15:
+        word_count = len(sentence.split())
+        if 4 <= word_count <= 15:
             # Remove trailing punctuation for claim format
             return sentence.rstrip('.!?')
+        elif word_count > 15:
+            # Sentence too long, try to truncate at a natural break
+            words = sentence.split()
+            truncated = ' '.join(words[:10])
+            # Find a natural break point
+            for punct in [',', ';', '—', '–', ':']:
+                if punct in truncated:
+                    truncated = truncated.split(punct)[0].strip()
+                    if len(truncated.split()) >= 4:
+                        return truncated
+            return truncated + "..."
 
-    # Try first clause (before comma)
-    clause_match = re.match(r'^([^,]+),', quote_text)
-    if clause_match:
-        clause = clause_match.group(1).strip()
-        if 3 <= len(clause.split()) <= 12:
-            return clause
+    # Try first clause (before comma, semicolon, or dash)
+    clause_patterns = [r'^([^,]+),', r'^([^;]+);', r'^([^—]+)—', r'^([^–]+)–']
+    for pattern in clause_patterns:
+        clause_match = re.match(pattern, text)
+        if clause_match:
+            clause = clause_match.group(1).strip()
+            if 3 <= len(clause.split()) <= 12:
+                return clause
 
-    # Fallback: first 6-8 words
-    words = quote_text.split()
-    if len(words) >= 6:
+    # Fallback: first 6-8 words with ellipsis
+    words = text.split()
+    if len(words) >= 5:
+        # Take first 7 words
         topic = ' '.join(words[:7])
         # Try to end at a natural break
-        for punct in [',', ';', ':']:
+        for punct in [',', ';', ':', '—', '–']:
             if punct in topic:
-                topic = topic.split(punct)[0].strip()
-                break
-        return topic + "..."
+                before_punct = topic.split(punct)[0].strip()
+                if len(before_punct.split()) >= 3:
+                    topic = before_punct
+                    break
+        # Add ellipsis if we truncated
+        if len(words) > 7:
+            return topic.rstrip(',.;:—–') + "..."
+        return topic
 
-    return None
+    # Last resort: just use what we have
+    return text[:50].rstrip(',.;:—– ') + ("..." if len(text) > 50 else "")
 
 
 def strip_llm_blockquotes(generated_text: str) -> str:
