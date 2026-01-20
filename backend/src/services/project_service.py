@@ -6,6 +6,7 @@ from bson import ObjectId
 
 from src.api.exceptions import ProjectNotFoundError
 from src.db.mongo import get_database
+from src.models.edition import get_recommended_edition
 from src.models.project import (
     CreateProjectRequest,
     Project,
@@ -37,6 +38,10 @@ def _to_project(doc: dict) -> Project:
     # Normalize legacy/missing fields to canonical shapes
     normalized = normalize_project_data(doc)
 
+    # Get default edition based on webinar type for backward compatibility
+    webinar_type = doc.get("webinarType", "standard_presentation")
+    default_edition = get_recommended_edition(webinar_type)
+
     return Project(
         id=str(doc["_id"]),
         name=doc["name"],
@@ -54,6 +59,12 @@ def _to_project(doc: dict) -> Project:
         finalSubtitle=doc.get("finalSubtitle", ""),
         creditsText=doc.get("creditsText", ""),
         qaReport=doc.get("qaReport"),
+        # Edition fields with smart defaults for backward compatibility
+        edition=doc.get("edition", default_edition.value),
+        fidelity=doc.get("fidelity", "faithful"),
+        themes=doc.get("themes", []),
+        canonical_transcript=doc.get("canonical_transcript"),
+        canonical_transcript_hash=doc.get("canonical_transcript_hash"),
     )
 
 
@@ -73,6 +84,9 @@ async def create_project(request: CreateProjectRequest) -> Project:
     db = await get_database()
     collection = db[COLLECTION_NAME]
 
+    # Set default edition based on webinar type
+    default_edition = get_recommended_edition(request.webinarType.value)
+
     now = datetime.now(UTC)
     doc = {
         "name": request.name,
@@ -89,6 +103,10 @@ async def create_project(request: CreateProjectRequest) -> Project:
         "finalTitle": "",
         "finalSubtitle": "",
         "creditsText": "",
+        # Edition defaults based on webinar type
+        "edition": default_edition.value,
+        "fidelity": "faithful",
+        "themes": [],
     }
 
     result = await collection.insert_one(doc)
@@ -148,6 +166,11 @@ async def update_project(project_id: str, request: UpdateProjectRequest) -> Proj
         elif isinstance(request.visualPlan, dict):
             visual_plan_data = request.visualPlan
 
+    # Serialize themes if provided
+    themes_data = None
+    if request.themes is not None:
+        themes_data = [theme.model_dump() for theme in request.themes]
+
     update_doc = {
         "name": request.name,
         "webinarType": request.webinarType.value,
@@ -163,6 +186,14 @@ async def update_project(project_id: str, request: UpdateProjectRequest) -> Proj
         "finalSubtitle": request.finalSubtitle,
         "creditsText": request.creditsText,
     }
+
+    # Add edition fields if provided (partial update support)
+    if request.edition is not None:
+        update_doc["edition"] = request.edition.value
+    if request.fidelity is not None:
+        update_doc["fidelity"] = request.fidelity.value
+    if themes_data is not None:
+        update_doc["themes"] = themes_data
 
     await collection.update_one({"_id": object_id}, {"$set": update_doc})
 

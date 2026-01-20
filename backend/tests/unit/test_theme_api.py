@@ -1,5 +1,7 @@
 """Tests for theme proposal API."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -7,7 +9,9 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client():
     from src.api.main import app
-    return TestClient(app)
+    # Mock the background task runner to prevent actual execution
+    with patch("src.api.routes.themes.run_theme_proposal", new_callable=AsyncMock):
+        yield TestClient(app)
 
 
 class TestProposeThemesEndpoint:

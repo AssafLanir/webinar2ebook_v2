@@ -209,6 +209,7 @@ def build_chapter_system_prompt(
     include_summary = style_config.get("include_summary_per_chapter", False)
     include_takeaways = style_config.get("include_key_takeaways", False)
     include_actions = style_config.get("include_action_steps", False)
+    book_format = style_config.get("book_format", "guide")
 
     # Detail level guidance
     detail_guidance = {
@@ -254,6 +255,39 @@ def build_chapter_system_prompt(
         lines.append("- Only include information from the provided transcript")
     if citation_style != "none":
         lines.append(f"- Cite sources: {citation_style}")
+
+    # Prose style guidance - always included, stronger for essay format
+    lines.extend([
+        "",
+        "PROSE QUALITY:",
+        "- Write with confidence and precision. No hedging phrases.",
+        "- Vary sentence length and structure. Mix short punchy sentences with longer flowing ones.",
+        "- Start paragraphs differently - avoid repetitive openers.",
+        "- Use concrete examples before abstractions.",
+        "- Trust the reader's intelligence - don't over-explain or recap what was just said.",
+        "",
+        "BANNED PHRASES (never use these):",
+        '- "In conclusion", "To conclude", "In summary"',
+        '- "Moreover", "Furthermore", "Additionally", "However" as sentence starters',
+        '- "It is important to note", "It should be noted"',
+        '- "This highlights", "This demonstrates", "This shows"',
+        '- "As mentioned earlier", "As we discussed"',
+        '- "Let\'s explore", "Let\'s dive into", "Let\'s take a look"',
+    ])
+
+    # Explicit forbid for essay format or when takeaways/actions are disabled
+    if book_format == "essay" or (not include_takeaways and not include_actions):
+        lines.extend([
+            "",
+            "FORBIDDEN SECTIONS (do NOT include these):",
+            '- "Key Takeaways" or "Takeaways" sections',
+            '- "Action Steps", "Action Items", or "Actionable Steps" sections',
+            '- Bullet-point summaries at chapter end',
+            '- Template conclusions that recap the chapter',
+            "- Any wrap-up section with numbered or bulleted lists",
+            "",
+            "Instead, end chapters with flowing prose that transitions naturally or leaves the reader with a thought-provoking insight.",
+        ])
 
     lines.extend([
         "",
@@ -1076,14 +1110,65 @@ Ground every claim in evidence from the transcript."""
 
 # Mode-specific prompt templates
 ESSAY_MODE_PROMPT = """
-ESSAY MODE:
-Structure the content as a coherent argument or thesis:
-- Present the main argument clearly
-- Provide supporting evidence and examples
-- Build logical connections between ideas
-- Draw conclusions based on the evidence
+ESSAY MODE (Ideas Edition):
+Transform the transcript into a coherent thematic exploration of the speaker's ideas.
 
-Maintain academic rigor while being accessible to the target audience."""
+CHAPTER STRUCTURE (use this exact format for each chapter):
+
+## Chapter N: [Title]
+
+[Synthesis section - 3-5 paragraphs of tight, grounded prose weaving together the speaker's ideas on this theme. Every claim must be tied to evidence. Include inline quotes.]
+
+### Key Excerpts
+
+[Include 2-4 substantial verbatim passages (2-4 sentences each) that capture the speaker's voice on this theme. Format as block quotes with attribution.]
+
+CRITICAL: Every excerpt MUST be wrapped in quotation marks. Never omit the quotes.
+
+> "[Exact verbatim quote from transcript - multiple sentences allowed]"
+> — [Speaker name]
+
+> "[Another substantial verbatim passage]"
+> — [Speaker name]
+
+WRONG: > Before the Enlightenment, there was practically nobody...
+RIGHT: > "Before the Enlightenment, there was practically nobody..."
+
+### Core Claims
+
+[Bullet list of 3-5 key claims from this chapter, each with supporting quote.]
+
+CRITICAL: Every supporting quote MUST be wrapped in quotation marks.
+
+- **[Claim in your words]**: "[Supporting quote from transcript]"
+- **[Another claim]**: "[Supporting quote]"
+
+WRONG: - **Claim**: the thing is, humans can decide...
+RIGHT: - **Claim**: "The thing is, humans can decide..."
+
+---
+
+EVIDENCE DENSITY REQUIREMENTS:
+- Synthesis: At least 6 inline quotes per chapter, 1 quote per 150-200 words
+- Key Excerpts: 2-4 substantial multi-sentence verbatim passages per chapter
+- Core Claims: 3-5 quote-backed claims per chapter
+- Total quotes per chapter: 12-15 minimum
+
+STRICT CONTENT RULES:
+- NEVER add contemporary examples not in the transcript (no "climate change", "AI", "social media", "inequality", "today's world", "modern challenges")
+- NEVER add moralizing language unless directly quoting ("should", "must", "duty", "responsibility", "crucial for survival", "moral imperative")
+- NEVER add poetic embellishments ("as if nature mocked humanity", "vigilant stewards")
+- NEVER add biographical details not in the transcript ("noted physicist", "renowned philosopher")
+- If the transcript doesn't say it, you cannot say it
+- Key Excerpts must be EXACT verbatim quotes - no paraphrasing, no ellipsis
+
+SYNTHESIS GUIDELINES:
+- Present the speaker's main argument clearly using their words
+- Build logical connections between ideas using brief, neutral transitions
+- Let the quotes carry the meaning - your prose is connective tissue only
+- Write in a clear, neutral style
+
+Your job is to organize and present the speaker's ideas with maximum fidelity to the source, not to add your own commentary or modern framing."""
 
 
 TUTORIAL_MODE_PROMPT = """
