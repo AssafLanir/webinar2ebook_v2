@@ -41,7 +41,7 @@ from src.models.style_config import (
     ContentMode,
 )
 from src.models.evidence_map import EvidenceMap, ChapterEvidence
-from src.models.edition import WhitelistQuote, TranscriptPair
+from src.models.edition import WhitelistQuote, TranscriptPair, CoverageLevel
 
 from .job_store import get_job_store, get_job, update_job
 from .whitelist_service import (
@@ -351,6 +351,42 @@ def inject_excerpts_into_empty_sections(
                         )
 
     return result
+
+
+def compile_key_excerpts_section(
+    chapter_index: int,
+    whitelist: list[WhitelistQuote],
+    coverage_level: CoverageLevel,
+) -> str:
+    """Compile Key Excerpts section deterministically from whitelist.
+
+    This replaces LLM-generated excerpts with whitelist-backed content.
+    Uses fallback chain from select_deterministic_excerpts to ensure
+    non-empty result (unless whitelist is completely empty).
+
+    Args:
+        chapter_index: 0-based chapter index.
+        whitelist: Validated quote whitelist.
+        coverage_level: Coverage level for excerpt count.
+
+    Returns:
+        Markdown string for Key Excerpts content (without header).
+        Returns placeholder if whitelist is empty.
+    """
+    if not whitelist:
+        return "*No excerpts available.*"
+
+    excerpts = select_deterministic_excerpts(whitelist, chapter_index, coverage_level)
+
+    if not excerpts:
+        # Fallback chain failed (shouldn't happen with non-empty whitelist)
+        logger.warning(
+            f"compile_key_excerpts_section: No excerpts selected for chapter {chapter_index} "
+            f"despite whitelist having {len(whitelist)} quotes"
+        )
+        return "*No excerpts available.*"
+
+    return format_excerpts_markdown(excerpts)
 
 
 # ==============================================================================
