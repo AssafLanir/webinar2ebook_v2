@@ -329,6 +329,89 @@ def build_quote_whitelist(
     return list(whitelist_map.values())
 
 
+# Minimum quote length to consider for removal (shorter may be legitimate emphasis)
+MIN_INLINE_QUOTE_LENGTH = 5
+
+
+def remove_inline_quotes(
+    text: str,
+    min_quote_length: int = MIN_INLINE_QUOTE_LENGTH,
+) -> tuple[str, dict]:
+    """Remove inline quotes from narrative prose.
+
+    Quotes are only allowed in Key Excerpts (blockquotes) and Core Claims
+    (bullet points). Any quoted text in regular prose is unquoted.
+
+    Args:
+        text: The draft markdown text.
+        min_quote_length: Minimum quote length to remove (shorter preserved).
+
+    Returns:
+        Tuple of (cleaned_text, report) where report contains:
+        - removed_count: Number of quotes removed
+        - removed_quotes: List of removed quote details
+    """
+    lines = text.split('\n')
+    result_lines = []
+    removed_quotes = []
+
+    in_key_excerpts = False
+    in_core_claims = False
+
+    # Pattern for inline quotes (straight and smart)
+    quote_pattern = re.compile(r'["\u201c]([^"\u201d]+)["\u201d]')
+
+    for line_num, line in enumerate(lines, 1):
+        stripped = line.strip()
+
+        # Track sections
+        if stripped.startswith('## Chapter') or stripped.startswith('## '):
+            in_key_excerpts = False
+            in_core_claims = False
+        elif stripped == '### Key Excerpts':
+            in_key_excerpts = True
+            in_core_claims = False
+        elif stripped == '### Core Claims':
+            in_key_excerpts = False
+            in_core_claims = True
+        elif stripped.startswith('### '):
+            in_key_excerpts = False
+            in_core_claims = False
+
+        # Skip sections where quotes are allowed
+        if in_key_excerpts or in_core_claims:
+            result_lines.append(line)
+            continue
+
+        # Skip blockquote lines (part of excerpts structure)
+        if stripped.startswith('>'):
+            result_lines.append(line)
+            continue
+
+        # Remove inline quotes from this line
+        modified_line = line
+        for match in quote_pattern.finditer(line):
+            quote_text = match.group(1)
+            if len(quote_text) >= min_quote_length:
+                # Remove the quote marks
+                full_match = match.group(0)
+                modified_line = modified_line.replace(full_match, quote_text, 1)
+                removed_quotes.append({
+                    "text": quote_text,
+                    "line_num": line_num,
+                    "original": full_match,
+                })
+
+        result_lines.append(modified_line)
+
+    report = {
+        "removed_count": len(removed_quotes),
+        "removed_quotes": removed_quotes,
+    }
+
+    return '\n'.join(result_lines), report
+
+
 # Coverage thresholds
 MIN_USABLE_QUOTE_LENGTH = 8  # words
 STRONG_QUOTES = 5
