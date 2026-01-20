@@ -1159,9 +1159,16 @@ ATTRIBUTED_SPEECH_PATTERN_PREFIX = re.compile(
     re.MULTILINE | re.DOTALL
 )
 
-# Pattern 2: "X, Speaker verb." (suffix attribution)
+# Pattern 2: "X, Speaker verb." (suffix attribution - sentence final)
 ATTRIBUTED_SPEECH_PATTERN_SUFFIX = re.compile(
     r'([^.!?]+?),\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?|he|she)\s+' + ATTRIBUTION_VERBS + r'\.',
+    re.MULTILINE | re.IGNORECASE
+)
+
+# Pattern 2b: "X, Speaker verb, Y" (mid-sentence attribution)
+# Catches patterns like "The truth is X, he says, which means Y"
+ATTRIBUTED_SPEECH_PATTERN_MID = re.compile(
+    r'([^.!?,]{20,}?),\s+(he|she|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+' + ATTRIBUTION_VERBS + r',\s+',
     re.MULTILINE | re.IGNORECASE
 )
 
@@ -1227,6 +1234,24 @@ def find_attributed_speech(text: str) -> list[dict]:
             'start': match.start(),
             'end': match.end(),
             'pattern_type': 'suffix',
+        })
+
+    # Find mid-sentence patterns: "X, he says, Y"
+    # These are verbatim leaks embedded mid-sentence
+    for match in ATTRIBUTED_SPEECH_PATTERN_MID.finditer(text):
+        content = match.group(1).strip()
+        speaker = match.group(2)
+        if len(content) < 20:  # Need substantial content
+            continue
+        if content.startswith('"') or content.startswith('\u201c'):
+            continue
+        attributed.append({
+            'speaker': speaker,
+            'content': content,
+            'full_match': match.group(0),
+            'start': match.start(),
+            'end': match.end(),
+            'pattern_type': 'mid',
         })
 
     # Find colon patterns: "Deutsch: X" (but not in dialogue context)
@@ -1385,6 +1410,11 @@ def enforce_attributed_speech_hard(
                 if not attribution_clause.endswith('.'):
                     attribution_clause = attribution_clause + '.'
                 quoted_version = f'"{content}," {attribution_clause}'
+            elif attr['pattern_type'] == 'mid':
+                # "X, he says, Y" → ""X," he says, Y"
+                # We wrap the content in quotes and keep the trailing comma
+                verb = _extract_verb(full_match, speaker)
+                quoted_version = f'"{content}," {speaker} {verb}, '
             else:
                 # "Deutsch argues, X." → "Deutsch argues, "X.""
                 verb = _extract_verb(full_match, speaker)

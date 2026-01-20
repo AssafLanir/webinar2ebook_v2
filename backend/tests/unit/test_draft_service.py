@@ -1169,6 +1169,15 @@ class TestAttributedSpeechEnforcement:
         assert 'Knowledge is the key' in attributed[0]['content']
         assert attributed[0]['pattern_type'] == 'suffix'
 
+    def test_finds_mid_sentence_attribution(self):
+        """Test detection of 'X, he says, Y' pattern (mid-sentence attribution)."""
+        text = "The truth of the matter is that wisdom is limitless, he says, pushing us to rethink our capabilities."
+        attributed = draft_service.find_attributed_speech(text)
+        assert len(attributed) == 1
+        assert attributed[0]['speaker'].lower() == 'he'
+        assert 'wisdom is limitless' in attributed[0]['content']
+        assert attributed[0]['pattern_type'] == 'mid'
+
     def test_finds_various_verbs(self):
         """Test detection with different attribution verbs."""
         verbs = ['argues', 'says', 'notes', 'observes', 'warns', 'asserts', 'claims', 'explains']
