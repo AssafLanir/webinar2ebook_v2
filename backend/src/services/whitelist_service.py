@@ -25,10 +25,13 @@ QUOTE ENFORCEMENT RULES:
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 from src.models.edition import ChapterCoverage, CoverageLevel, SpeakerRef, SpeakerRole, TranscriptPair, WhitelistQuote
 from src.models.evidence_map import ChapterEvidence, EvidenceMap
@@ -350,25 +353,64 @@ def select_deterministic_excerpts(
     Valid by construction: these quotes come from whitelist,
     so they're guaranteed to be transcript substrings with known speakers.
 
+    INVARIANT: Key Excerpts must never be empty. Fallback strategy:
+    1. GUEST quotes for this chapter (preferred)
+    2. Any speaker quotes for this chapter (fallback)
+    3. Best global GUEST quotes across all chapters (last resort)
+
     Args:
         whitelist: Validated quote whitelist.
         chapter_index: 0-based chapter index.
         coverage_level: Coverage level for count selection.
 
     Returns:
-        List of selected WhitelistQuote entries.
+        List of selected WhitelistQuote entries (never empty if whitelist has any quotes).
     """
-    # Filter to this chapter, GUEST only
+    count = EXCERPT_COUNTS[coverage_level]
+
+    # Strategy 1: GUEST quotes for this chapter (preferred)
     candidates = [
         q for q in whitelist
         if chapter_index in q.chapter_indices
         and q.speaker.speaker_role == SpeakerRole.GUEST
     ]
 
+    # Strategy 2: Any speaker for this chapter (if no GUEST quotes)
+    if not candidates:
+        candidates = [
+            q for q in whitelist
+            if chapter_index in q.chapter_indices
+        ]
+        if candidates:
+            logger.info(
+                f"Chapter {chapter_index + 1}: No GUEST quotes, falling back to all speakers "
+                f"({len(candidates)} available)"
+            )
+
+    # Strategy 3: Best global GUEST quotes (if chapter has no quotes at all)
+    if not candidates:
+        candidates = [
+            q for q in whitelist
+            if q.speaker.speaker_role == SpeakerRole.GUEST
+        ]
+        if candidates:
+            logger.warning(
+                f"Chapter {chapter_index + 1}: No chapter-scoped quotes, using global GUEST quotes "
+                f"({len(candidates)} available)"
+            )
+
+    # Strategy 4: Any global quotes (absolute last resort)
+    if not candidates:
+        candidates = list(whitelist)
+        if candidates:
+            logger.warning(
+                f"Chapter {chapter_index + 1}: No GUEST quotes in whitelist, using any available "
+                f"({len(candidates)} available)"
+            )
+
     # Stable sort: longest first, then by quote_id for ties
     candidates.sort(key=lambda q: (-len(q.quote_text), q.quote_id))
 
-    count = EXCERPT_COUNTS[coverage_level]
     return candidates[:count]
 
 
@@ -678,12 +720,16 @@ def enforce_core_claims_text(
             i += 1
 
     # Reconstruct section
-    new_section_lines = []
-    for bullet in kept_bullets:
-        new_section_lines.append(bullet)
-
-    # Add back non-bullet lines (usually empty lines for spacing)
-    new_section = '\n'.join(new_section_lines)
+    if kept_bullets:
+        new_section = '\n'.join(kept_bullets)
+    else:
+        # INVARIANT: Core Claims must never be empty without explanation
+        # Add placeholder when all claims were dropped
+        new_section = '*No fully grounded claims available for this chapter.*'
+        logger.warning(
+            f"Chapter {chapter_index + 1}: All Core Claims dropped, adding placeholder "
+            f"({len(dropped)} claims failed validation)"
+        )
 
     # Reconstruct full text
     result = text[:section_start] + new_section + '\n' + text[section_end:]

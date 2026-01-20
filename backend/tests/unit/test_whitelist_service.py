@@ -677,6 +677,41 @@ class TestSelectDeterministicExcerpts:
         # First excerpt should be the longest
         assert "much longer" in excerpts[0].quote_text
 
+    def test_fallback_to_any_speaker_when_no_guest(self):
+        """Test fallback to HOST/CALLER quotes when no GUEST quotes for chapter.
+
+        INVARIANT: Key Excerpts must never be empty.
+        """
+        whitelist = [
+            _make_host_quote("Host insight with enough words here", chapter_indices=[0]),
+        ]
+        excerpts = select_deterministic_excerpts(whitelist, chapter_index=0, coverage_level=CoverageLevel.WEAK)
+
+        # Should return HOST quote rather than empty
+        assert len(excerpts) >= 1
+        assert excerpts[0].speaker.speaker_role == SpeakerRole.HOST
+
+    def test_fallback_to_global_when_no_chapter_quotes(self):
+        """Test fallback to global quotes when chapter has no scoped quotes.
+
+        INVARIANT: Key Excerpts must never be empty.
+        """
+        whitelist = [
+            _make_guest_quote("Quote for chapter 1 only", chapter_indices=[1]),
+            _make_guest_quote("Another chapter 1 quote", chapter_indices=[1]),
+        ]
+        # Request excerpts for chapter 0 (has no quotes)
+        excerpts = select_deterministic_excerpts(whitelist, chapter_index=0, coverage_level=CoverageLevel.WEAK)
+
+        # Should return global GUEST quotes rather than empty
+        assert len(excerpts) >= 1
+
+    def test_returns_empty_only_when_whitelist_empty(self):
+        """Test empty result only when whitelist itself is empty."""
+        whitelist = []
+        excerpts = select_deterministic_excerpts(whitelist, chapter_index=0, coverage_level=CoverageLevel.WEAK)
+        assert excerpts == []
+
 
 class TestEnforcementResult:
     def test_enforcement_result_model(self):
@@ -1592,6 +1627,37 @@ Narrative here.
         # Should be dropped because it's from HOST
         assert report["dropped"]
         assert "Important question" not in result
+
+    def test_adds_placeholder_when_all_claims_dropped(self):
+        """Test placeholder is added when all Core Claims are invalid.
+
+        INVARIANT: Core Claims must never be empty without explanation.
+        """
+        from src.services.whitelist_service import enforce_core_claims_text
+
+        # Whitelist with GUEST quote that won't match
+        whitelist = [
+            _make_guest_quote(
+                "A completely different quote that will not match",
+                speaker_name="David Deutsch"
+            ),
+        ]
+
+        text = '''## Chapter 1
+
+### Core Claims
+
+- **Invalid claim 1**: "This quote is not in the whitelist at all"
+- **Invalid claim 2**: "Neither is this one here"
+
+## Chapter 2'''
+
+        result, report = enforce_core_claims_text(text, whitelist, chapter_index=0)
+
+        # All claims dropped, placeholder should appear
+        assert report["kept"] == 0
+        assert len(report["dropped"]) == 2
+        assert "*No fully grounded claims available for this chapter.*" in result
 
 
 class TestFixQuoteArtifactsEnhanced:
