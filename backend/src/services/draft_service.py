@@ -4528,3 +4528,63 @@ async def _trigger_qa_analysis(
     except Exception as e:
         # Log error but don't fail the draft generation
         logger.error(f"QA auto-trigger failed for project {project_id}: {e}")
+
+
+# ==============================================================================
+# Chapter Merge Logic
+# ==============================================================================
+
+def suggest_chapter_merges(
+    chapters: list,
+    min_quotes: int = 2,
+) -> list[dict]:
+    """Suggest chapter merges for chapters below evidence minimum.
+
+    When a chapter doesn't have enough quotes to produce meaningful
+    content, this function suggests merging it with a neighbor chapter.
+
+    Args:
+        chapters: List of objects with `chapter_index` and `quote_count` attributes.
+        min_quotes: Minimum quotes required per chapter.
+
+    Returns:
+        List of merge suggestions, each with:
+        - weak_chapter: Index of chapter to merge
+        - merge_into: Index of chapter to merge into
+        - reason: Why the merge is suggested
+    """
+    if len(chapters) <= 1:
+        # Can't merge with only one chapter
+        if chapters and chapters[0].quote_count < min_quotes:
+            return [{"action": "abort", "reason": "Single chapter has insufficient evidence"}]
+        return []
+
+    merges = []
+
+    for i, chapter in enumerate(chapters):
+        if chapter.quote_count >= min_quotes:
+            continue
+
+        # This chapter is weak - find best neighbor to merge into
+        prev_idx = i - 1 if i > 0 else None
+        next_idx = i + 1 if i < len(chapters) - 1 else None
+
+        prev_count = chapters[prev_idx].quote_count if prev_idx is not None else -1
+        next_count = chapters[next_idx].quote_count if next_idx is not None else -1
+
+        # Choose the stronger neighbor
+        if prev_count >= next_count and prev_idx is not None:
+            merge_into = prev_idx
+        elif next_idx is not None:
+            merge_into = next_idx
+        else:
+            # Edge case: shouldn't happen with len > 1
+            continue
+
+        merges.append({
+            "weak_chapter": chapter.chapter_index,
+            "merge_into": chapters[merge_into].chapter_index,
+            "reason": f"Chapter {chapter.chapter_index + 1} has only {chapter.quote_count} quotes (minimum: {min_quotes})",
+        })
+
+    return merges
