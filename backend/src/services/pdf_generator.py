@@ -12,10 +12,40 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import platform
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+
+# Configure library paths for WeasyPrint's native dependencies (pango, cairo)
+# This must happen BEFORE importing weasyprint
+def _setup_weasyprint_library_paths() -> None:
+    """Set up library paths for WeasyPrint's native dependencies.
+
+    WeasyPrint requires pango, cairo, and other native libraries.
+    On macOS with Homebrew, these are in /opt/homebrew/lib (Apple Silicon)
+    or /usr/local/lib (Intel). Anaconda Python doesn't find these by default.
+    """
+    if platform.system() != "Darwin":
+        return  # Only needed on macOS
+
+    # Common Homebrew library paths
+    homebrew_paths = [
+        "/opt/homebrew/lib",  # Apple Silicon
+        "/usr/local/lib",     # Intel Mac
+    ]
+
+    current_path = os.environ.get("DYLD_LIBRARY_PATH", "")
+    paths_to_add = [p for p in homebrew_paths if os.path.isdir(p) and p not in current_path]
+
+    if paths_to_add:
+        new_path = ":".join(paths_to_add + ([current_path] if current_path else []))
+        os.environ["DYLD_LIBRARY_PATH"] = new_path
+
+# Set up paths at module load time
+_setup_weasyprint_library_paths()
 
 # Lazy import WeasyPrint to allow tests to run without system dependencies
 # WeasyPrint requires cairo, pango, etc. which may not be available in CI
@@ -209,9 +239,32 @@ class PdfGenerator:
         Args:
             html_content: The HTML to convert.
             output_path: Where to write the PDF.
+
+        Raises:
+            ImportError: If WeasyPrint or its dependencies are not available.
         """
         # Import WeasyPrint at runtime to allow tests to run without system deps
-        from weasyprint import HTML
+        try:
+            from weasyprint import HTML
+        except ImportError as e:
+            error_msg = str(e)
+            if "pango" in error_msg.lower() or "cairo" in error_msg.lower():
+                raise ImportError(
+                    "WeasyPrint requires native libraries (pango, cairo). "
+                    "On macOS, install with: brew install pango cairo gdk-pixbuf libffi\n"
+                    f"Original error: {error_msg}"
+                ) from e
+            raise ImportError(
+                f"WeasyPrint not available: {error_msg}. "
+                "Install with: pip install weasyprint"
+            ) from e
+        except OSError as e:
+            # WeasyPrint may raise OSError if native libs can't be loaded
+            raise ImportError(
+                "WeasyPrint native dependencies not found. "
+                "On macOS, install with: brew install pango cairo gdk-pixbuf libffi\n"
+                f"Original error: {e}"
+            ) from e
 
         html_doc = HTML(string=html_content, base_url=".")
         html_doc.write_pdf(output_path)
