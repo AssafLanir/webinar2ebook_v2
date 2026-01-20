@@ -1195,6 +1195,15 @@ class TestAttributedSpeechEnforcement:
         assert 'Ironically' in attributed[0]['content']
         assert attributed[0]['pattern_type'] == 'colon_extended'
 
+    def test_finds_as_prefix_attribution(self):
+        """Test detection of 'As Speaker puts it, X' pattern."""
+        text = "As Deutsch puts it, we are a player—the player—in the universe."
+        attributed = draft_service.find_attributed_speech(text)
+        assert len(attributed) == 1
+        assert attributed[0]['speaker'] == 'Deutsch'
+        assert 'we are a player' in attributed[0]['content']
+        assert attributed[0]['pattern_type'] == 'as_prefix'
+
     def test_finds_various_verbs(self):
         """Test detection with different attribution verbs."""
         verbs = ['argues', 'says', 'notes', 'observes', 'warns', 'asserts', 'claims', 'explains']

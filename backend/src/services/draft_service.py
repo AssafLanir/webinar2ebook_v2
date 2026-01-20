@@ -1192,8 +1192,15 @@ ATTRIBUTED_SPEECH_PATTERN_COLON_EXTENDED = re.compile(
 # The -ing verb introduces reported speech
 ATTRIBUTION_ING_VERBS = r'(?:saying|noting|arguing|observing|warning|explaining|claiming|asserting|adding|suggesting|stating|emphasizing|stressing|insisting|remarking|pointing\s+out)'
 ATTRIBUTED_SPEECH_PATTERN_PARTICIPIAL = re.compile(
-    r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)[^,]{0,40},\s+' + ATTRIBUTION_ING_VERBS + r'\s+([^.!?]{20,}[.!?])',
+    r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?|He|She)[^,]{0,80},\s+' + ATTRIBUTION_ING_VERBS + r',?\s+([^.!?]{20,}[.!?])',
     re.MULTILINE | re.IGNORECASE
+)
+
+# Pattern 6: "As Speaker puts it, Content" (prefixed "As" construction)
+# Catches: "As Deutsch puts it, we are a player in the universe."
+ATTRIBUTED_SPEECH_PATTERN_AS_PREFIX = re.compile(
+    r'[Aa]s\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+' + ATTRIBUTION_VERBS + r'(?:\s+it)?,\s*(.+?)(?:\.(?:\s|$)|$)',
+    re.MULTILINE | re.DOTALL
 )
 
 
@@ -1320,6 +1327,25 @@ def find_attributed_speech(text: str) -> list[dict]:
             'start': match.start(),
             'end': match.end(),
             'pattern_type': 'participial',
+        })
+
+    # Find "As X puts it" patterns: "As Deutsch puts it, we are a player."
+    for match in ATTRIBUTED_SPEECH_PATTERN_AS_PREFIX.finditer(text):
+        speaker = match.group(1)
+        content = match.group(2).strip()
+        if content.endswith('.'):
+            content = content[:-1].strip()
+        if len(content) < 10:
+            continue
+        if content.startswith('"') or content.startswith('\u201c'):
+            continue
+        attributed.append({
+            'speaker': speaker,
+            'content': content,
+            'full_match': match.group(0),
+            'start': match.start(),
+            'end': match.end(),
+            'pattern_type': 'as_prefix',
         })
 
     # Sort by position and deduplicate overlapping matches
@@ -1477,7 +1503,13 @@ def enforce_attributed_speech_hard(
                 # Extract lead-in (everything before content)
                 content_start = full_match.find(content)
                 lead_in = full_match[:content_start].strip()
-                quoted_version = f'{lead_in} "{content}"'
+                quoted_version = f'{lead_in} "{content}."'
+            elif attr['pattern_type'] == 'as_prefix':
+                # "As Deutsch puts it, Content." → "As Deutsch puts it, "Content.""
+                # Extract lead-in (everything before content)
+                content_start = full_match.find(content)
+                lead_in = full_match[:content_start].strip()
+                quoted_version = f'{lead_in} "{content}."'
             else:
                 # "Deutsch argues, X." → "Deutsch argues, "X.""
                 verb = _extract_verb(full_match, speaker)
