@@ -79,6 +79,52 @@ WORDS_PER_QUOTE_MULTIPLIER = 2.5  # Each quote word supports ~2.5 prose words
 BASE_CHAPTER_WORDS = 150  # Minimum overhead per chapter
 
 
+def assign_quotes_to_chapters_by_span(
+    whitelist: list[WhitelistQuote],
+    chapter_spans: list[tuple[int, int]],
+) -> list[WhitelistQuote]:
+    """Assign quotes to chapters based on transcript position.
+
+    Uses match_spans to determine which chapters a quote belongs to.
+    A quote is assigned to a chapter if any of its match spans
+    overlaps with the chapter's span.
+
+    Args:
+        whitelist: List of WhitelistQuote objects.
+        chapter_spans: List of (start, end) tuples for each chapter.
+            Index 0 corresponds to chapter 0, etc.
+
+    Returns:
+        Updated whitelist with chapter_indices populated by span.
+    """
+    result = []
+
+    for quote in whitelist:
+        # Start with existing chapter indices
+        new_indices = set(quote.chapter_indices)
+
+        # Check each match span against each chapter span
+        for span_start, span_end in quote.match_spans:
+            for chapter_idx, (chapter_start, chapter_end) in enumerate(chapter_spans):
+                # Check for overlap: spans overlap if neither is completely before the other
+                if span_start < chapter_end and span_end > chapter_start:
+                    new_indices.add(chapter_idx)
+
+        # Create updated quote with new indices
+        updated_quote = WhitelistQuote(
+            quote_id=quote.quote_id,
+            quote_text=quote.quote_text,
+            quote_canonical=quote.quote_canonical,
+            speaker=quote.speaker,
+            source_evidence_ids=quote.source_evidence_ids,
+            chapter_indices=sorted(new_indices),
+            match_spans=quote.match_spans,
+        )
+        result.append(updated_quote)
+
+    return result
+
+
 def find_all_occurrences(text: str, substring: str) -> list[tuple[int, int]]:
     """Find all occurrences of substring in text.
 
