@@ -33,7 +33,16 @@ from typing import Protocol
 
 logger = logging.getLogger(__name__)
 
-from src.models.edition import ChapterCoverage, CoverageLevel, SpeakerRef, SpeakerRole, TranscriptPair, WhitelistQuote
+from src.models.edition import (
+    ChapterCoverage,
+    ChapterCoverageReport,
+    CoverageLevel,
+    CoverageReport,
+    SpeakerRef,
+    SpeakerRole,
+    TranscriptPair,
+    WhitelistQuote,
+)
 from src.models.evidence_map import ChapterEvidence, EvidenceMap
 
 
@@ -63,6 +72,11 @@ BLOCKQUOTE_LINE_PATTERN = re.compile(r'^>\s*.*$', re.MULTILINE)
 INLINE_QUOTE_PATTERN = re.compile(
     r'["\u201c](?P<quote>[^"\u201d]{5,})["\u201d]'
 )
+
+# Coverage constants for report generation
+MIN_QUOTES_PER_CHAPTER = 2
+WORDS_PER_QUOTE_MULTIPLIER = 2.5  # Each quote word supports ~2.5 prose words
+BASE_CHAPTER_WORDS = 150  # Minimum overhead per chapter
 
 
 def find_all_occurrences(text: str, substring: str) -> list[tuple[int, int]]:
@@ -1077,3 +1091,81 @@ def detect_verbatim_leakage(
     }
 
     return result, report
+
+
+def generate_coverage_report(
+    whitelist: list[WhitelistQuote],
+    chapter_count: int,
+    transcript_hash: str,
+) -> CoverageReport:
+    """Generate pre-generation coverage report.
+
+    Analyzes whitelist to predict feasibility and word count
+    before running expensive LLM generation.
+
+    Args:
+        whitelist: Validated quote whitelist.
+        chapter_count: Number of chapters planned.
+        transcript_hash: Hash of canonical transcript.
+
+    Returns:
+        CoverageReport with feasibility analysis.
+    """
+    chapters = []
+    feasibility_notes = []
+    total_quote_words = 0
+
+    for chapter_idx in range(chapter_count):
+        # Count quotes for this chapter
+        chapter_quotes = [
+            q for q in whitelist
+            if chapter_idx in q.chapter_indices
+        ]
+        guest_quotes = [
+            q for q in chapter_quotes
+            if q.speaker.speaker_role == SpeakerRole.GUEST
+        ]
+
+        valid_count = len(guest_quotes)
+        invalid_count = len(chapter_quotes) - valid_count
+
+        # Estimate word range based on GUEST quote words
+        quote_words = sum(len(q.quote_text.split()) for q in guest_quotes)
+        total_quote_words += quote_words
+
+        min_words = BASE_CHAPTER_WORDS + quote_words
+        max_words = BASE_CHAPTER_WORDS + int(quote_words * WORDS_PER_QUOTE_MULTIPLIER)
+
+        chapters.append(ChapterCoverageReport(
+            chapter_index=chapter_idx,
+            valid_quotes=valid_count,
+            invalid_quotes=invalid_count,
+            valid_claims=0,  # TODO: count from evidence map
+            invalid_claims=0,
+            predicted_word_range=(min_words, max_words),
+        ))
+
+        if valid_count < MIN_QUOTES_PER_CHAPTER:
+            feasibility_notes.append(
+                f"Chapter {chapter_idx + 1} has only {valid_count} GUEST quotes "
+                f"(minimum {MIN_QUOTES_PER_CHAPTER})"
+            )
+
+    # Calculate totals
+    min_total = sum(ch.predicted_word_range[0] for ch in chapters)
+    max_total = sum(ch.predicted_word_range[1] for ch in chapters)
+
+    is_feasible = len(feasibility_notes) == 0 and len(whitelist) >= MIN_QUOTES_PER_CHAPTER
+
+    if not whitelist:
+        feasibility_notes.append("No valid whitelist quotes found")
+        is_feasible = False
+
+    return CoverageReport(
+        transcript_hash=transcript_hash,
+        total_whitelist_quotes=len(whitelist),
+        chapters=chapters,
+        predicted_total_range=(min_total, max_total),
+        is_feasible=is_feasible,
+        feasibility_notes=feasibility_notes,
+    )
