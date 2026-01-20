@@ -3939,6 +3939,20 @@ async def _generate_draft_task(
             except Exception as e:
                 logger.warning(f"Job {job_id}: Prose quote cleanup failed (non-fatal): {e}")
 
+        # Second pass: Inject excerpts into sections that became empty after enforcement
+        # This catches cases where LLM-generated excerpts were dropped by validation
+        if content_mode == ContentMode.essay and evidence_map and whitelist:
+            try:
+                logger.info(
+                    f"Job {job_id}: Second pass - inject_excerpts_into_empty_sections "
+                    f"(whitelist has {len(whitelist)} quotes)"
+                )
+                final_markdown = inject_excerpts_into_empty_sections(
+                    final_markdown, whitelist, evidence_map
+                )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Second excerpt injection pass failed (non-fatal): {e}")
+
         # Strip empty section headers (Ideas Edition render guard)
         # This is the render guard - empty Key Excerpts/Core Claims sections are removed
         if content_mode == ContentMode.essay:
