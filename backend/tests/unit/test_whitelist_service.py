@@ -1582,3 +1582,37 @@ class TestFixQuoteArtifactsEnhanced:
 
         assert not result.startswith('",')
         assert 'he says' in result
+
+    def test_fixes_mangled_attribution_comma_y(self):
+        """Test ," y, pattern is cleaned (mangled 'he says')."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = 'resources on the moon," y, he explains. This outlook shows'
+
+        result, _ = fix_quote_artifacts(text)
+
+        # Should remove the ," y, artifact
+        assert '," y,' not in result
+        assert 'moon, he explains' in result or 'moon,' in result
+
+    def test_fixes_mangled_attribution_comma_s(self):
+        """Test ," s, pattern is cleaned."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = 'for hundreds of thousands of years," s, he says. This challenges'
+
+        result, _ = fix_quote_artifacts(text)
+
+        # Should remove the ," s, artifact
+        assert '," s,' not in result
+
+    def test_fixes_orphan_quote_single_letter(self):
+        """Test orphan quote followed by single letter is cleaned."""
+        from src.services.whitelist_service import fix_quote_artifacts
+
+        text = 'technology," y he explains how it works.'
+
+        result, _ = fix_quote_artifacts(text)
+
+        # Should clean up the ," y pattern
+        assert '," y' not in result

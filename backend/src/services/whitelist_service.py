@@ -782,10 +782,21 @@ def fix_quote_artifacts(text: str) -> tuple[str, dict]:
     token_artifact_pattern = re.compile(r'["\u201c],\s*')
     result = token_artifact_pattern.sub('', result)
 
-    # Fix 8: Collapse multiple consecutive blank lines
+    # Fix 8: Remove mangled attribution artifacts like ," y, or ," s,
+    # These are LLM tokenization bugs where "he says" becomes " y, he says"
+    # Pattern: comma + quote + space + single letter + comma
+    mangled_attrib_pattern = re.compile(r',["\u201d]\s+[a-z],\s*')
+    result = mangled_attrib_pattern.sub(', ', result)
+
+    # Fix 9: Remove orphan quote followed by single letter (like ." s or ," y)
+    # Catches: technology," y he → technology, he
+    orphan_quote_letter = re.compile(r'([,.])["\u201d]\s+([a-z])\s+')
+    result = orphan_quote_letter.sub(r'\1 ', result)
+
+    # Fix 10: Collapse multiple consecutive blank lines
     result = re.sub(r'\n{3,}', '\n\n', result)
 
-    # Fix 9: Remove trailing whitespace on lines
+    # Fix 11: Remove trailing whitespace on lines
     result = re.sub(r'[ \t]+$', '', result, flags=re.MULTILINE)
 
     report = {
