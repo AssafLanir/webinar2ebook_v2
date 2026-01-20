@@ -61,6 +61,7 @@ from .whitelist_service import (
     generate_coverage_report,
     build_speaker_registry,
     normalize_speaker_names,
+    clean_placeholder_glue,
 )
 from .prompts import (
     DRAFT_PLAN_SYSTEM_PROMPT,
@@ -4009,6 +4010,18 @@ async def _generate_draft_task(
             final_markdown = repair_whitespace(final_markdown)
         except Exception as e:
             logger.error(f"Job {job_id}: Whitespace repair failed (non-fatal): {e}", exc_info=True)
+
+        # Placeholder glue cleanup (Ideas Edition) - remove any leftover artifact strings
+        # This catches "[as discussed in the excerpts above]" and similar markers
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, glue_report = clean_placeholder_glue(final_markdown)
+                if glue_report.get("glue_removed", 0) > 0:
+                    logger.info(
+                        f"Job {job_id}: Cleaned {glue_report['glue_removed']} placeholder glue strings"
+                    )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Placeholder glue cleanup failed (non-fatal): {e}")
 
         await update_job(
             job_id,

@@ -636,15 +636,21 @@ def detect_verbatim_leaks(
                     end_idx = start_idx + len(canonical)
                     actual_text = line[start_idx:end_idx]
 
-                    # Replace with a note
-                    # Using a subtle replacement that maintains readability
-                    replacement = "[as discussed in the excerpts above]"
+                    # Remove the verbatim text cleanly (no placeholder)
+                    # If the leak is the entire sentence or most of the line,
+                    # mark the line for removal entirely
+                    remaining = (modified_line[:start_idx] + modified_line[end_idx:]).strip()
 
-                    modified_line = (
-                        modified_line[:start_idx] +
-                        replacement +
-                        modified_line[end_idx:]
-                    )
+                    # Clean up any orphan punctuation or connectors
+                    remaining = re.sub(r'^[,.:;]\s*', '', remaining)
+                    remaining = re.sub(r'\s*[,.:;]$', '', remaining)
+                    remaining = re.sub(r'\s{2,}', ' ', remaining)
+
+                    # If remaining is too short or just punctuation, mark for removal
+                    if len(remaining) < 10 or not re.search(r'[a-zA-Z]{3,}', remaining):
+                        modified_line = ""  # Will be filtered out
+                    else:
+                        modified_line = remaining
 
                     # Update line_lower for subsequent matches
                     line_lower = modified_line.lower()
@@ -662,7 +668,10 @@ def detect_verbatim_leaks(
                         f"'{actual_text[:50]}...'"
                     )
 
-        result_lines.append(modified_line)
+        # Only append non-empty lines (lines marked for removal become "")
+        # But keep intentionally blank lines from the original
+        if modified_line or (not stripped and line == modified_line):
+            result_lines.append(modified_line)
 
     report = {
         "leaks_found": len(leaks_removed),
@@ -675,6 +684,68 @@ def detect_verbatim_leaks(
         )
 
     return '\n'.join(result_lines), report
+
+
+# Placeholder glue patterns to clean up
+PLACEHOLDER_GLUE_PATTERNS = [
+    r'\[as discussed in the excerpts? above\]',
+    r'\[see excerpts? above\]',
+    r'\[see key excerpts?\]',
+    r'as noted in the (?:quotes?|excerpts?) above[,.]?',
+    r'see the key excerpts? for (?:more )?detail[,.]?',
+    r'as (?:the )?excerpts? (?:above )?(?:show|demonstrate|illustrate)[,.]?',
+    r'\[excerpt[^\]]*\]',  # Any bracketed excerpt reference
+]
+
+
+def clean_placeholder_glue(text: str) -> tuple[str, dict]:
+    """Remove placeholder glue strings that indicate removed quote artifacts.
+
+    These are generic phrases like "[as discussed in the excerpts above]"
+    that may have been inserted by earlier processing or old code paths.
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (cleaned_text, report) where report contains:
+        - glue_removed: Number of placeholder strings removed
+        - removed_patterns: List of removed pattern details
+    """
+    removed_patterns = []
+    result = text
+
+    for pattern_str in PLACEHOLDER_GLUE_PATTERNS:
+        pattern = re.compile(pattern_str, re.IGNORECASE)
+        matches = list(pattern.finditer(result))
+
+        for match in reversed(matches):  # Reverse to maintain positions
+            removed_patterns.append({
+                "pattern": pattern_str,
+                "matched": match.group(0),
+                "position": match.start(),
+            })
+
+        # Remove matches and clean up orphan punctuation
+        result = pattern.sub('', result)
+
+    # Clean up orphan punctuation and extra whitespace
+    result = re.sub(r'\s*[,]\s*[.]', '.', result)  # ", ." -> "."
+    result = re.sub(r'\s*[.]\s*[.]', '.', result)  # ". ." -> "."
+    result = re.sub(r'\s{2,}', ' ', result)  # Multiple spaces -> single
+    result = re.sub(r'^\s+', '', result, flags=re.MULTILINE)  # Leading spaces on lines
+
+    report = {
+        "glue_removed": len(removed_patterns),
+        "removed_patterns": removed_patterns,
+    }
+
+    if removed_patterns:
+        logger.info(
+            f"Cleaned {len(removed_patterns)} placeholder glue strings from prose"
+        )
+
+    return result, report
 
 
 # Coverage thresholds
@@ -1157,6 +1228,29 @@ def format_excerpts_markdown(excerpts: list[WhitelistQuote]) -> str:
 MIN_CORE_CLAIM_QUOTE_WORDS = 8
 MIN_CORE_CLAIM_QUOTE_CHARS = 50
 
+# Short acknowledgement patterns that are content-free even if technically valid
+SHORT_ACKNOWLEDGEMENT_PATTERNS = [
+    r'^Yes\.?$',
+    r'^No\.?$',
+    r'^OK\.?$',
+    r'^Okay\.?$',
+    r'^Right\.?$',
+    r'^Sure\.?$',
+    r'^Exactly\.?$',
+    r'^Absolutely\.?$',
+    r'^Correct\.?$',
+    r'^Yeah\.?$',
+    r'^Mm-?hmm\.?$',
+    r'^Uh-?huh\.?$',
+    r'^That\'s right\.?$',
+    r'^That\'s true\.?$',
+    r'^I agree\.?$',
+    r'^Indeed\.?$',
+]
+SHORT_ACKNOWLEDGEMENT_COMPILED = [
+    re.compile(p, re.IGNORECASE) for p in SHORT_ACKNOWLEDGEMENT_PATTERNS
+]
+
 
 def enforce_core_claims_text(
     text: str,
@@ -1230,6 +1324,19 @@ def enforce_core_claims_text(
                     "claim": claim_text.strip(),
                     "quote": quote_text,
                     "reason": f"too_short ({word_count} words, {char_count} chars)"
+                })
+                i += 1
+                continue
+
+            # Check 1.5: Short acknowledgement gate
+            # Even if technically valid, content-free acknowledgements aren't useful
+            quote_stripped = quote_text.strip()
+            is_short_ack = any(p.match(quote_stripped) for p in SHORT_ACKNOWLEDGEMENT_COMPILED)
+            if is_short_ack:
+                dropped.append({
+                    "claim": claim_text.strip(),
+                    "quote": quote_text,
+                    "reason": "short_acknowledgement"
                 })
                 i += 1
                 continue
