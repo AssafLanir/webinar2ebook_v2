@@ -428,6 +428,71 @@ def select_deterministic_excerpts(
     return candidates[:count]
 
 
+def select_deterministic_excerpts_with_claims(
+    whitelist: list[WhitelistQuote],
+    chapter_index: int,
+    coverage_level: CoverageLevel,
+    claims: list[dict],
+) -> list[WhitelistQuote]:
+    """Select Key Excerpts with claims-first fallback.
+
+    Extended fallback chain:
+    1. Check if chapter has direct quotes (chapter_index in quote.chapter_indices)
+    2. If yes, use normal selection (GUEST chapter -> any chapter -> GUEST global -> any global)
+    3. If no direct chapter quotes, find quotes supporting claims in this chapter
+    4. Fall back to global quotes if no claim quotes either
+
+    Args:
+        whitelist: Validated quote whitelist.
+        chapter_index: 0-based chapter index.
+        coverage_level: Coverage level for count selection.
+        claims: List of claim dicts with 'id' and 'chapter_index' fields.
+
+    Returns:
+        List of selected WhitelistQuote entries.
+    """
+    count = EXCERPT_COUNTS[coverage_level]
+
+    # Check if chapter has ANY direct quotes (regardless of speaker role)
+    chapter_has_direct_quotes = any(
+        chapter_index in q.chapter_indices for q in whitelist
+    )
+
+    if chapter_has_direct_quotes:
+        # Use normal selection which handles GUEST/any/global fallback
+        return select_deterministic_excerpts(whitelist, chapter_index, coverage_level)
+
+    # No direct chapter quotes - try claims-first fallback
+    # Get claim IDs for this chapter
+    chapter_claim_ids = {
+        claim["id"] for claim in claims
+        if claim.get("chapter_index") == chapter_index
+    }
+
+    if chapter_claim_ids:
+        # Find quotes that support these claims (prefer GUEST)
+        claim_quotes = [
+            q for q in whitelist
+            if any(eid in chapter_claim_ids for eid in q.source_evidence_ids)
+            and q.speaker.speaker_role == SpeakerRole.GUEST
+        ]
+
+        if not claim_quotes:
+            # Try any speaker if no GUEST claim quotes
+            claim_quotes = [
+                q for q in whitelist
+                if any(eid in chapter_claim_ids for eid in q.source_evidence_ids)
+            ]
+
+        if claim_quotes:
+            # Sort for determinism: longest first, then by quote_id
+            claim_quotes.sort(key=lambda q: (-len(q.quote_text), q.quote_id))
+            return claim_quotes[:count]
+
+    # Final fallback: use global quotes (from select_deterministic_excerpts)
+    return select_deterministic_excerpts(whitelist, chapter_index, coverage_level)
+
+
 def enforce_quote_whitelist(
     generated_text: str,
     whitelist: list[WhitelistQuote],
