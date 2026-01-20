@@ -90,6 +90,13 @@ class DraftGenerateRequest(BaseModel):
         le=5,
         description="Number of candidates for best-of-N selection (1=disabled, 2-3 recommended)"
     )
+    require_preflight_pass: bool = Field(
+        default=False,
+        description=(
+            "If True, generation fails when preflight coverage analysis indicates "
+            "insufficient evidence. When False (default), generation proceeds with warnings."
+        )
+    )
 
 
 class DraftRegenerateRequest(BaseModel):

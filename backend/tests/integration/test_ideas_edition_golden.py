@@ -239,7 +239,7 @@ Some prose.
 - **Claim**: "Support"
 '''
 
-        result = strip_empty_section_headers(doc)
+        result, _ = strip_empty_section_headers(doc)
 
         assert "### Key Excerpts" not in result
         assert "### Core Claims" in result
@@ -260,7 +260,7 @@ Some prose.
 - **Claim**: "Support"
 '''
 
-        result = strip_empty_section_headers(doc)
+        result, _ = strip_empty_section_headers(doc)
 
         assert "### Key Excerpts" in result
         assert "### Core Claims" in result
@@ -301,7 +301,7 @@ More content "with quotes" embedded in prose.
         cleaned, _ = remove_inline_quotes(raw_llm_output)
 
         # Step 2: Strip empty sections
-        final = strip_empty_section_headers(cleaned)
+        final, _ = strip_empty_section_headers(cleaned)
 
         # Validate final output
         result = validate_structural_invariants(final)

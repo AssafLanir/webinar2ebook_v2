@@ -396,7 +396,7 @@ def compile_key_excerpts_section(
 # ==============================================================================
 
 
-def strip_empty_section_headers(markdown: str) -> str:
+def strip_empty_section_headers(markdown: str) -> tuple[str, list[dict]]:
     """Remove section headers that have no content.
 
     Section headers (### Key Excerpts, ### Core Claims) are removed
@@ -405,27 +405,57 @@ def strip_empty_section_headers(markdown: str) -> str:
     This is the render guard that ensures empty sections don't appear
     in final output.
 
+    IMPORTANT: This function logs warnings when sections are stripped.
+    Empty sections indicate a failure in the upstream pipeline to provide
+    content. While stripping prevents broken output, the warnings should
+    be investigated.
+
     Args:
         markdown: The draft markdown text.
 
     Returns:
-        Markdown with empty section headers removed.
+        Tuple of (cleaned_markdown, stripped_sections_report).
+        stripped_sections_report is a list of dicts with:
+        - chapter: chapter number
+        - section: section type ("Key Excerpts" or "Core Claims")
+        - reason: why it was stripped
     """
     result = markdown
+    stripped_sections: list[dict] = []
 
-    # Remove empty Key Excerpts
-    # Pattern: "### Key Excerpts\n" + whitespace only + lookahead for next header or EOF
-    result = re.sub(
-        r'### Key Excerpts\s*\n(?:\s*\n)*(?=### |## |\Z)',
-        '',
-        result
+    # Helper to find chapter number for a given position
+    def get_chapter_at_position(text: str, pos: int) -> int:
+        """Find which chapter number contains the given position."""
+        chapter_pattern = re.compile(r'^## Chapter (\d+)', re.MULTILINE)
+        chapter_num = 0
+        for match in chapter_pattern.finditer(text):
+            if match.start() > pos:
+                break
+            chapter_num = int(match.group(1))
+        return chapter_num
+
+    # Find and remove empty Key Excerpts, tracking what we remove
+    key_excerpts_pattern = re.compile(
+        r'### Key Excerpts\s*\n(?:\s*\n)*(?=### |## |\Z)'
     )
 
-    # Remove empty Core Claims (but preserve placeholders)
-    # Pattern: "### Core Claims\n" + whitespace only (no bullets, no placeholder) + next header
-    def remove_empty_core_claims(text: str) -> str:
+    for match in key_excerpts_pattern.finditer(result):
+        chapter_num = get_chapter_at_position(result, match.start())
+        stripped_sections.append({
+            "chapter": chapter_num,
+            "section": "Key Excerpts",
+            "reason": "Section was empty (no blockquotes found)",
+        })
+        logger.warning(
+            f"EMPTY SECTION STRIPPED: Chapter {chapter_num} Key Excerpts was empty. "
+            f"This indicates the whitelist had no quotes for this chapter."
+        )
+
+    result = key_excerpts_pattern.sub('', result)
+
+    # Find and remove empty Core Claims (but preserve placeholders)
+    def remove_empty_core_claims_with_tracking(text: str) -> str:
         """Remove Core Claims sections that are truly empty (no bullets, no placeholder)."""
-        # Find all Core Claims sections
         pattern = re.compile(
             r'(### Core Claims\s*\n)(.*?)(?=### |## |\Z)',
             re.DOTALL
@@ -433,11 +463,21 @@ def strip_empty_section_headers(markdown: str) -> str:
 
         def replace_if_empty(match):
             content = match.group(2)
-
-            # Check if content is truly empty (only whitespace)
             stripped = content.strip()
+
             if not stripped:
-                return ''  # Remove entirely
+                # Truly empty - remove
+                chapter_num = get_chapter_at_position(text, match.start())
+                stripped_sections.append({
+                    "chapter": chapter_num,
+                    "section": "Core Claims",
+                    "reason": "Section was empty (no bullets or placeholder)",
+                })
+                logger.warning(
+                    f"EMPTY SECTION STRIPPED: Chapter {chapter_num} Core Claims was empty. "
+                    f"This indicates no grounded claims were available."
+                )
+                return ''
 
             # Check if it has actual content (bullets or placeholder)
             has_bullets = bool(re.search(r'^- \*\*', stripped, re.MULTILINE))
@@ -447,17 +487,23 @@ def strip_empty_section_headers(markdown: str) -> str:
                 return match.group(0)  # Keep as-is
 
             # Has some text but not valid content - keep it for now
-            # (could be malformed, let other validators catch it)
             return match.group(0)
 
         return pattern.sub(replace_if_empty, text)
 
-    result = remove_empty_core_claims(result)
+    result = remove_empty_core_claims_with_tracking(result)
 
     # Clean up any double blank lines created by removal
     result = re.sub(r'\n{3,}', '\n\n', result)
 
-    return result
+    # Summary log if any sections were stripped
+    if stripped_sections:
+        logger.warning(
+            f"RENDER GUARD: Stripped {len(stripped_sections)} empty section(s). "
+            f"Chapters affected: {sorted(set(s['chapter'] for s in stripped_sections))}"
+        )
+
+    return result, stripped_sections
 
 
 # ==============================================================================
@@ -3265,6 +3311,61 @@ async def _generate_draft_task(
                 logger.info(
                     f"Job {job_id}: Built whitelist with {len(whitelist)} validated quotes"
                 )
+
+                # Generate coverage report and check for weak chapters
+                try:
+                    from hashlib import sha256
+                    transcript_hash = sha256(transcript_pair.canonical.encode()).hexdigest()[:32]
+                    coverage_report = generate_coverage_report(
+                        whitelist=whitelist,
+                        chapter_count=len(evidence_map.chapters),
+                        transcript_hash=transcript_hash,
+                    )
+
+                    # Log coverage summary
+                    logger.info(
+                        f"Job {job_id}: Coverage report - "
+                        f"feasible={coverage_report.is_feasible}, "
+                        f"predicted_words={coverage_report.predicted_total_range}"
+                    )
+
+                    # Check for chapters that need merging
+                    merge_suggestions = suggest_chapter_merges(coverage_report.chapters)
+                    if merge_suggestions:
+                        for suggestion in merge_suggestions:
+                            if suggestion.get("action") == "abort":
+                                logger.warning(
+                                    f"Job {job_id}: MERGE SUGGESTION - {suggestion['reason']}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"Job {job_id}: MERGE SUGGESTION - Chapter {suggestion['weak_chapter'] + 1} "
+                                    f"should merge into Chapter {suggestion['merge_into'] + 1}. "
+                                    f"Reason: {suggestion['reason']}"
+                                )
+                        logger.warning(
+                            f"Job {job_id}: {len(merge_suggestions)} chapter(s) have insufficient evidence. "
+                            f"Consider reducing chapter count or adding more source material."
+                        )
+
+                    # PREFLIGHT GATE: If require_preflight_pass is True and coverage is not feasible, fail
+                    if request.require_preflight_pass and not coverage_report.is_feasible:
+                        error_msg = (
+                            f"Preflight coverage check failed. "
+                            f"Reasons: {'; '.join(coverage_report.feasibility_notes)}. "
+                            f"Set require_preflight_pass=False to generate anyway with warnings."
+                        )
+                        logger.error(f"Job {job_id}: PREFLIGHT GATE BLOCKED - {error_msg}")
+                        await update_job(
+                            job_id,
+                            status=JobStatus.failed,
+                            error_message=error_msg,
+                        )
+                        return
+
+                except Exception as e:
+                    logger.warning(f"Job {job_id}: Coverage analysis failed (non-fatal): {e}")
+
             except Exception as e:
                 logger.error(f"Job {job_id}: Whitelist build failed (non-fatal): {e}", exc_info=True)
 
@@ -3842,8 +3943,13 @@ async def _generate_draft_task(
         # This is the render guard - empty Key Excerpts/Core Claims sections are removed
         if content_mode == ContentMode.essay:
             try:
-                final_markdown = strip_empty_section_headers(final_markdown)
-                logger.debug(f"Job {job_id}: Applied render guard - stripped empty section headers")
+                final_markdown, stripped_report = strip_empty_section_headers(final_markdown)
+                if stripped_report:
+                    logger.warning(
+                        f"Job {job_id}: Render guard stripped {len(stripped_report)} empty section(s)"
+                    )
+                else:
+                    logger.debug(f"Job {job_id}: Applied render guard - no empty sections found")
             except Exception as e:
                 logger.warning(f"Job {job_id}: Render guard failed (non-fatal): {e}")
 
@@ -4569,7 +4675,8 @@ def suggest_chapter_merges(
     content, this function suggests merging it with a neighbor chapter.
 
     Args:
-        chapters: List of objects with `chapter_index` and `quote_count` attributes.
+        chapters: List of ChapterCoverageReport objects with `chapter_index`
+                  and `valid_quotes` attributes.
         min_quotes: Minimum quotes required per chapter.
 
     Returns:
@@ -4580,22 +4687,22 @@ def suggest_chapter_merges(
     """
     if len(chapters) <= 1:
         # Can't merge with only one chapter
-        if chapters and chapters[0].quote_count < min_quotes:
+        if chapters and chapters[0].valid_quotes < min_quotes:
             return [{"action": "abort", "reason": "Single chapter has insufficient evidence"}]
         return []
 
     merges = []
 
     for i, chapter in enumerate(chapters):
-        if chapter.quote_count >= min_quotes:
+        if chapter.valid_quotes >= min_quotes:
             continue
 
         # This chapter is weak - find best neighbor to merge into
         prev_idx = i - 1 if i > 0 else None
         next_idx = i + 1 if i < len(chapters) - 1 else None
 
-        prev_count = chapters[prev_idx].quote_count if prev_idx is not None else -1
-        next_count = chapters[next_idx].quote_count if next_idx is not None else -1
+        prev_count = chapters[prev_idx].valid_quotes if prev_idx is not None else -1
+        next_count = chapters[next_idx].valid_quotes if next_idx is not None else -1
 
         # Choose the stronger neighbor
         if prev_count >= next_count and prev_idx is not None:
@@ -4609,7 +4716,7 @@ def suggest_chapter_merges(
         merges.append({
             "weak_chapter": chapter.chapter_index,
             "merge_into": chapters[merge_into].chapter_index,
-            "reason": f"Chapter {chapter.chapter_index + 1} has only {chapter.quote_count} quotes (minimum: {min_quotes})",
+            "reason": f"Chapter {chapter.chapter_index + 1} has only {chapter.valid_quotes} quotes (minimum: {min_quotes})",
         })
 
     return merges

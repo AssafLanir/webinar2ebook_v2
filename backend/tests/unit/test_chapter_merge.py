@@ -6,7 +6,7 @@ from dataclasses import dataclass
 class ChapterMetrics:
     """Simplified metrics for testing."""
     chapter_index: int
-    quote_count: int
+    valid_quotes: int
 
 
 class TestSuggestChapterMerges:
@@ -15,9 +15,9 @@ class TestSuggestChapterMerges:
         from src.services.draft_service import suggest_chapter_merges
 
         chapters = [
-            ChapterMetrics(0, quote_count=3),
-            ChapterMetrics(1, quote_count=4),
-            ChapterMetrics(2, quote_count=3),
+            ChapterMetrics(0, valid_quotes=3),
+            ChapterMetrics(1, valid_quotes=4),
+            ChapterMetrics(2, valid_quotes=3),
         ]
 
         merges = suggest_chapter_merges(chapters, min_quotes=2)
@@ -29,9 +29,9 @@ class TestSuggestChapterMerges:
         from src.services.draft_service import suggest_chapter_merges
 
         chapters = [
-            ChapterMetrics(0, quote_count=3),
-            ChapterMetrics(1, quote_count=0),  # Below minimum
-            ChapterMetrics(2, quote_count=4),
+            ChapterMetrics(0, valid_quotes=3),
+            ChapterMetrics(1, valid_quotes=0),  # Below minimum
+            ChapterMetrics(2, valid_quotes=4),
         ]
 
         merges = suggest_chapter_merges(chapters, min_quotes=2)
@@ -46,9 +46,9 @@ class TestSuggestChapterMerges:
         from src.services.draft_service import suggest_chapter_merges
 
         chapters = [
-            ChapterMetrics(0, quote_count=2),  # Weaker
-            ChapterMetrics(1, quote_count=1),  # Below minimum
-            ChapterMetrics(2, quote_count=5),  # Stronger
+            ChapterMetrics(0, valid_quotes=2),  # Weaker
+            ChapterMetrics(1, valid_quotes=1),  # Below minimum
+            ChapterMetrics(2, valid_quotes=5),  # Stronger
         ]
 
         merges = suggest_chapter_merges(chapters, min_quotes=2)
@@ -62,9 +62,9 @@ class TestSuggestChapterMerges:
         from src.services.draft_service import suggest_chapter_merges
 
         chapters = [
-            ChapterMetrics(0, quote_count=0),  # Below minimum, first
-            ChapterMetrics(1, quote_count=3),
-            ChapterMetrics(2, quote_count=4),
+            ChapterMetrics(0, valid_quotes=0),  # Below minimum, first
+            ChapterMetrics(1, valid_quotes=3),
+            ChapterMetrics(2, valid_quotes=4),
         ]
 
         merges = suggest_chapter_merges(chapters, min_quotes=2)
@@ -78,9 +78,9 @@ class TestSuggestChapterMerges:
         from src.services.draft_service import suggest_chapter_merges
 
         chapters = [
-            ChapterMetrics(0, quote_count=3),
-            ChapterMetrics(1, quote_count=4),
-            ChapterMetrics(2, quote_count=0),  # Below minimum, last
+            ChapterMetrics(0, valid_quotes=3),
+            ChapterMetrics(1, valid_quotes=4),
+            ChapterMetrics(2, valid_quotes=0),  # Below minimum, last
         ]
 
         merges = suggest_chapter_merges(chapters, min_quotes=2)
@@ -94,10 +94,10 @@ class TestSuggestChapterMerges:
         from src.services.draft_service import suggest_chapter_merges
 
         chapters = [
-            ChapterMetrics(0, quote_count=0),  # Below
-            ChapterMetrics(1, quote_count=4),  # Strong
-            ChapterMetrics(2, quote_count=1),  # Below
-            ChapterMetrics(3, quote_count=5),  # Strong
+            ChapterMetrics(0, valid_quotes=0),  # Below
+            ChapterMetrics(1, valid_quotes=4),  # Strong
+            ChapterMetrics(2, valid_quotes=1),  # Below
+            ChapterMetrics(3, valid_quotes=5),  # Strong
         ]
 
         merges = suggest_chapter_merges(chapters, min_quotes=2)
@@ -111,10 +111,10 @@ class TestSuggestChapterMerges:
         from src.services.draft_service import suggest_chapter_merges
 
         chapters = [
-            ChapterMetrics(0, quote_count=5),
-            ChapterMetrics(1, quote_count=0),  # Weak
-            ChapterMetrics(2, quote_count=0),  # Weak
-            ChapterMetrics(3, quote_count=5),
+            ChapterMetrics(0, valid_quotes=5),
+            ChapterMetrics(1, valid_quotes=0),  # Weak
+            ChapterMetrics(2, valid_quotes=0),  # Weak
+            ChapterMetrics(3, valid_quotes=5),
         ]
 
         merges = suggest_chapter_merges(chapters, min_quotes=2)
@@ -127,7 +127,7 @@ class TestSuggestChapterMerges:
         from src.services.draft_service import suggest_chapter_merges
 
         chapters = [
-            ChapterMetrics(0, quote_count=0),
+            ChapterMetrics(0, valid_quotes=0),
         ]
 
         merges = suggest_chapter_merges(chapters, min_quotes=2)

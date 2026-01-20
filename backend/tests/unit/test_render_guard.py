@@ -17,7 +17,7 @@ Some prose here.
 - **Claim**: "Quote"
 '''
 
-        result = strip_empty_section_headers(doc)
+        result, _ = strip_empty_section_headers(doc)
 
         assert "### Key Excerpts" not in result
         assert "### Core Claims" in result
@@ -41,7 +41,7 @@ Some prose here.
 ## Chapter 2
 '''
 
-        result = strip_empty_section_headers(doc)
+        result, _ = strip_empty_section_headers(doc)
 
         assert "### Core Claims" not in result
         assert "### Key Excerpts" in result
@@ -67,7 +67,7 @@ Some prose here.
 ## Chapter 2
 '''
 
-        result = strip_empty_section_headers(doc)
+        result, _ = strip_empty_section_headers(doc)
 
         assert "### Key Excerpts" in result
         assert "### Core Claims" in result
@@ -95,7 +95,7 @@ Some prose here.
 
 '''
 
-        result = strip_empty_section_headers(doc)
+        result, _ = strip_empty_section_headers(doc)
 
         # Chapter 1 Key Excerpts and Core Claims should be removed
         # Chapter 2 Key Excerpts should be preserved, Core Claims removed
@@ -119,7 +119,7 @@ Some prose here.
 ## Chapter 2
 '''
 
-        result = strip_empty_section_headers(doc)
+        result, _ = strip_empty_section_headers(doc)
 
         assert "### Core Claims" in result
         assert "*No fully grounded claims" in result
@@ -136,6 +136,6 @@ Some prose here.
 ### Core Claims
 '''
 
-        result = strip_empty_section_headers(doc)
+        result, _ = strip_empty_section_headers(doc)
 
         assert "### Key Excerpts" not in result

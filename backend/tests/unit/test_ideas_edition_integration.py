@@ -48,9 +48,11 @@ He said "this is important" to explain the concept.
         assert '"this is important"' not in cleaned
 
         # Step 2: Strip empty sections
-        final = strip_empty_section_headers(cleaned)
+        final, stripped_report = strip_empty_section_headers(cleaned)
         assert "### Key Excerpts" not in final
         assert "### Core Claims" not in final
+        # Verify stripped sections were reported
+        assert len(stripped_report) == 2  # Both Key Excerpts and Core Claims
 
     def test_coverage_report_before_generation(self):
         """Coverage report can be generated from whitelist."""
