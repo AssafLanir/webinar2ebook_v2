@@ -177,6 +177,51 @@ class Theme(BaseModel):
     )
 
 
+class ChapterCoverageReport(BaseModel):
+    """Coverage report for a single chapter.
+
+    Used for pre-generation feasibility analysis.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    chapter_index: int = Field(ge=0)
+    valid_quotes: int = Field(ge=0, description="Number of whitelist-validated quotes")
+    invalid_quotes: int = Field(ge=0, description="Number of quotes that failed validation")
+    invalid_quote_reasons: list[str] = Field(
+        default_factory=list, description="Reasons quotes were invalid"
+    )
+    valid_claims: int = Field(ge=0, description="Number of evidence-backed claims")
+    invalid_claims: int = Field(ge=0, description="Number of claims without evidence")
+    invalid_claim_reasons: list[str] = Field(
+        default_factory=list, description="Reasons claims were invalid"
+    )
+    predicted_word_range: tuple[int, int] = Field(
+        description="(min, max) predicted word count for this chapter"
+    )
+
+
+class CoverageReport(BaseModel):
+    """Pre-generation coverage analysis.
+
+    Computed before generation to predict feasibility and word count.
+    Deterministic for same transcript hash.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    transcript_hash: str = Field(description="Hash of canonical transcript")
+    total_whitelist_quotes: int = Field(ge=0, description="Total validated quotes")
+    chapters: list[ChapterCoverageReport] = Field(description="Per-chapter coverage")
+    predicted_total_range: tuple[int, int] = Field(
+        description="(min, max) total predicted word count"
+    )
+    is_feasible: bool = Field(description="Whether generation is likely to succeed")
+    feasibility_notes: list[str] = Field(
+        default_factory=list, description="Warnings or reasons for infeasibility"
+    )
+
+
 def get_recommended_edition(webinar_type: str) -> Edition:
     """Get recommended edition based on webinar type.
 
