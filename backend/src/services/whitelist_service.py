@@ -206,6 +206,121 @@ def format_speaker_attribution(speaker: SpeakerRef) -> str:
     return f"{speaker.speaker_name} ({role_label})"
 
 
+def build_speaker_registry(whitelist: list[WhitelistQuote]) -> dict[str, str]:
+    """Build a canonical speaker registry from whitelist.
+
+    Creates a mapping from partial names to full canonical attributions.
+    For example: {"David": "David Deutsch (GUEST)", "Deutsch": "David Deutsch (GUEST)"}
+
+    This enables normalization of LLM-generated attributions that might use
+    partial names like "David" instead of "David Deutsch".
+
+    Args:
+        whitelist: List of WhitelistQuote objects with speaker info.
+
+    Returns:
+        Dict mapping partial names to full canonical attributions.
+    """
+    registry: dict[str, str] = {}
+
+    for quote in whitelist:
+        speaker = quote.speaker
+        full_attribution = format_speaker_attribution(speaker)
+        full_name = speaker.speaker_name
+
+        # Add full name mapping
+        registry[full_name] = full_attribution
+
+        # Add partial name mappings (first name, last name)
+        name_parts = full_name.split()
+        if len(name_parts) > 1:
+            # First name only
+            registry[name_parts[0]] = full_attribution
+            # Last name only
+            registry[name_parts[-1]] = full_attribution
+            # First + Last (no middle) if applicable
+            if len(name_parts) > 2:
+                registry[f"{name_parts[0]} {name_parts[-1]}"] = full_attribution
+
+    return registry
+
+
+def normalize_speaker_names(text: str, registry: dict[str, str]) -> tuple[str, dict]:
+    """Normalize speaker attributions in markdown to canonical form.
+
+    Finds blockquote attributions like "> — David" and normalizes them
+    to the canonical form like "> — David Deutsch (GUEST)".
+
+    Args:
+        text: Markdown text with speaker attributions.
+        registry: Speaker registry from build_speaker_registry().
+
+    Returns:
+        Tuple of (normalized_text, report) where report contains:
+        - normalized_count: Number of attributions normalized
+        - normalizations: List of {original, canonical} pairs
+    """
+    if not registry:
+        return text, {"normalized_count": 0, "normalizations": []}
+
+    # Pattern for blockquote attributions: > — Speaker Name (optional role)
+    # Match variations: "— Name", "- Name", "— Name (ROLE)"
+    attribution_pattern = re.compile(
+        r'^(>\s*[—\-]\s*)([A-Z][a-zA-Z\s\.]+?)(\s*\((?:GUEST|HOST|CALLER|UNCLEAR)\))?\s*$',
+        re.MULTILINE
+    )
+
+    normalizations = []
+
+    def normalize_match(match):
+        prefix = match.group(1)  # "> — " or "> - "
+        name = match.group(2).strip()  # "David" or "David Deutsch"
+        existing_role = match.group(3)  # "(GUEST)" or None
+
+        # If already has a role annotation, check if it's canonical
+        if existing_role:
+            current = f"{name}{existing_role}"
+            # Check if this matches a known canonical form
+            for partial, canonical in registry.items():
+                if canonical == current:
+                    # Already canonical, no change
+                    return match.group(0)
+            # Has role but might need name normalization
+            if name in registry:
+                canonical = registry[name]
+                if f"{name}{existing_role}" != canonical:
+                    normalizations.append({
+                        "original": f"{name}{existing_role}",
+                        "canonical": canonical,
+                    })
+                    return f"{prefix}{canonical}"
+            return match.group(0)
+
+        # No role - lookup in registry
+        if name in registry:
+            canonical = registry[name]
+            normalizations.append({
+                "original": name,
+                "canonical": canonical,
+            })
+            return f"{prefix}{canonical}"
+
+        # Not in registry - leave as-is
+        return match.group(0)
+
+    result = attribution_pattern.sub(normalize_match, text)
+
+    if normalizations:
+        logger.info(
+            f"Normalized {len(normalizations)} speaker attributions to canonical form"
+        )
+
+    return result, {
+        "normalized_count": len(normalizations),
+        "normalizations": normalizations,
+    }
+
+
 def canonicalize_transcript(text: str) -> str:
     """Normalize transcript for matching.
 
@@ -408,6 +523,156 @@ def remove_inline_quotes(
         "removed_count": len(removed_quotes),
         "removed_quotes": removed_quotes,
     }
+
+    return '\n'.join(result_lines), report
+
+
+# Minimum substring length to consider a "leak" (words)
+MIN_LEAK_WORDS = 8
+
+
+def detect_verbatim_leaks(
+    text: str,
+    whitelist: list,
+    min_leak_words: int = MIN_LEAK_WORDS,
+) -> tuple[str, dict]:
+    """Detect and remove verbatim whitelist quote leaks from prose.
+
+    Even when quotes don't have quotation marks, if they match a whitelist
+    quote substring exactly, they should be removed from prose. This catches
+    cases where the LLM embeds transcript-exact text without quoting it.
+
+    Replacement strategy: Remove the verbatim text and replace with a
+    reference note that points to the Key Excerpts section.
+
+    Args:
+        text: The draft markdown text.
+        whitelist: List of WhitelistQuote objects.
+        min_leak_words: Minimum words for a substring to be considered a leak.
+
+    Returns:
+        Tuple of (cleaned_text, report) where report contains:
+        - leaks_found: Number of verbatim leaks detected
+        - leaks_removed: List of removed leak details
+    """
+    if not whitelist:
+        return text, {"leaks_found": 0, "leaks_removed": []}
+
+    # Build detection set: canonical quote substrings
+    # Use quote_canonical (lowercased) for matching
+    detection_set = []
+    for quote in whitelist:
+        canonical = quote.quote_canonical.strip()
+        # Only include quotes with enough words
+        if len(canonical.split()) >= min_leak_words:
+            detection_set.append({
+                "canonical": canonical,
+                "original": quote.quote_text,
+                "quote_id": quote.quote_id,
+            })
+
+    if not detection_set:
+        return text, {"leaks_found": 0, "leaks_removed": []}
+
+    # Sort by length (longest first) to match longest substrings first
+    detection_set.sort(key=lambda x: -len(x["canonical"]))
+
+    lines = text.split('\n')
+    result_lines = []
+    leaks_removed = []
+
+    in_key_excerpts = False
+    in_core_claims = False
+    current_chapter = 0
+
+    for line_num, line in enumerate(lines, 1):
+        stripped = line.strip()
+
+        # Track sections and chapters
+        if stripped.startswith('## Chapter'):
+            match = re.match(r'## Chapter (\d+)', stripped)
+            if match:
+                current_chapter = int(match.group(1))
+            in_key_excerpts = False
+            in_core_claims = False
+        elif stripped == '### Key Excerpts':
+            in_key_excerpts = True
+            in_core_claims = False
+        elif stripped == '### Core Claims':
+            in_key_excerpts = False
+            in_core_claims = True
+        elif stripped.startswith('### ') or stripped.startswith('## '):
+            in_key_excerpts = False
+            in_core_claims = False
+
+        # Skip sections where quotes are allowed
+        if in_key_excerpts or in_core_claims:
+            result_lines.append(line)
+            continue
+
+        # Skip blockquote lines
+        if stripped.startswith('>'):
+            result_lines.append(line)
+            continue
+
+        # Skip empty lines
+        if not stripped:
+            result_lines.append(line)
+            continue
+
+        # Check for verbatim leaks in this line
+        modified_line = line
+        line_lower = line.lower()
+
+        for detection in detection_set:
+            canonical = detection["canonical"]
+
+            # Check if this canonical quote appears in the line
+            if canonical in line_lower:
+                # Find the actual position (case-insensitive)
+                start_idx = line_lower.find(canonical)
+                if start_idx >= 0:
+                    # Extract the actual text (preserving original case)
+                    end_idx = start_idx + len(canonical)
+                    actual_text = line[start_idx:end_idx]
+
+                    # Replace with a note
+                    # Using a subtle replacement that maintains readability
+                    replacement = "[as discussed in the excerpts above]"
+
+                    modified_line = (
+                        modified_line[:start_idx] +
+                        replacement +
+                        modified_line[end_idx:]
+                    )
+
+                    # Update line_lower for subsequent matches
+                    line_lower = modified_line.lower()
+
+                    leaks_removed.append({
+                        "text": actual_text,
+                        "canonical": canonical,
+                        "line_num": line_num,
+                        "chapter": current_chapter,
+                        "quote_id": detection["quote_id"],
+                    })
+
+                    logger.info(
+                        f"Verbatim leak removed from Ch{current_chapter} line {line_num}: "
+                        f"'{actual_text[:50]}...'"
+                    )
+
+        result_lines.append(modified_line)
+
+    report = {
+        "leaks_found": len(leaks_removed),
+        "leaks_removed": leaks_removed,
+    }
+
+    if leaks_removed:
+        logger.warning(
+            f"Removed {len(leaks_removed)} verbatim whitelist leaks from prose"
+        )
 
     return '\n'.join(result_lines), report
 
@@ -994,16 +1259,28 @@ def enforce_core_claims_text(
             i += 1
 
     # Reconstruct section
+    derived_count = 0
     if kept_bullets:
         new_section = '\n'.join(kept_bullets)
     else:
-        # INVARIANT: Core Claims must never be empty without explanation
-        # Add placeholder when all claims were dropped
-        new_section = '*No fully grounded claims available for this chapter.*'
-        logger.warning(
-            f"Chapter {chapter_index + 1}: All Core Claims dropped, adding placeholder "
-            f"({len(dropped)} claims failed validation)"
-        )
+        # FALLBACK: Try to derive claims from Key Excerpts
+        # This preserves value when LLM claims were invalid but excerpts exist
+        derived_claims = derive_claims_from_excerpts(text)
+        if derived_claims:
+            new_section = '\n'.join(derived_claims)
+            derived_count = len(derived_claims)
+            logger.info(
+                f"Chapter {chapter_index + 1}: Derived {derived_count} claims from Key Excerpts "
+                f"(original {len(dropped)} claims failed validation)"
+            )
+        else:
+            # INVARIANT: Core Claims must never be empty without explanation
+            # Add placeholder when all claims were dropped and no excerpts available
+            new_section = '*No fully grounded claims available for this chapter.*'
+            logger.warning(
+                f"Chapter {chapter_index + 1}: All Core Claims dropped, adding placeholder "
+                f"({len(dropped)} claims failed validation)"
+            )
 
     # Reconstruct full text
     result = text[:section_start] + new_section + '\n' + text[section_end:]
@@ -1015,7 +1292,106 @@ def enforce_core_claims_text(
         "section_found": True,
         "dropped": dropped,
         "kept": len(kept_bullets),
+        "derived_from_excerpts": derived_count,
     }
+
+
+def derive_claims_from_excerpts(chapter_text: str) -> list[str]:
+    """Derive simple claims from Key Excerpts when Core Claims is empty.
+
+    When all Core Claims fail validation but Key Excerpts exist, this function
+    generates simple claims based on the excerpts to avoid empty Core Claims.
+
+    Strategy: Extract the main assertion from each excerpt and format as a claim.
+    Uses the first complete sentence or clause as the claim text.
+
+    Args:
+        chapter_text: Chapter markdown text containing Key Excerpts section.
+
+    Returns:
+        List of formatted claim bullets (e.g., "- **Claim**: \"quote\"")
+    """
+    # Find Key Excerpts section
+    excerpts_match = re.search(r'### Key Excerpts\s*\n', chapter_text)
+    if not excerpts_match:
+        return []
+
+    # Find end of Key Excerpts (next ### or ## or end)
+    section_start = excerpts_match.end()
+    next_section = re.search(r'\n###?\s', chapter_text[section_start:])
+    section_end = section_start + next_section.start() if next_section else len(chapter_text)
+
+    excerpts_text = chapter_text[section_start:section_end]
+
+    # Parse blockquotes: > "quote text" \n > — Speaker
+    blockquote_pattern = re.compile(
+        r'>\s*["\u201c]([^"\u201d]+)["\u201d]\s*\n>\s*[—\-]\s*(.+)',
+        re.MULTILINE
+    )
+
+    derived_claims = []
+
+    for match in blockquote_pattern.finditer(excerpts_text):
+        quote_text = match.group(1).strip()
+        speaker = match.group(2).strip()
+
+        # Skip if quote is too short to derive a claim
+        if len(quote_text.split()) < 8:
+            continue
+
+        # Extract a claim from the quote
+        # Strategy: Use first sentence or clause as the claim topic
+        claim_text = _extract_claim_topic(quote_text)
+        if claim_text:
+            derived_claims.append(
+                f'- **{claim_text}**: "{quote_text}"'
+            )
+
+    return derived_claims
+
+
+def _extract_claim_topic(quote_text: str) -> str:
+    """Extract a concise claim/topic from a quote.
+
+    Strategies (in order):
+    1. Find first sentence ending with period
+    2. Find first clause before comma
+    3. Take first N words
+
+    Args:
+        quote_text: The full quote text.
+
+    Returns:
+        A concise topic string suitable for a claim header.
+    """
+    # Try to find first sentence
+    sentence_match = re.match(r'^([^.!?]+[.!?])', quote_text)
+    if sentence_match:
+        sentence = sentence_match.group(1).strip()
+        # If sentence is reasonable length, use it
+        if 5 <= len(sentence.split()) <= 15:
+            # Remove trailing punctuation for claim format
+            return sentence.rstrip('.!?')
+
+    # Try first clause (before comma)
+    clause_match = re.match(r'^([^,]+),', quote_text)
+    if clause_match:
+        clause = clause_match.group(1).strip()
+        if 3 <= len(clause.split()) <= 12:
+            return clause
+
+    # Fallback: first 6-8 words
+    words = quote_text.split()
+    if len(words) >= 6:
+        topic = ' '.join(words[:7])
+        # Try to end at a natural break
+        for punct in [',', ';', ':']:
+            if punct in topic:
+                topic = topic.split(punct)[0].strip()
+                break
+        return topic + "..."
+
+    return None
 
 
 def strip_llm_blockquotes(generated_text: str) -> str:

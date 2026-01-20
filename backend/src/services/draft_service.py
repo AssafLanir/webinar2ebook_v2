@@ -56,8 +56,11 @@ from .whitelist_service import (
     fix_quote_artifacts,
     strip_prose_quote_chars,
     detect_verbatim_leakage,
+    detect_verbatim_leaks,
     remove_inline_quotes,
     generate_coverage_report,
+    build_speaker_registry,
+    normalize_speaker_names,
 )
 from .prompts import (
     DRAFT_PLAN_SYSTEM_PROMPT,
@@ -3745,20 +3748,22 @@ async def _generate_draft_task(
                 except Exception as e:
                     logger.warning(f"Job {job_id}: Core Claims enforcement failed (non-fatal): {e}")
 
-                # Step 3: Detect verbatim leakage (unquoted whitelist text in prose)
-                # Log warnings but don't modify text - leakage detection is informational
+                # Step 3: Detect and REMOVE verbatim leakage (unquoted whitelist text in prose)
+                # Transcript-exact text in prose without quotation marks = leak
                 try:
-                    _, leakage_report = detect_verbatim_leakage(final_markdown, whitelist, min_words=6)
-                    leakage_count = leakage_report.get("total_leakages", 0)
-                    if leakage_count > 0:
+                    final_markdown, leak_report = detect_verbatim_leaks(
+                        final_markdown, whitelist, min_leak_words=6
+                    )
+                    leak_count = leak_report.get("leaks_found", 0)
+                    if leak_count > 0:
                         logger.warning(
-                            f"Job {job_id}: Verbatim leakage detected - {leakage_count} unquoted whitelist fragments in prose"
+                            f"Job {job_id}: Verbatim leakage removed - {leak_count} unquoted whitelist fragments from prose"
                         )
-                        for leak in leakage_report.get("leakages", [])[:3]:
-                            constraint_warnings.append(f"Verbatim leakage: \"{leak['fragment'][:40]}...\"")
+                        for leak in leak_report.get("leaks_removed", [])[:3]:
+                            constraint_warnings.append(f"Verbatim leak removed: \"{leak['text'][:40]}...\"")
                         await update_job(job_id, constraint_warnings=constraint_warnings)
                 except Exception as e:
-                    logger.warning(f"Job {job_id}: Verbatim leakage detection failed (non-fatal): {e}")
+                    logger.warning(f"Job {job_id}: Verbatim leakage removal failed (non-fatal): {e}")
 
                 # Step 4: Remove inline quotes from prose (Ideas Edition)
                 # Quotes are only allowed in Key Excerpts and Core Claims
@@ -3773,6 +3778,26 @@ async def _generate_draft_task(
                         await update_job(job_id, constraint_warnings=constraint_warnings)
                 except Exception as e:
                     logger.warning(f"Job {job_id}: Inline quote removal failed (non-fatal): {e}")
+
+                # Step 5: Normalize speaker attributions to canonical form
+                # Ensures "David" becomes "David Deutsch (GUEST)", etc.
+                try:
+                    speaker_registry = build_speaker_registry(whitelist)
+                    final_markdown, speaker_report = normalize_speaker_names(
+                        final_markdown, speaker_registry
+                    )
+                    norm_count = speaker_report.get("normalized_count", 0)
+                    if norm_count > 0:
+                        logger.info(
+                            f"Job {job_id}: Normalized {norm_count} speaker attributions to canonical form"
+                        )
+                        for norm in speaker_report.get("normalizations", [])[:3]:
+                            constraint_warnings.append(
+                                f"Speaker normalized: '{norm['original']}' → '{norm['canonical']}'"
+                            )
+                        await update_job(job_id, constraint_warnings=constraint_warnings)
+                except Exception as e:
+                    logger.warning(f"Job {job_id}: Speaker name normalization failed (non-fatal): {e}")
 
             except Exception as e:
                 logger.error(f"Job {job_id}: Whitelist enforcement failed (non-fatal): {e}", exc_info=True)

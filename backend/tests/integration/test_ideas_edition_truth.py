@@ -47,6 +47,10 @@ from src.services.whitelist_service import (
     select_deterministic_excerpts,
     format_excerpts_markdown,
     enforce_core_claims_text,
+    detect_verbatim_leaks,
+    derive_claims_from_excerpts,
+    build_speaker_registry,
+    normalize_speaker_names,
 )
 
 
@@ -803,3 +807,148 @@ class TestDeterminismStress:
 
         # All should be identical
         assert len(set(reports)) == 1, "Report varied across runs"
+
+
+class TestRegressionFixes:
+    """Regression tests for the draft quality fixes.
+
+    These tests verify the fixes for:
+    1. Verbatim leak removal - whitelist quotes in prose without quotation marks
+    2. Core Claims excerpt fallback - derive claims from excerpts when originals fail
+    3. Speaker name normalization - partial names to canonical form
+    """
+
+    def test_verbatim_leak_removal(self):
+        """REGRESSION: Verbatim whitelist text in prose is removed.
+
+        Scenario: LLM embeds transcript-exact text in prose without quoting it.
+        Fix: detect_verbatim_leaks scans for whitelist substrings and removes them.
+        """
+        # Build whitelist with a specific quote
+        whitelist = [
+            WhitelistQuote(
+                quote_id=sha256(b"leak_test").hexdigest()[:16],
+                quote_text="The truth of the matter is that wisdom like scientific knowledge is also limitless",
+                quote_canonical="the truth of the matter is that wisdom like scientific knowledge is also limitless",
+                speaker=SpeakerRef(
+                    speaker_id="david_deutsch",
+                    speaker_name="David Deutsch",
+                    speaker_role=SpeakerRole.GUEST,
+                ),
+                source_evidence_ids=[],
+                chapter_indices=[0],
+                match_spans=[],
+            )
+        ]
+
+        # Prose contains the exact quote text WITHOUT quotation marks (leak)
+        text = '''## Chapter 1
+
+David Deutsch explains that the truth of the matter is that wisdom like scientific knowledge is also limitless. This profound insight suggests that human potential has no bounds.
+
+### Key Excerpts
+
+> "Different quote here"
+> — David Deutsch (GUEST)
+'''
+
+        result, report = detect_verbatim_leaks(text, whitelist, min_leak_words=6)
+
+        # The leak should have been detected and removed
+        assert report["leaks_found"] == 1
+        # The verbatim text should no longer appear in prose
+        assert "truth of the matter is that wisdom" not in result
+        # A replacement should be present
+        assert "[as discussed in the excerpts above]" in result
+
+    def test_core_claims_excerpt_fallback(self):
+        """REGRESSION: When Core Claims fail, derive from Key Excerpts.
+
+        Scenario: LLM generates Core Claims with short/invalid supports like "Yes."
+        Fix: If all claims fail, derive new claims from available Key Excerpts.
+        """
+        whitelist = [
+            WhitelistQuote(
+                quote_id=sha256(b"fallback_test").hexdigest()[:16],
+                quote_text="Wisdom like scientific knowledge is also limitless and continues to grow",
+                quote_canonical="wisdom like scientific knowledge is also limitless and continues to grow",
+                speaker=SpeakerRef(
+                    speaker_id="david_deutsch",
+                    speaker_name="David Deutsch",
+                    speaker_role=SpeakerRole.GUEST,
+                ),
+                source_evidence_ids=[],
+                chapter_indices=[0],
+                match_spans=[],
+            )
+        ]
+
+        # Chapter with invalid short claim but valid Key Excerpts
+        text = '''## Chapter 1
+
+### Key Excerpts
+
+> "Wisdom like scientific knowledge is also limitless and continues to grow."
+> — David Deutsch (GUEST)
+
+### Core Claims
+
+- **Humans can influence the universe**: "Yes."
+'''
+
+        result, report = enforce_core_claims_text(text, whitelist, chapter_index=0)
+
+        # Original claim should be dropped (too short)
+        assert len(report["dropped"]) == 1
+        assert report["dropped"][0]["reason"].startswith("too_short")
+        # Should have derived claim from excerpts
+        assert report["derived_from_excerpts"] >= 1
+        # Result should NOT have placeholder
+        assert "*No fully grounded claims" not in result
+        # Result should have derived claim with the excerpt
+        assert "wisdom" in result.lower()
+
+    def test_speaker_name_normalization(self):
+        """REGRESSION: Partial speaker names are normalized to canonical form.
+
+        Scenario: LLM uses partial names like "David" instead of "David Deutsch".
+        Fix: build_speaker_registry + normalize_speaker_names ensure full names.
+        """
+        whitelist = [
+            WhitelistQuote(
+                quote_id=sha256(b"speaker_test").hexdigest()[:16],
+                quote_text="Some quote here",
+                quote_canonical="some quote here",
+                speaker=SpeakerRef(
+                    speaker_id="david_deutsch",
+                    speaker_name="David Deutsch",
+                    speaker_role=SpeakerRole.GUEST,
+                ),
+                source_evidence_ids=[],
+                chapter_indices=[0],
+                match_spans=[],
+            )
+        ]
+
+        # Build speaker registry
+        registry = build_speaker_registry(whitelist)
+
+        # Text with partial speaker name
+        text = '''### Key Excerpts
+
+> "The truth is limitless."
+> — David
+
+> "Science drives progress."
+> — Deutsch
+'''
+
+        result, report = normalize_speaker_names(text, registry)
+
+        # Both partial names should be normalized
+        assert report["normalized_count"] == 2
+        # Full attribution should appear for both
+        assert result.count("David Deutsch (GUEST)") == 2
+        # Partial names should no longer appear as attributions
+        assert "— David\n" not in result
+        assert "— Deutsch\n" not in result

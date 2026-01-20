@@ -1181,6 +1181,104 @@ class TestFormatSpeakerAttribution:
         assert result == "Archival Clip (CLIP)"
 
 
+class TestSpeakerNormalization:
+    """Tests for speaker name normalization functions."""
+
+    def test_build_speaker_registry(self):
+        """Test registry includes full and partial name mappings."""
+        from src.services.whitelist_service import build_speaker_registry
+
+        whitelist = [
+            _make_guest_quote("Some quote", speaker_name="David Deutsch"),
+        ]
+
+        registry = build_speaker_registry(whitelist)
+
+        # Full name should map
+        assert registry["David Deutsch"] == "David Deutsch (GUEST)"
+        # First name should map
+        assert registry["David"] == "David Deutsch (GUEST)"
+        # Last name should map
+        assert registry["Deutsch"] == "David Deutsch (GUEST)"
+
+    def test_normalize_partial_name(self):
+        """Test that partial names are normalized to full canonical form."""
+        from src.services.whitelist_service import build_speaker_registry, normalize_speaker_names
+
+        whitelist = [
+            _make_guest_quote("Some quote", speaker_name="David Deutsch"),
+        ]
+        registry = build_speaker_registry(whitelist)
+
+        text = '''> "A great quote"
+> — David
+'''
+
+        result, report = normalize_speaker_names(text, registry)
+
+        assert report["normalized_count"] == 1
+        assert "David Deutsch (GUEST)" in result
+        assert "— David\n" not in result
+
+    def test_preserves_already_canonical(self):
+        """Test that already canonical attributions are unchanged."""
+        from src.services.whitelist_service import build_speaker_registry, normalize_speaker_names
+
+        whitelist = [
+            _make_guest_quote("Some quote", speaker_name="David Deutsch"),
+        ]
+        registry = build_speaker_registry(whitelist)
+
+        text = '''> "A great quote"
+> — David Deutsch (GUEST)
+'''
+
+        result, report = normalize_speaker_names(text, registry)
+
+        assert report["normalized_count"] == 0
+        assert "David Deutsch (GUEST)" in result
+
+    def test_handles_multiple_speakers(self):
+        """Test normalization with multiple different speakers."""
+        from src.services.whitelist_service import build_speaker_registry, normalize_speaker_names
+        from src.models.edition import SpeakerRole
+
+        whitelist = [
+            _make_guest_quote("Quote 1", speaker_name="David Deutsch"),
+            _make_guest_quote("Quote 2", speaker_name="Lex Fridman"),
+        ]
+        # Make Lex a HOST
+        whitelist[1].speaker.speaker_role = SpeakerRole.HOST
+
+        registry = build_speaker_registry(whitelist)
+
+        text = '''> "Quote one"
+> — David
+
+> "Quote two"
+> — Lex
+'''
+
+        result, report = normalize_speaker_names(text, registry)
+
+        assert report["normalized_count"] == 2
+        assert "David Deutsch (GUEST)" in result
+        assert "Lex Fridman (HOST)" in result
+
+    def test_empty_registry_returns_unchanged(self):
+        """Test that empty registry returns text unchanged."""
+        from src.services.whitelist_service import normalize_speaker_names
+
+        text = '''> "A quote"
+> — Unknown Speaker
+'''
+
+        result, report = normalize_speaker_names(text, {})
+
+        assert result == text
+        assert report["normalized_count"] == 0
+
+
 class TestFormatExcerptsMarkdown:
     def test_formats_single_excerpt(self):
         """Test single excerpt is formatted correctly with typed attribution."""
@@ -1505,6 +1603,124 @@ The text mentions a short quote here.
         assert report["leakage_count"] == 0
 
 
+class TestDetectVerbatimLeaks:
+    """Tests for detect_verbatim_leaks function (removes leaks, not just detects)."""
+
+    def test_removes_leak_from_prose(self):
+        """Test that verbatim whitelist text in prose is removed."""
+        from src.services.whitelist_service import detect_verbatim_leaks
+
+        whitelist = [
+            _make_guest_quote(
+                "The truth of the matter is that wisdom like scientific knowledge is also limitless",
+                speaker_name="David Deutsch",
+            )
+        ]
+
+        # Prose contains the quote text without quotation marks
+        text = '''## Chapter 1
+
+David Deutsch argues that the truth of the matter is that wisdom like scientific knowledge is also limitless. This is a profound insight.
+
+### Key Excerpts
+
+> "Different quote here"
+> — Someone
+'''
+
+        result, report = detect_verbatim_leaks(text, whitelist, min_leak_words=6)
+
+        # Should have removed the leak
+        assert report["leaks_found"] == 1
+        # The text should no longer contain the verbatim quote in prose
+        assert "truth of the matter is that wisdom" not in result
+        # Should have replacement text
+        assert "[as discussed in the excerpts above]" in result
+        # The leak detail should be recorded
+        assert len(report["leaks_removed"]) == 1
+        assert "truth of the matter" in report["leaks_removed"][0]["text"]
+
+    def test_preserves_key_excerpts_section(self):
+        """Test that Key Excerpts section content is not touched."""
+        from src.services.whitelist_service import detect_verbatim_leaks
+
+        whitelist = [
+            _make_guest_quote(
+                "This is a valid excerpt that appears in Key Excerpts",
+                speaker_name="Speaker",
+            )
+        ]
+
+        text = '''## Chapter 1
+
+Narrative text here.
+
+### Key Excerpts
+
+> "This is a valid excerpt that appears in Key Excerpts"
+> — Speaker
+
+### Core Claims
+'''
+
+        result, report = detect_verbatim_leaks(text, whitelist, min_leak_words=6)
+
+        # Should not remove anything - quote is in proper section
+        assert report["leaks_found"] == 0
+        # Key Excerpts content should be preserved
+        assert "This is a valid excerpt" in result
+
+    def test_preserves_core_claims_section(self):
+        """Test that Core Claims section content is not touched."""
+        from src.services.whitelist_service import detect_verbatim_leaks
+
+        whitelist = [
+            _make_guest_quote(
+                "This quote appears in core claims section only",
+                speaker_name="Speaker",
+            )
+        ]
+
+        text = '''## Chapter 1
+
+Narrative text here.
+
+### Key Excerpts
+
+### Core Claims
+
+- **A claim**: "This quote appears in core claims section only"
+'''
+
+        result, report = detect_verbatim_leaks(text, whitelist, min_leak_words=6)
+
+        # Should not remove - quote is in Core Claims
+        assert report["leaks_found"] == 0
+        assert "This quote appears in core claims" in result
+
+    def test_respects_min_words_threshold(self):
+        """Test that short matches below threshold are not removed."""
+        from src.services.whitelist_service import detect_verbatim_leaks
+
+        whitelist = [
+            _make_guest_quote("short phrase here", speaker_name="Speaker")
+        ]
+
+        text = '''## Chapter 1
+
+The text mentions a short phrase here inline.
+
+### Key Excerpts
+'''
+
+        result, report = detect_verbatim_leaks(text, whitelist, min_leak_words=6)
+
+        # "short phrase here" is only 3 words, below 6-word threshold
+        assert report["leaks_found"] == 0
+        # Original text should be unchanged
+        assert "short phrase here" in result
+
+
 class TestEnforceCoreClaimsText:
     """Tests for enforce_core_claims_text function."""
 
@@ -1657,6 +1873,143 @@ Narrative here.
         # All claims dropped, placeholder should appear
         assert report["kept"] == 0
         assert len(report["dropped"]) == 2
+        assert "*No fully grounded claims available for this chapter.*" in result
+
+
+class TestDeriveClaimsFromExcerpts:
+    """Tests for derive_claims_from_excerpts function."""
+
+    def test_derives_claims_from_key_excerpts(self):
+        """Test basic claim derivation from Key Excerpts."""
+        from src.services.whitelist_service import derive_claims_from_excerpts
+
+        chapter = '''## Chapter 1
+
+### Key Excerpts
+
+> "The truth of the matter is that wisdom like scientific knowledge is also limitless."
+> — David Deutsch (GUEST)
+
+### Core Claims
+'''
+
+        claims = derive_claims_from_excerpts(chapter)
+
+        assert len(claims) == 1
+        assert '- **' in claims[0]  # Has claim format
+        assert 'wisdom' in claims[0].lower()  # Contains topic
+        assert 'truth of the matter' in claims[0]  # Contains quote
+
+    def test_skips_short_excerpts(self):
+        """Test that short excerpts (<8 words) don't generate claims."""
+        from src.services.whitelist_service import derive_claims_from_excerpts
+
+        chapter = '''## Chapter 1
+
+### Key Excerpts
+
+> "Short quote here."
+> — Speaker
+
+### Core Claims
+'''
+
+        claims = derive_claims_from_excerpts(chapter)
+        assert len(claims) == 0
+
+    def test_no_excerpts_returns_empty(self):
+        """Test that chapter without Key Excerpts returns empty list."""
+        from src.services.whitelist_service import derive_claims_from_excerpts
+
+        chapter = '''## Chapter 1
+
+Some text here.
+
+### Core Claims
+'''
+
+        claims = derive_claims_from_excerpts(chapter)
+        assert claims == []
+
+    def test_derives_multiple_claims(self):
+        """Test derivation of multiple claims from multiple excerpts."""
+        from src.services.whitelist_service import derive_claims_from_excerpts
+
+        chapter = '''## Chapter 1
+
+### Key Excerpts
+
+> "After the Enlightenment, it was the exact opposite. We have learned to live with the fact that everything improves in every generation."
+> — David Deutsch (GUEST)
+
+> "Science is about finding laws of nature, which are testable regularities that govern the universe."
+> — David Deutsch (GUEST)
+
+### Core Claims
+'''
+
+        claims = derive_claims_from_excerpts(chapter)
+        assert len(claims) == 2
+
+
+class TestEnforceCoreClaimsExcerptFallback:
+    """Tests for Core Claims fallback to derived excerpts."""
+
+    def test_fallback_to_excerpts_when_all_claims_dropped(self):
+        """Test that claims are derived from excerpts when originals are invalid."""
+        from src.services.whitelist_service import enforce_core_claims_text
+
+        whitelist = [
+            _make_guest_quote(
+                "The truth of the matter is that wisdom like scientific knowledge is also limitless",
+                speaker_name="David Deutsch"
+            ),
+        ]
+
+        # Chapter with invalid claims but valid excerpts
+        text = '''## Chapter 1
+
+### Key Excerpts
+
+> "The truth of the matter is that wisdom like scientific knowledge is also limitless."
+> — David Deutsch (GUEST)
+
+### Core Claims
+
+- **Some claim**: "Yes."
+'''
+
+        result, report = enforce_core_claims_text(text, whitelist, chapter_index=0)
+
+        # Original claim dropped
+        assert len(report["dropped"]) == 1
+        assert report["kept"] == 0
+        # Derived from excerpts
+        assert report["derived_from_excerpts"] == 1
+        # Result has derived claim, not placeholder
+        assert "*No fully grounded claims" not in result
+        assert "wisdom" in result.lower()
+
+    def test_placeholder_when_no_excerpts_available(self):
+        """Test placeholder appears when no excerpts to derive from."""
+        from src.services.whitelist_service import enforce_core_claims_text
+
+        whitelist = [
+            _make_guest_quote("Something else", speaker_name="Speaker"),
+        ]
+
+        # Chapter with invalid claims and NO Key Excerpts
+        text = '''## Chapter 1
+
+### Core Claims
+
+- **Invalid claim**: "Not in whitelist"
+'''
+
+        result, report = enforce_core_claims_text(text, whitelist, chapter_index=0)
+
+        assert report["kept"] == 0
+        assert report["derived_from_excerpts"] == 0
         assert "*No fully grounded claims available for this chapter.*" in result
 
 
