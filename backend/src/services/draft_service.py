@@ -56,6 +56,8 @@ from .whitelist_service import (
     fix_quote_artifacts,
     strip_prose_quote_chars,
     detect_verbatim_leakage,
+    remove_inline_quotes,
+    generate_coverage_report,
 )
 from .prompts import (
     DRAFT_PLAN_SYSTEM_PROMPT,
@@ -3657,6 +3659,20 @@ async def _generate_draft_task(
                 except Exception as e:
                     logger.warning(f"Job {job_id}: Verbatim leakage detection failed (non-fatal): {e}")
 
+                # Step 4: Remove inline quotes from prose (Ideas Edition)
+                # Quotes are only allowed in Key Excerpts and Core Claims
+                try:
+                    final_markdown, inline_report = remove_inline_quotes(final_markdown)
+                    if inline_report["removed_count"] > 0:
+                        logger.info(
+                            f"Job {job_id}: Removed {inline_report['removed_count']} inline quotes from prose"
+                        )
+                        for removed in inline_report["removed_quotes"][:3]:
+                            constraint_warnings.append(f"Inline quote removed: \"{removed['text'][:40]}...\"")
+                        await update_job(job_id, constraint_warnings=constraint_warnings)
+                except Exception as e:
+                    logger.warning(f"Job {job_id}: Inline quote removal failed (non-fatal): {e}")
+
             except Exception as e:
                 logger.error(f"Job {job_id}: Whitelist enforcement failed (non-fatal): {e}", exc_info=True)
 
@@ -3821,6 +3837,15 @@ async def _generate_draft_task(
                     )
             except Exception as e:
                 logger.warning(f"Job {job_id}: Prose quote cleanup failed (non-fatal): {e}")
+
+        # Strip empty section headers (Ideas Edition render guard)
+        # This is the render guard - empty Key Excerpts/Core Claims sections are removed
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown = strip_empty_section_headers(final_markdown)
+                logger.debug(f"Job {job_id}: Applied render guard - stripped empty section headers")
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Render guard failed (non-fatal): {e}")
 
         # Quote artifact cleanup (final pass) - must run LAST after all other processing
         # Cleans up orphan quotes, stray punctuation, and mangled attributions
