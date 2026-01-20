@@ -26,8 +26,8 @@ export {
   FIDELITY_DESCRIPTIONS,
   COVERAGE_LABELS,
   COVERAGE_COLORS,
-  DEFAULT_EDITION,
   DEFAULT_FIDELITY,
+  getRecommendedEdition,
 } from './edition'
 
 // Legacy style config for backward compatibility with existing data
@@ -305,6 +305,7 @@ export type ProjectAction =
   | { type: 'SET_EDITION'; payload: Edition }
   | { type: 'SET_FIDELITY'; payload: Fidelity }
   | { type: 'SET_THEMES'; payload: Theme[] }
+  | { type: 'ADD_THEME'; payload: { title: string; one_liner: string } }
   | { type: 'UPDATE_THEME'; payload: { id: string; updates: Partial<Theme> } }
   | { type: 'REMOVE_THEME'; payload: string }
   | { type: 'REORDER_THEMES'; payload: string[] }

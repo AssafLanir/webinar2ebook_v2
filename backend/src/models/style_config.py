@@ -97,6 +97,7 @@ class BookFormat(str, Enum):
     handbook = "handbook"
     tutorial = "tutorial"
     guide = "guide"
+    essay = "essay"  # Long-form essay/article - no actionables, no takeaways
     ebook_marketing = "ebook_marketing"
     executive_brief = "executive_brief"
     course_notes = "course_notes"

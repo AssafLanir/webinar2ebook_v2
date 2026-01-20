@@ -13,6 +13,8 @@ import type {
 import type { VisualAsset } from '../types/visuals'
 import { INITIAL_STATE, DEFAULT_STYLE_CONFIG } from '../types/project'
 import { STYLE_PRESETS } from '../constants/stylePresets'
+import { getRecommendedEdition } from '../types/edition'
+import type { Theme } from '../types/edition'
 import { generateId } from '../utils/idGenerator'
 import {
   SAMPLE_TRANSCRIPT,
@@ -101,8 +103,8 @@ export function projectReducer(state: ProjectState, action: ProjectAction): Proj
         webinarType: action.payload.webinarType,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        // Edition defaults
-        edition: 'qa',
+        // Edition defaults based on webinar type
+        edition: getRecommendedEdition(action.payload.webinarType),
         fidelity: 'faithful',
         themes: [],
         canonical_transcript: null,
@@ -780,6 +782,26 @@ export function projectReducer(state: ProjectState, action: ProjectAction): Proj
           themes: action.payload,
         },
       }
+
+    case 'ADD_THEME': {
+      if (!state.project) return state
+      const newTheme: Theme = {
+        id: crypto.randomUUID(),
+        title: action.payload.title,
+        one_liner: action.payload.one_liner,
+        keywords: [],
+        coverage: 'unknown',
+        supporting_segments: [],
+        include_in_generation: true,
+      }
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          themes: [...state.project.themes, newTheme],
+        },
+      }
+    }
 
     case 'UPDATE_THEME': {
       if (!state.project) return state

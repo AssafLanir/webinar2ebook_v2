@@ -73,18 +73,38 @@ export function Tab3Content() {
 
   const currentPresetId = styleEnvelope.preset_id ?? 'default_webinar_ebook_v1'
 
+  // Filter presets by compatible editions
+  const compatiblePresets = useMemo(() =>
+    STYLE_PRESETS.filter(preset =>
+      preset.compatibleEditions.includes(project?.edition ?? 'ideas')
+    ),
+    [project?.edition]
+  )
+
   const presetOptions = useMemo(() =>
-    STYLE_PRESETS.map(preset => ({
+    compatiblePresets.map(preset => ({
       value: preset.id,
       label: preset.label,
     })),
-    []
+    [compatiblePresets]
   )
+
+  // Auto-switch to compatible preset if current preset is not compatible with edition
+  useEffect(() => {
+    if (!project) return
+    const isCurrentPresetCompatible = compatiblePresets.some(p => p.id === currentPresetId)
+    if (!isCurrentPresetCompatible && compatiblePresets.length > 0) {
+      // Switch to first compatible preset
+      dispatch({ type: 'SET_STYLE_PRESET', payload: compatiblePresets[0].id })
+    }
+  }, [project, currentPresetId, compatiblePresets, dispatch])
 
   // Validation
   const validation = useMemo(() => {
     const transcriptLength = project?.transcriptText?.length ?? 0
     const outlineCount = project?.outlineItems?.length ?? 0
+    const themesCount = project?.themes?.filter(t => t.include_in_generation)?.length ?? 0
+    const isIdeasEdition = project?.edition === 'ideas'
     const bookFormat = styleEnvelope.style.book_format
     const isInterviewQA = bookFormat === 'interview_qa'
 
@@ -92,18 +112,27 @@ export function Tab3Content() {
     if (transcriptLength < MIN_TRANSCRIPT_LENGTH) {
       errors.push(`Transcript must be at least ${MIN_TRANSCRIPT_LENGTH} characters (currently ${transcriptLength})`)
     }
-    // Interview Q&A format allows empty outline (generates single flowing Q&A document)
-    if (outlineCount < MIN_OUTLINE_ITEMS && !isInterviewQA) {
+
+    // For Ideas Edition: require themes instead of outline
+    // For Q&A Edition: Interview Q&A format allows empty outline
+    if (isIdeasEdition) {
+      if (themesCount < MIN_OUTLINE_ITEMS) {
+        errors.push(`Need at least ${MIN_OUTLINE_ITEMS} themes enabled (currently ${themesCount})`)
+      }
+    } else if (outlineCount < MIN_OUTLINE_ITEMS && !isInterviewQA) {
       errors.push(`Outline must have at least ${MIN_OUTLINE_ITEMS} items (currently ${outlineCount})`)
     }
+
+    // Use themes count for Ideas Edition, outline count for Q&A
+    const chapterCount = isIdeasEdition ? themesCount : outlineCount
 
     return {
       isValid: errors.length === 0,
       errors,
       transcriptLength,
-      outlineCount,
+      outlineCount: chapterCount,
     }
-  }, [project?.transcriptText, project?.outlineItems, styleEnvelope.style.book_format])
+  }, [project?.transcriptText, project?.outlineItems, project?.themes, project?.edition, styleEnvelope.style.book_format])
 
   // Compute words per chapter hint
   const lengthHint = useMemo(() => {
@@ -201,16 +230,32 @@ export function Tab3Content() {
     if (!validation.isValid || !project) return
     setShowRegenerationWarning(false)
 
+    const isIdeasEdition = project.edition === 'ideas'
+
+    // For Ideas Edition: convert themes to outline format
+    // For Q&A Edition: use outline items directly
+    const outline = isIdeasEdition
+      ? project.themes
+          .filter(t => t.include_in_generation)
+          .map((theme, index) => ({
+            id: theme.id,
+            title: theme.title,
+            level: 1, // Themes are top-level chapters
+            notes: theme.one_liner,
+            order: index,
+          }))
+      : project.outlineItems.map(item => ({
+          id: item.id,
+          title: item.title,
+          level: item.level,
+          notes: item.notes,
+          order: item.order,
+        }))
+
     // Build request payload
     const request: DraftGenerateRequest = {
       transcript: project.transcriptText,
-      outline: project.outlineItems.map(item => ({
-        id: item.id,
-        title: item.title,
-        level: item.level,
-        notes: item.notes,
-        order: item.order,
-      })),
+      outline,
       resources: project.resources.map(r => ({
         id: r.id,
         label: r.label,
@@ -397,6 +442,23 @@ export function Tab3Content() {
               <div className="flex justify-center">
                 <Button variant="primary" onClick={handleViewResults}>
                   View Generated Draft
+                </Button>
+              </div>
+            )}
+
+            {/* Restart button when cancelled or failed */}
+            {(generationState.phase === 'cancelled' || generationState.phase === 'failed') && (
+              <div className="flex justify-center">
+                <Button variant="primary" onClick={handleRetry}>
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M13 10V3L4 14h7v7l9-11h-7z"
+                    />
+                  </svg>
+                  Generate Draft
                 </Button>
               </div>
             )}

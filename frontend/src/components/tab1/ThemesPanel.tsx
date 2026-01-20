@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Theme } from '../../types/edition'
 import { ThemeRow } from './ThemeRow'
 import { Button } from '../common/Button'
@@ -5,6 +6,7 @@ import { Button } from '../common/Button'
 interface ThemesPanelProps {
   themes: Theme[]
   onProposeThemes: () => void
+  onAddTheme: (title: string, oneLiner: string) => void
   onAddSuggestions?: () => void
   onUpdateTheme: (id: string, updates: Partial<Theme>) => void
   onRemoveTheme: (id: string) => void
@@ -15,15 +17,56 @@ interface ThemesPanelProps {
 export function ThemesPanel({
   themes,
   onProposeThemes,
+  onAddTheme,
   onAddSuggestions,
   onUpdateTheme,
   onRemoveTheme,
-  onReorderThemes: _onReorderThemes,
+  onReorderThemes,
   isProposing = false,
 }: ThemesPanelProps) {
-  // onReorderThemes is passed but not yet used - will be implemented for drag-and-drop
-  void _onReorderThemes
   const hasThemes = themes.length > 0
+
+  const handleMoveUp = (index: number) => {
+    if (index <= 0) return
+    const newOrder = [...themes]
+    const temp = newOrder[index - 1]
+    newOrder[index - 1] = newOrder[index]
+    newOrder[index] = temp
+    onReorderThemes(newOrder.map(t => t.id))
+  }
+
+  const handleMoveDown = (index: number) => {
+    if (index >= themes.length - 1) return
+    const newOrder = [...themes]
+    const temp = newOrder[index + 1]
+    newOrder[index + 1] = newOrder[index]
+    newOrder[index] = temp
+    onReorderThemes(newOrder.map(t => t.id))
+  }
+
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [newTitle, setNewTitle] = useState('')
+  const [newOneLiner, setNewOneLiner] = useState('')
+
+  const handleAddTheme = () => {
+    const trimmedTitle = newTitle.trim()
+    if (trimmedTitle) {
+      onAddTheme(trimmedTitle, newOneLiner.trim())
+      setNewTitle('')
+      setNewOneLiner('')
+      setShowAddForm(false)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && newTitle.trim()) {
+      handleAddTheme()
+    } else if (e.key === 'Escape') {
+      setShowAddForm(false)
+      setNewTitle('')
+      setNewOneLiner('')
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -32,6 +75,14 @@ export function ThemesPanel({
           Themes (chapter structure)
         </h3>
         <div className="flex gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowAddForm(true)}
+            disabled={isProposing || showAddForm}
+          >
+            + Add Theme
+          </Button>
           {hasThemes && onAddSuggestions && (
             <Button
               variant="secondary"
@@ -53,10 +104,54 @@ export function ThemesPanel({
         </div>
       </div>
 
-      {!hasThemes && !isProposing && (
+      {/* Add theme form */}
+      {showAddForm && (
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-2">
+          <input
+            type="text"
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Theme title (e.g., 'The Power of Habits')"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            autoFocus
+          />
+          <input
+            type="text"
+            value={newOneLiner}
+            onChange={(e) => setNewOneLiner(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Brief description (optional)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setShowAddForm(false)
+                setNewTitle('')
+                setNewOneLiner('')
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleAddTheme}
+              disabled={!newTitle.trim()}
+            >
+              Add
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {!hasThemes && !isProposing && !showAddForm && (
         <div className="text-center py-8 text-gray-500 border-2 border-dashed rounded-lg">
           <p>No themes yet.</p>
-          <p className="text-sm">Click "Propose Themes" to analyze your transcript.</p>
+          <p className="text-sm">Click "Propose Themes" to analyze your transcript, or "Add Theme" to create manually.</p>
         </div>
       )}
 
@@ -69,12 +164,16 @@ export function ThemesPanel({
 
       {hasThemes && (
         <div className="space-y-2">
-          {themes.map((theme) => (
+          {themes.map((theme, index) => (
             <ThemeRow
               key={theme.id}
               theme={theme}
               onUpdate={(updates) => onUpdateTheme(theme.id, updates)}
               onRemove={() => onRemoveTheme(theme.id)}
+              onMoveUp={() => handleMoveUp(index)}
+              onMoveDown={() => handleMoveDown(index)}
+              isFirst={index === 0}
+              isLast={index === themes.length - 1}
             />
           ))}
         </div>

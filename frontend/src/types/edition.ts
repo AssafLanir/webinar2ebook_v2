@@ -6,6 +6,8 @@
  * - Ideas Edition: Thematic chapters with synthesized prose
  */
 
+import type { WebinarType } from './project'
+
 /** Output edition type */
 export type Edition = 'qa' | 'ideas'
 
@@ -87,8 +89,27 @@ export const COVERAGE_COLORS: Record<Coverage, string> = {
   weak: 'text-red-600 bg-red-100',
 }
 
-/** Default edition for new projects */
-export const DEFAULT_EDITION: Edition = 'qa'
-
 /** Default fidelity for Q&A Edition */
 export const DEFAULT_FIDELITY: Fidelity = 'faithful'
+
+/**
+ * Get recommended edition based on webinar type.
+ *
+ * - Presentations and tutorials → Ideas Edition (thematic chapters)
+ * - Interviews → Q&A Edition (speaker-labeled dialogue)
+ */
+export function getRecommendedEdition(webinarType: WebinarType): Edition {
+  switch (webinarType) {
+    case 'interview':
+      return 'qa'
+    case 'standard_presentation':
+    case 'training_tutorial':
+    default:
+      return 'ideas'
+  }
+}
+
+export const EDITION_RECOMMENDATION_REASONS: Record<Edition, string> = {
+  qa: 'Best for interview-style content with multiple speakers',
+  ideas: 'Best for presentations and tutorials organized by topics',
+}

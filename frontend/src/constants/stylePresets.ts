@@ -1,17 +1,68 @@
 import type { StyleConfigEnvelope } from "../types/style";
+import type { Edition } from "../types/edition";
 
 export type StylePreset = {
   id: string;
   label: string;
   description: string;
+  /** Which editions this preset is compatible with */
+  compatibleEditions: Edition[];
   value: StyleConfigEnvelope;
 };
 
 export const STYLE_PRESETS: StylePreset[] = [
   {
+    id: "scholarly_essay_v1",
+    label: "Essay / Article",
+    description: "Long-form essay with flowing prose. No bullet takeaways, no action steps. Ideal for interviews and thought leadership.",
+    compatibleEditions: ["ideas"],
+    value: {
+      version: 1,
+      preset_id: "scholarly_essay_v1",
+      style: {
+        target_audience: "mixed",
+        reader_role: "general",
+        primary_goal: "thought_leadership",
+        reader_takeaway_style: "principles",
+        tone: "authoritative",
+        formality: "medium",
+        brand_voice: "neutral",
+        perspective: "third_person",
+        reading_level: "standard",
+        book_format: "essay",
+        content_mode: "essay",
+        chapter_count_target: 5,
+        chapter_length_target: "long",
+        total_length_preset: "standard",
+        detail_level: "balanced",
+        include_summary_per_chapter: false,
+        include_key_takeaways: false,
+        include_action_steps: false,
+        include_checklists: false,
+        include_templates: false,
+        include_examples: true,
+        faithfulness_level: "strict",
+        allowed_extrapolation: "none",
+        source_policy: "transcript_only",
+        citation_style: "none",
+        avoid_hallucinations: true,
+        visual_density: "light",
+        preferred_visual_types: ["diagram", "chart"],
+        visual_source_policy: "client_assets_only",
+        caption_style: "explanatory",
+        diagram_style: "simple",
+        resolve_repetitions: "reduce",
+        handle_q_and_a: "weave_into_chapters",
+        include_speaker_quotes: "sparingly",
+        output_format: "markdown"
+      }
+    }
+  },
+  {
     id: "default_webinar_ebook_v1",
     label: "Default webinar ebook",
     description: "Balanced, readable, action-oriented. Light visuals suggested (client assets).",
+    compatibleEditions: ["ideas", "qa"],
     value: {
       version: 1,
       preset_id: "default_webinar_ebook_v1",
@@ -55,6 +106,7 @@ export const STYLE_PRESETS: StylePreset[] = [
     id: "saas_marketing_ebook_v1",
     label: "SaaS marketing ebook",
     description: "Persuasive narrative with checklists/templates and mid visual density.",
+    compatibleEditions: ["ideas", "qa"],
     value: {
       version: 1,
       preset_id: "saas_marketing_ebook_v1",
@@ -90,6 +142,7 @@ export const STYLE_PRESETS: StylePreset[] = [
     id: "training_tutorial_handbook_v1",
     label: "Training / tutorial handbook",
     description: "Step-by-step learning. Heavy on screenshots/diagrams. Very strict about transcript.",
+    compatibleEditions: ["ideas", "qa"],
     value: {
       version: 1,
       preset_id: "training_tutorial_handbook_v1",
@@ -125,6 +178,7 @@ export const STYLE_PRESETS: StylePreset[] = [
     id: "executive_brief_v1",
     label: "Executive brief",
     description: "Short, punchy, high signal. Minimal fluff. Optional light citations.",
+    compatibleEditions: ["ideas", "qa"],
     value: {
       version: 1,
       preset_id: "executive_brief_v1",
@@ -163,6 +217,7 @@ export const STYLE_PRESETS: StylePreset[] = [
     id: "course_notes_v1",
     label: "Course notes",
     description: "Structured learning notes: summaries + takeaways + practice steps.",
+    compatibleEditions: ["ideas", "qa"],
     value: {
       version: 1,
       preset_id: "course_notes_v1",
@@ -200,6 +255,7 @@ export const STYLE_PRESETS: StylePreset[] = [
     id: "interview_qa_v1",
     label: "Interview Q&A",
     description: "Preserves interview structure with questions as headers. No artificial takeaways.",
+    compatibleEditions: ["qa"],
     value: {
       version: 1,
       preset_id: "interview_qa_v1",

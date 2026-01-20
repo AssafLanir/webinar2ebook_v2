@@ -30,6 +30,7 @@ export type BookFormat =
   | "handbook"
   | "tutorial"
   | "guide"
+  | "essay"
   | "ebook_marketing"
   | "executive_brief"
   | "course_notes"

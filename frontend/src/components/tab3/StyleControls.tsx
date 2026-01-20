@@ -31,6 +31,7 @@ const targetAudienceOptions = [
 ]
 
 const bookFormatOptions = [
+  { value: 'essay', label: 'Essay/Article' },
   { value: 'guide', label: 'Guide' },
   { value: 'tutorial', label: 'Tutorial' },
   { value: 'ebook_marketing', label: 'Marketing eBook' },
