@@ -1832,8 +1832,10 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
     # Captures: (optional leading comma)(subject + verb)(punctuation)(first word of payload)
     # We'll rewrite: "He says, This" → "He says that this"
     # BUT skip parenthetical: ", Deutsch points out, are" should NOT become "points out that are"
+    # AND skip "as X notes": "as Deutsch notes, is" should NOT become "as Deutsch notes that is"
     rewrite_pattern = re.compile(
         r'(,\s*)?'  # Group 1: Optional leading comma (indicates parenthetical)
+        r'(?<!as )'  # Negative lookbehind: skip "as X notes" interpolations
         r'\b((?:Deutsch|David Deutsch|He|She|They|The\s+guest|The\s+host)\s+'
         r'(?:notes?|observes?|argues?|says?|said|states?|stated|explains?|explained|'
         r'suggests?|suggested|points?(?:\s+out)?|warns?|warned|cautions?|cautioned|'
@@ -1849,8 +1851,10 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
 
     # Participial pattern: "noting, This..." → "noting that this..."
     # Also captures optional leading comma for parenthetical detection
+    # Also skips "as X notes" interpolations via negative lookbehind
     participial_pattern = re.compile(
         r'(,\s*)?'  # Group 1: Optional leading comma (indicates parenthetical)
+        r'(?<!as )'  # Negative lookbehind: skip "as X notes" interpolations
         r'\b((?:noting|observing|arguing|saying|stating|explaining|'
         r'suggesting|pointing\s+out|warning|cautioning|asserting|claiming|'
         r'emphasizing|stressing|adding|remarking|capturing))'
@@ -1870,6 +1874,18 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         r'(?:\s+[^:]{1,40})?)'  # Optional short phrase (max 40 chars)
         r'(:\s*)'               # Colon + space
         r'([A-Z])',             # Capital letter starting the "quote"
+        re.IGNORECASE
+    )
+
+    # Orphan wrapper pattern: "noting. This..." or "observing. The..."
+    # Catches participial verbs followed by period + sentence start
+    # These are orphaned wrappers where the quote was removed but the verb survived
+    orphan_wrapper_pattern = re.compile(
+        r'\b(noting|observing|arguing|saying|stating|explaining|'
+        r'suggesting|pointing\s+out|warning|cautioning|asserting|claiming|'
+        r'emphasizing|stressing|adding|remarking|capturing)'
+        r'(\.\s+)'              # Period + whitespace
+        r'([A-Z])',             # Capital letter starting next sentence
         re.IGNORECASE
     )
 
@@ -1965,6 +1981,30 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         # Keep just the first letter (start of actual content)
         return first_letter
 
+    def remove_orphan_wrapper(match):
+        """Remove orphan wrappers, preserving sentence flow.
+
+        'The shift occurred, noting. This led to...' → 'The shift occurred. This led to...'
+
+        Orphan wrappers are participial verbs that were supposed to introduce
+        a quote, but the quote was removed. We remove the orphan verb and
+        keep the sentence boundary.
+        """
+        nonlocal rewrite_count
+        verb = match.group(1)
+        period_space = match.group(2)
+        first_letter = match.group(3)
+
+        rewrite_count += 1
+        rewrite_details.append({
+            "original": match.group(0),
+            "replacement": f"[orphan '{verb}' removed]. {first_letter}",
+        })
+
+        # Replace orphan verb with just the sentence boundary
+        # period_space already contains the period, so just use it directly
+        return f"{period_space}{first_letter}"
+
     # Split into paragraphs to track sections
     paragraphs = text.split('\n\n')
     result_paragraphs = []
@@ -2012,6 +2052,7 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         modified = rewrite_pattern.sub(rewrite_to_indirect, modified)
         modified = participial_pattern.sub(rewrite_to_indirect, modified)
         modified = colon_wrapper_pattern.sub(remove_colon_wrapper, modified)
+        modified = orphan_wrapper_pattern.sub(remove_orphan_wrapper, modified)
 
         # Fix any "that This/That/These..." capitalization issues
         modified = fix_that_capitalization(modified)

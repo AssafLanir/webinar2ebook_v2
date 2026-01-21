@@ -2541,6 +2541,74 @@ Our surroundings, Deutsch notes, are hostile.
         assert "Deutsch notes, are" in result
         assert "notes that are" not in result
 
+    def test_skips_as_x_notes_interpolation(self):
+        """REGRESSION: 'as Deutsch notes' interpolations must NOT get 'that'.
+
+        Input: 'Science, as Deutsch notes, is about finding laws of nature.'
+        This is a valid "as X notes" interpolation where the speaker attribution
+        is inserted mid-sentence. Adding 'that' would break grammar.
+        """
+        text = """## Chapter 1
+
+Science, as Deutsch notes, is about finding laws of nature.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Must NOT add 'that' to "as X notes" pattern
+        assert "as Deutsch notes that" not in result
+        # Must preserve the original structure
+        assert "as Deutsch notes, is" in result
+
+    def test_skips_as_x_notes_without_comma(self):
+        """'as Deutsch notes' without comma should also be skipped."""
+        text = """## Chapter 1
+
+The insight, as He points out is crucial for understanding.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Must NOT add 'that' to "as X notes" pattern
+        assert "as He points out that" not in result
+
+    def test_removes_orphan_wrapper_noting(self):
+        """REGRESSION: Orphan wrappers like 'noting. This' should be cleaned up.
+
+        When LLM drops a quote but leaves the participial verb, we get broken
+        patterns like 'noting. This' or 'observing. The'. These orphan verbs
+        should be removed.
+        """
+        text = """## Chapter 1
+
+The Enlightenment changed things, noting. This shift led to progress.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Orphan 'noting' should be removed
+        assert "noting. This" not in result
+        # Sentence should flow properly
+        assert ". This shift" in result
+
+    def test_removes_orphan_wrapper_observing(self):
+        """Orphan 'observing' wrapper should be removed."""
+        text = """## Chapter 1
+
+Science evolved, observing. The method changed everything.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Orphan 'observing' should be removed
+        assert "observing. The" not in result
+        # Sentence should flow
+        assert ". The method" in result
+
 
 class TestFixTruncatedAttributions:
     """Tests for fix_truncated_attributions - joins split attribution lines."""
