@@ -130,6 +130,44 @@ class TestResolveSpeaker:
         ref = resolve_speaker("unclear")
         assert ref.speaker_role == SpeakerRole.UNCLEAR
 
+    def test_canonicalizes_partial_first_name(self):
+        """Test that 'David' becomes 'David Deutsch' when known guest."""
+        ref = resolve_speaker("David", known_guests=["David Deutsch"])
+        assert ref.speaker_name == "David Deutsch"
+        assert ref.speaker_id == "david_deutsch"
+        assert ref.speaker_role == SpeakerRole.GUEST
+
+    def test_canonicalizes_partial_last_name(self):
+        """Test that 'Deutsch' becomes 'David Deutsch' when known guest."""
+        ref = resolve_speaker("Deutsch", known_guests=["David Deutsch"])
+        assert ref.speaker_name == "David Deutsch"
+        assert ref.speaker_id == "david_deutsch"
+        assert ref.speaker_role == SpeakerRole.GUEST
+
+    def test_canonicalizes_case_insensitive(self):
+        """Test that canonicalization is case insensitive."""
+        ref = resolve_speaker("david", known_guests=["David Deutsch"])
+        assert ref.speaker_name == "David Deutsch"
+
+    def test_canonicalizes_host_partial_name(self):
+        """Test that partial host names are canonicalized."""
+        ref = resolve_speaker("Naval", known_hosts=["Naval Ravikant"])
+        assert ref.speaker_name == "Naval Ravikant"
+        assert ref.speaker_role == SpeakerRole.HOST
+
+    def test_guest_takes_priority_over_host(self):
+        """Test that guest match takes priority if name matches both."""
+        # If "David" appears in both lists, guest should win
+        ref = resolve_speaker("David", known_guests=["David Deutsch"], known_hosts=["David Letterman"])
+        assert ref.speaker_name == "David Deutsch"
+        assert ref.speaker_role == SpeakerRole.GUEST
+
+    def test_no_canonicalization_when_no_match(self):
+        """Test that unmatched names are returned as-is."""
+        ref = resolve_speaker("John Smith", known_guests=["David Deutsch"])
+        assert ref.speaker_name == "John Smith"
+        assert ref.speaker_role == SpeakerRole.GUEST  # Default
+
 
 class TestBuildQuoteWhitelist:
     @pytest.fixture
@@ -1237,6 +1275,29 @@ class TestSpeakerNormalization:
 
         assert report["normalized_count"] == 0
         assert "David Deutsch (GUEST)" in result
+
+    def test_normalize_partial_name_with_existing_role(self):
+        """Test that 'David (GUEST)' becomes 'David Deutsch (GUEST)'.
+
+        This case occurs when the LLM generates a partial name but includes
+        the correct role annotation. The name should still be canonicalized.
+        """
+        from src.services.whitelist_service import build_speaker_registry, normalize_speaker_names
+
+        whitelist = [
+            _make_guest_quote("Some quote", speaker_name="David Deutsch"),
+        ]
+        registry = build_speaker_registry(whitelist)
+
+        text = '''> "A great quote"
+> — David (GUEST)
+'''
+
+        result, report = normalize_speaker_names(text, registry)
+
+        assert report["normalized_count"] == 1
+        assert "David Deutsch (GUEST)" in result
+        assert "— David (GUEST)" not in result
 
     def test_handles_multiple_speakers(self):
         """Test normalization with multiple different speakers."""

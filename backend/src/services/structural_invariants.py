@@ -6,6 +6,7 @@ occur in final output:
 2. No empty Core Claims without placeholder
 3. No inline quotes in narrative prose
 """
+import hashlib
 import re
 from typing import TypedDict
 
@@ -654,8 +655,13 @@ def validate_structural_invariants(
         and len(token_corruption) == 0
     )
 
+    # Compute SHA256 hash for file identity verification
+    # First 16 hex chars is enough for practical uniqueness
+    content_hash = hashlib.sha256(markdown.encode("utf-8")).hexdigest()[:16]
+
     return {
         "valid": all_valid,
+        "content_hash": content_hash,  # For verifying file identity across tools
         "empty_sections": empty_sections,
         "inline_quotes": inline_quotes,
         "placeholder_glue": placeholder_glue,

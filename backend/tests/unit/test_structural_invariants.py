@@ -554,3 +554,53 @@ David Deutsch captures this shift, noting, For generations, societies barely cha
         violations = find_token_corruption(doc)
         assert len(violations) >= 1
         assert any(v["pattern"] == "orphan_participial" for v in violations)
+
+
+class TestValidateStructuralInvariants:
+    """Tests for the validate_structural_invariants function."""
+
+    def test_includes_content_hash(self):
+        """Validate that result includes a SHA256 content hash for file identity verification."""
+        from src.services.structural_invariants import validate_structural_invariants
+
+        doc = '''## Chapter 1
+
+Some prose content.
+
+### Key Excerpts
+
+> "A valid quote here."
+> — David Deutsch (GUEST)
+
+### Core Claims
+
+- **Claim**: "Supporting quote."
+'''
+        result = validate_structural_invariants(doc)
+
+        # Should include content_hash
+        assert "content_hash" in result
+        # Hash should be 16 hex chars
+        assert len(result["content_hash"]) == 16
+        assert all(c in "0123456789abcdef" for c in result["content_hash"])
+
+    def test_content_hash_is_deterministic(self):
+        """Same content always produces same hash."""
+        from src.services.structural_invariants import validate_structural_invariants
+
+        doc = "## Chapter 1\n\nSome content."
+        result1 = validate_structural_invariants(doc)
+        result2 = validate_structural_invariants(doc)
+
+        assert result1["content_hash"] == result2["content_hash"]
+
+    def test_content_hash_changes_with_content(self):
+        """Different content produces different hash."""
+        from src.services.structural_invariants import validate_structural_invariants
+
+        doc1 = "## Chapter 1\n\nSome content."
+        doc2 = "## Chapter 1\n\nDifferent content."
+        result1 = validate_structural_invariants(doc1)
+        result2 = validate_structural_invariants(doc2)
+
+        assert result1["content_hash"] != result2["content_hash"]

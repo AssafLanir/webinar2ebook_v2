@@ -146,12 +146,52 @@ def find_all_occurrences(text: str, substring: str) -> list[tuple[int, int]]:
     return spans
 
 
+def _canonicalize_speaker_name(
+    speaker_name: str,
+    known_names: list[str],
+) -> str | None:
+    """Try to canonicalize a partial name to a full known name.
+
+    Matches if speaker_name is a case-insensitive partial match for any known name.
+    Examples:
+        - "David" matches "David Deutsch" -> returns "David Deutsch"
+        - "Deutsch" matches "David Deutsch" -> returns "David Deutsch"
+        - "David Deutsch" matches "David Deutsch" -> returns "David Deutsch"
+        - "Unknown" doesn't match "David Deutsch" -> returns None
+
+    Args:
+        speaker_name: Name to canonicalize (possibly partial).
+        known_names: List of full known names.
+
+    Returns:
+        Canonical full name if matched, None otherwise.
+    """
+    speaker_lower = speaker_name.lower().strip()
+
+    for full_name in known_names:
+        full_lower = full_name.lower()
+
+        # Exact match
+        if speaker_lower == full_lower:
+            return full_name
+
+        # Partial match: speaker_name is a word in full_name
+        full_parts = full_lower.split()
+        if speaker_lower in full_parts:
+            return full_name
+
+    return None
+
+
 def resolve_speaker(
     speaker_name: str,
     known_guests: list[str] | None = None,
     known_hosts: list[str] | None = None,
 ) -> SpeakerRef:
     """Resolve speaker name to typed SpeakerRef.
+
+    Canonicalizes partial names to full names when possible.
+    E.g., "David" becomes "David Deutsch" if "David Deutsch" is a known guest.
 
     Args:
         speaker_name: Name from transcript/evidence.
@@ -164,23 +204,37 @@ def resolve_speaker(
     known_guests = known_guests or []
     known_hosts = known_hosts or []
 
-    # Generate stable ID from name
-    speaker_id = speaker_name.lower().replace(" ", "_").replace(".", "")
+    # Check for unclear/unknown speakers first
+    if speaker_name.lower().strip() in ("unknown", "unclear", ""):
+        return SpeakerRef(
+            speaker_id="unclear",
+            speaker_name=speaker_name,
+            speaker_role=SpeakerRole.UNCLEAR,
+        )
 
-    # Determine role
-    if speaker_name.lower() in ("unknown", "unclear", ""):
-        role = SpeakerRole.UNCLEAR
-    elif speaker_name in known_guests:
+    # Try to canonicalize against known names (guests take priority)
+    canonical_guest = _canonicalize_speaker_name(speaker_name, known_guests)
+    canonical_host = _canonicalize_speaker_name(speaker_name, known_hosts)
+
+    if canonical_guest:
+        # Matched a known guest
+        canonical_name = canonical_guest
         role = SpeakerRole.GUEST
-    elif speaker_name in known_hosts:
+    elif canonical_host:
+        # Matched a known host
+        canonical_name = canonical_host
         role = SpeakerRole.HOST
     else:
-        # Default to GUEST if not explicitly known
+        # No match - use original name, default to GUEST
+        canonical_name = speaker_name
         role = SpeakerRole.GUEST
+
+    # Generate stable ID from canonical name
+    speaker_id = canonical_name.lower().replace(" ", "_").replace(".", "")
 
     return SpeakerRef(
         speaker_id=speaker_id,
-        speaker_name=speaker_name,
+        speaker_name=canonical_name,
         speaker_role=role,
     )
 
