@@ -1829,9 +1829,11 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         Tuple of (cleaned_text, report_dict).
     """
     # Pattern to match dangling attributions for rewriting
-    # Captures: (subject + verb)(punctuation)(first word of payload)
+    # Captures: (optional leading comma)(subject + verb)(punctuation)(first word of payload)
     # We'll rewrite: "He says, This" → "He says that this"
+    # BUT skip parenthetical: ", Deutsch points out, are" should NOT become "points out that are"
     rewrite_pattern = re.compile(
+        r'(,\s*)?'  # Group 1: Optional leading comma (indicates parenthetical)
         r'\b((?:Deutsch|David Deutsch|He|She|They|The\s+guest|The\s+host)\s+'
         r'(?:notes?|observes?|argues?|says?|said|states?|stated|explains?|explained|'
         r'suggests?|suggested|points?(?:\s+out)?|warns?|warned|cautions?|cautioned|'
@@ -1840,18 +1842,20 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         r'highlights?|highlighted|remarks?|remarked|adds?|added|'
         r'insists?|insisted|'
         r'captures?|captured|marks?|marked|underscores?|underscored))'
-        r'(\s*[,:]\s*)'  # Punctuation (comma or colon)
-        r'([A-Za-z])',   # First letter of payload
+        r'(\s*[,:]\s*)'  # Group 3: Punctuation (comma or colon)
+        r'([A-Za-z])',   # Group 4: First letter of payload
         re.IGNORECASE
     )
 
     # Participial pattern: "noting, This..." → "noting that this..."
+    # Also captures optional leading comma for parenthetical detection
     participial_pattern = re.compile(
+        r'(,\s*)?'  # Group 1: Optional leading comma (indicates parenthetical)
         r'\b((?:noting|observing|arguing|saying|stating|explaining|'
         r'suggesting|pointing\s+out|warning|cautioning|asserting|claiming|'
         r'emphasizing|stressing|adding|remarking|capturing))'
-        r'(\s*[,:]\s*)'
-        r'([A-Za-z])',
+        r'(\s*[,:]\s*)'  # Group 3: Punctuation
+        r'([A-Za-z])',   # Group 4: First letter
         re.IGNORECASE
     )
 
@@ -1881,11 +1885,23 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
     }
 
     def rewrite_to_indirect(match):
-        """Convert direct attribution to indirect speech."""
+        """Convert direct attribution to indirect speech.
+
+        IMPORTANT: Skip parenthetical attributions like ", Deutsch points out, are..."
+        These should NOT be rewritten - only introducer patterns should get "that".
+        """
         nonlocal rewrite_count
-        subject_verb = match.group(1)
-        punctuation = match.group(2)
-        first_letter = match.group(3)
+        leading_comma = match.group(1)  # Optional leading comma
+        subject_verb = match.group(2)
+        punctuation = match.group(3)
+        first_letter = match.group(4)
+
+        # SKIP parenthetical attributions: ", Deutsch points out, are..."
+        # If there's a leading comma AND the payload starts with lowercase,
+        # it's a parenthetical insert, not a clause introducer
+        if leading_comma and first_letter.islower():
+            # Return the original match unchanged
+            return match.group(0)
 
         # Handle "points" → "points out" (grammatically required)
         # "He points, This" → "He points out that this"
@@ -1895,7 +1911,9 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
 
         # Build the replacement: "says," → "says that"
         # Lowercase the first letter of payload
-        replacement = f"{subject_verb} that {first_letter.lower()}"
+        # Preserve leading comma if present
+        prefix = leading_comma if leading_comma else ""
+        replacement = f"{prefix}{subject_verb} that {first_letter.lower()}"
 
         rewrite_count += 1
         original = match.group(0)

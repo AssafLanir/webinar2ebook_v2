@@ -1384,6 +1384,36 @@ class TestSpeakerNormalization:
         assert "Naval Ravikant (HOST)" in result
         assert report["normalized_count"] == 1
 
+    def test_normalizes_david_guest_in_key_excerpts(self):
+        """REGRESSION: 'David (GUEST)' in Key Excerpts must become 'David Deutsch (GUEST)'.
+
+        This tests the exact scenario from Draft 28 line 77 where
+        the attribution showed 'David (GUEST)' instead of 'David Deutsch (GUEST)'.
+        """
+        from src.services.whitelist_service import normalize_speaker_names
+
+        # Registry that would be built from a David Deutsch whitelist
+        registry = {
+            "David Deutsch": "David Deutsch (GUEST)",
+            "Deutsch": "David Deutsch (GUEST)",
+        }
+
+        text = '''### Key Excerpts
+
+> "I guess for me, it's a question of whether human history, the story of human history, is simply a story of the development of knowledge or a moral struggle."
+> — David (GUEST)
+
+> "These examples that I've given are cases where morality has improved objectively."
+> — David Deutsch (GUEST)
+'''
+
+        result, report = normalize_speaker_names(text, registry)
+
+        # "David (GUEST)" must be normalized to "David Deutsch (GUEST)"
+        assert "— David (GUEST)" not in result
+        assert result.count("— David Deutsch (GUEST)") == 2
+        assert report["normalized_count"] == 1
+
 
 class TestFormatExcerptsMarkdown:
     def test_formats_single_excerpt(self):

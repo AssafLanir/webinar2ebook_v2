@@ -2503,6 +2503,44 @@ Deutsch argues that Earth is our home.
         # "Earth" should stay capitalized (it's a proper noun)
         assert "that Earth" in result
 
+    def test_preserves_parenthetical_attribution(self):
+        """REGRESSION: Parenthetical ', Deutsch points out,' must NOT be rewritten.
+
+        Input: 'Our surroundings, Deutsch points out, are not hospitable.'
+        This is a valid parenthetical structure and must remain grammatical.
+        Adding 'that' would produce broken grammar: 'points out that are'.
+        """
+        text = """## Chapter 1
+
+Our natural surroundings, Deutsch points out, are not particularly hospitable.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Must NOT contain the broken grammar "points out that are"
+        assert "points out that are" not in result
+        # Must preserve the valid parenthetical structure
+        assert "Deutsch points out, are" in result
+
+    def test_rewrites_introducer_but_not_parenthetical(self):
+        """Introducer patterns get 'that', parenthetical ones don't."""
+        text = """## Chapter 1
+
+Deutsch points out, This is important.
+
+Our surroundings, Deutsch notes, are hostile.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Introducer should be rewritten
+        assert "points out that this" in result
+        # Parenthetical should be preserved
+        assert "Deutsch notes, are" in result
+        assert "notes that are" not in result
+
 
 class TestFixTruncatedAttributions:
     """Tests for fix_truncated_attributions - joins split attribution lines."""
