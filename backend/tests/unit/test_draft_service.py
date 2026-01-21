@@ -2051,3 +2051,202 @@ class TestDropExcerptsWithInvalidQuotes:
         assert "The truth is clear" not in result
         assert report["dropped_count"] == 1
         assert report["dropped_excerpts"][0]["reason"] == "unknown_attribution"
+
+
+class TestVerbatimLeakGate:
+    """Tests for enforce_verbatim_leak_gate - drops paragraphs with whitelist quote text in prose."""
+
+    def test_drops_paragraph_with_full_quote_match(self):
+        """Paragraph containing full whitelist quote is dropped."""
+        whitelist = ["I entirely agree with Stephen Hawking that we should hedge our bets"]
+        text = """## Chapter 1
+
+The Enlightenment changed everything.
+
+Colonization becomes a pressing topic. I entirely agree with Stephen Hawking that we should hedge our bets by moving away from Earth.
+
+### Key Excerpts
+
+> "I entirely agree with Stephen Hawking that we should hedge our bets"
+> — David Deutsch (GUEST)"""
+
+        result, report = draft_service.enforce_verbatim_leak_gate(text, whitelist)
+
+        # Prose paragraph should be dropped
+        assert "Colonization becomes a pressing topic" not in result
+        # Key Excerpts should be preserved
+        assert "Key Excerpts" in result
+        assert report["paragraphs_dropped"] == 1
+
+    def test_drops_paragraph_with_substring_match(self):
+        """Paragraph containing significant substring of whitelist quote is dropped."""
+        whitelist = ["The truth of the matter is that wisdom, like scientific knowledge, is also limitless"]
+        text = """## Chapter 1
+
+The Enlightenment sparked change.
+
+Deutsch argues that wisdom, like scientific knowledge, is also limitless and ever-growing.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_verbatim_leak_gate(text, whitelist, min_match_len=25)
+
+        # Prose paragraph with substring should be dropped
+        assert "wisdom, like scientific knowledge" not in result
+        assert report["paragraphs_dropped"] == 1
+
+    def test_preserves_key_excerpts_with_whitelist_text(self):
+        """Key Excerpts section is allowed to contain whitelist quote text."""
+        whitelist = ["This is a valid quote from the transcript"]
+        text = """## Chapter 1
+
+Clean prose here.
+
+### Key Excerpts
+
+> "This is a valid quote from the transcript"
+> — Speaker (GUEST)
+
+### Core Claims"""
+
+        result, report = draft_service.enforce_verbatim_leak_gate(text, whitelist)
+
+        # Key Excerpts should be preserved
+        assert "This is a valid quote from the transcript" in result
+        assert report["paragraphs_dropped"] == 0
+
+    def test_preserves_core_claims_with_whitelist_text(self):
+        """Core Claims section is allowed to contain whitelist quote text."""
+        whitelist = ["Knowledge is infinite"]
+        text = """## Chapter 1
+
+### Core Claims
+
+- **Claim**: Knowledge grows forever. "Knowledge is infinite"
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_verbatim_leak_gate(text, whitelist)
+
+        # Core Claims should be preserved
+        assert "Knowledge is infinite" in result
+        assert report["paragraphs_dropped"] == 0
+
+    def test_preserves_clean_prose(self):
+        """Prose without whitelist text is preserved."""
+        whitelist = ["Specific quote text here"]
+        text = """## Chapter 1
+
+This is clean prose that doesn't contain any whitelist quotes.
+
+The ideas are paraphrased in original language.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_verbatim_leak_gate(text, whitelist)
+
+        # Clean prose should be preserved
+        assert "clean prose" in result
+        assert "paraphrased in original language" in result
+        assert report["paragraphs_dropped"] == 0
+
+
+class TestDanglingAttributionGate:
+    """Tests for enforce_dangling_attribution_gate - drops paragraphs with wrapper-without-payload."""
+
+    def test_drops_paragraph_with_noting_comma_capital(self):
+        """'Deutsch notes, For ages...' pattern is dropped."""
+        text = """## Chapter 1
+
+David Deutsch marks this period as crucial, noting, For ages, human progress crawled slowly.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        assert "noting, For ages" not in result
+        assert report["paragraphs_dropped"] == 1
+
+    def test_drops_paragraph_with_stating_comma_capital(self):
+        """'stating, This idea...' pattern is dropped."""
+        text = """## Chapter 1
+
+Deutsch underscores this by stating, This idea captures the essence of progress.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        assert "stating, This idea" not in result
+        assert report["paragraphs_dropped"] == 1
+
+    def test_drops_paragraph_with_observes_comma_capital(self):
+        """'Deutsch observes, Before...' pattern is dropped."""
+        text = """## Chapter 1
+
+Deutsch observes, Before the Enlightenment, there was practically nobody who questioned slavery.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        assert "observes, Before" not in result
+        assert report["paragraphs_dropped"] == 1
+
+    def test_drops_paragraph_with_colon_capital(self):
+        """'Deutsch:' followed by unquoted capital is dropped."""
+        text = """## Chapter 1
+
+Deutsch: The universe follows a single set of physical laws.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        assert "Deutsch: The universe" not in result
+        assert report["paragraphs_dropped"] == 1
+
+    def test_preserves_proper_attribution_with_that(self):
+        """'Deutsch argues that knowledge...' (lowercase continuation) is preserved."""
+        text = """## Chapter 1
+
+Deutsch argues that knowledge is infinite and ever-growing.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # This is valid - "that" followed by lowercase is proper attribution
+        assert "Deutsch argues that knowledge" in result
+        assert report["paragraphs_dropped"] == 0
+
+    def test_preserves_key_excerpts(self):
+        """Key Excerpts section is never dropped."""
+        text = """## Chapter 1
+
+### Key Excerpts
+
+> "noting, For ages this was true"
+> — Speaker (GUEST)"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Key Excerpts should be preserved even with the pattern inside
+        assert "Key Excerpts" in result
+        assert report["paragraphs_dropped"] == 0
+
+    def test_preserves_clean_prose(self):
+        """Clean prose without dangling patterns is preserved."""
+        text = """## Chapter 1
+
+The Enlightenment changed how we think about progress.
+
+Knowledge grew rapidly during this period.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        assert "Enlightenment changed" in result
+        assert "Knowledge grew" in result
+        assert report["paragraphs_dropped"] == 0

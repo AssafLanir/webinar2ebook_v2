@@ -1601,6 +1601,248 @@ def enforce_attributed_speech_hard(
     return result.strip(), report
 
 
+def enforce_verbatim_leak_gate(
+    text: str,
+    whitelist_quotes: list[str],
+    min_match_len: int = 20,
+) -> tuple[str, dict]:
+    """Drop paragraphs containing verbatim whitelist quote text in prose.
+
+    This is the "Verbatim Leak Gate" - a deterministic post-processing pass
+    that catches transcript quotes appearing unquoted in narrative prose.
+
+    Policy: Whitelist quote text should ONLY appear in:
+    - Key Excerpts (blockquotes)
+    - Core Claims (bullet points with supporting quotes)
+
+    If whitelist text appears anywhere else (narrative prose), the paragraph
+    is dropped entirely.
+
+    Args:
+        text: The draft markdown text.
+        whitelist_quotes: List of validated whitelist quote texts.
+        min_match_len: Minimum substring length to consider a match.
+
+    Returns:
+        Tuple of (cleaned_text, report_dict).
+    """
+    if not whitelist_quotes:
+        return text, {"paragraphs_dropped": 0, "dropped_details": []}
+
+    # Normalize quotes for comparison
+    def normalize(s: str) -> str:
+        s = s.replace('"', '"').replace('"', '"')
+        s = s.replace(''', "'").replace(''', "'")
+        return ' '.join(s.split()).lower()
+
+    normalized_quotes = [(normalize(q), q) for q in whitelist_quotes if len(q) >= min_match_len]
+
+    # Split into paragraphs
+    paragraphs = text.split('\n\n')
+    kept_paragraphs = []
+    dropped_details = []
+
+    in_key_excerpts = False
+    in_core_claims = False
+
+    for para in paragraphs:
+        stripped = para.strip()
+
+        # Track section boundaries
+        if '### Key Excerpts' in stripped:
+            in_key_excerpts = True
+            in_core_claims = False
+            kept_paragraphs.append(para)
+            continue
+        elif '### Core Claims' in stripped:
+            in_key_excerpts = False
+            in_core_claims = True
+            kept_paragraphs.append(para)
+            continue
+        elif stripped.startswith('## '):
+            in_key_excerpts = False
+            in_core_claims = False
+            kept_paragraphs.append(para)
+            continue
+        elif stripped.startswith('### '):
+            in_key_excerpts = False
+            in_core_claims = False
+            kept_paragraphs.append(para)
+            continue
+
+        # Allow Key Excerpts and Core Claims content
+        if in_key_excerpts or in_core_claims:
+            kept_paragraphs.append(para)
+            continue
+
+        # Skip blockquotes (they're Key Excerpts content)
+        if stripped.startswith('>'):
+            kept_paragraphs.append(para)
+            continue
+
+        # Check for verbatim leaks in narrative prose
+        normalized_para = normalize(stripped)
+        found_leak = False
+
+        for norm_quote, original_quote in normalized_quotes:
+            # Check for full quote match
+            if norm_quote in normalized_para:
+                found_leak = True
+                dropped_details.append({
+                    "paragraph": stripped[:80] + '...' if len(stripped) > 80 else stripped,
+                    "matched_quote": original_quote[:60] + '...' if len(original_quote) > 60 else original_quote,
+                    "match_type": "full",
+                })
+                break
+
+            # Check for significant substring match (sliding window)
+            if len(norm_quote) >= min_match_len:
+                for i in range(0, len(norm_quote) - min_match_len + 1, 5):  # Step by 5 for efficiency
+                    substring = norm_quote[i:i + min_match_len]
+                    if substring in normalized_para:
+                        found_leak = True
+                        dropped_details.append({
+                            "paragraph": stripped[:80] + '...' if len(stripped) > 80 else stripped,
+                            "matched_quote": original_quote[:60] + '...' if len(original_quote) > 60 else original_quote,
+                            "match_type": "substring",
+                        })
+                        break
+                if found_leak:
+                    break
+
+        if found_leak:
+            logger.info(f"Verbatim leak gate: dropping paragraph with whitelist leak: {stripped[:60]}...")
+        else:
+            kept_paragraphs.append(para)
+
+    result = '\n\n'.join(kept_paragraphs)
+
+    return result, {
+        "paragraphs_dropped": len(dropped_details),
+        "dropped_details": dropped_details,
+    }
+
+
+def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
+    """Drop paragraphs containing dangling attribution patterns.
+
+    Detects patterns like:
+    - "Deutsch notes, For ages..." (verb + comma + Capital)
+    - "Deutsch observes: Before..." (verb + colon + Capital)
+    - "stating, This idea..." (participial + comma + Capital)
+
+    These patterns indicate the LLM generated an attribution wrapper but
+    the content wasn't properly quoted. Rather than try to fix it surgically,
+    we drop the entire paragraph.
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (cleaned_text, report_dict).
+    """
+    # Patterns for dangling attributions (wrapper without proper quote payload)
+    # These match: attribution verb + punctuation + Capital letter (unquoted content)
+    dangling_patterns = [
+        # "Deutsch notes, For ages..." - subject + verb + comma + Capital
+        re.compile(
+            r'\b(?:Deutsch|David Deutsch|He|She)\s+'
+            r'(?:notes?|observes?|argues?|says?|states?|explains?|suggests?|'
+            r'points?\s+out|warns?|asserts?|claims?|contends?|believes?|'
+            r'maintains?|emphasizes?|stresses?|highlights?|remarks?|adds?|'
+            r'captures?\s+this|marks?\s+this|underscores?\s+this)'
+            r'(?:\s+that)?'
+            r'\s*[,:]\s*'
+            r'[A-Z]',  # Followed by capital letter (unquoted content)
+            re.IGNORECASE
+        ),
+        # "noting, For ages..." - participial + comma + Capital
+        re.compile(
+            r'\b(?:noting|observing|arguing|saying|stating|explaining|'
+            r'suggesting|warning|asserting|claiming|emphasizing|stressing|'
+            r'adding|remarking|capturing)'
+            r'\s*[,:]\s*'
+            r'[A-Z]',
+            re.IGNORECASE
+        ),
+        # "Deutsch:" followed by unquoted capital (colon pattern)
+        re.compile(
+            r'\b(?:Deutsch|David Deutsch)\s*:\s*[A-Z]',
+            re.IGNORECASE
+        ),
+    ]
+
+    # Split into paragraphs
+    paragraphs = text.split('\n\n')
+    kept_paragraphs = []
+    dropped_details = []
+
+    in_key_excerpts = False
+    in_core_claims = False
+
+    for para in paragraphs:
+        stripped = para.strip()
+
+        # Track section boundaries
+        if '### Key Excerpts' in stripped:
+            in_key_excerpts = True
+            in_core_claims = False
+            kept_paragraphs.append(para)
+            continue
+        elif '### Core Claims' in stripped:
+            in_key_excerpts = False
+            in_core_claims = True
+            kept_paragraphs.append(para)
+            continue
+        elif stripped.startswith('## '):
+            in_key_excerpts = False
+            in_core_claims = False
+            kept_paragraphs.append(para)
+            continue
+        elif stripped.startswith('### '):
+            in_key_excerpts = False
+            in_core_claims = False
+            kept_paragraphs.append(para)
+            continue
+
+        # Allow Key Excerpts and Core Claims content
+        if in_key_excerpts or in_core_claims:
+            kept_paragraphs.append(para)
+            continue
+
+        # Skip blockquotes
+        if stripped.startswith('>'):
+            kept_paragraphs.append(para)
+            continue
+
+        # Check for dangling attribution patterns
+        found_dangling = False
+        matched_pattern = None
+
+        for pattern in dangling_patterns:
+            match = pattern.search(stripped)
+            if match:
+                found_dangling = True
+                matched_pattern = match.group(0)
+                break
+
+        if found_dangling:
+            logger.info(f"Dangling attribution gate: dropping paragraph with pattern '{matched_pattern}': {stripped[:60]}...")
+            dropped_details.append({
+                "paragraph": stripped[:80] + '...' if len(stripped) > 80 else stripped,
+                "matched_pattern": matched_pattern,
+            })
+        else:
+            kept_paragraphs.append(para)
+
+    result = '\n\n'.join(kept_paragraphs)
+
+    return result, {
+        "paragraphs_dropped": len(dropped_details),
+        "dropped_details": dropped_details,
+    }
+
+
 def _extract_verb(full_match: str, speaker: str) -> str:
     """Extract the attribution verb from a full match.
 
@@ -4181,6 +4423,48 @@ async def _generate_draft_task(
                 await update_job(job_id, constraint_warnings=constraint_warnings)
         except Exception as e:
             logger.error(f"Job {job_id}: Attribution enforcement failed (non-fatal): {e}", exc_info=True)
+
+        # Dangling Attribution Gate (Ideas Edition only)
+        # Catches "Deutsch notes, For ages..." patterns where wrapper has no proper quote payload
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, dangling_report = enforce_dangling_attribution_gate(final_markdown)
+                if dangling_report["paragraphs_dropped"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Dangling attribution gate - dropped "
+                        f"{dangling_report['paragraphs_dropped']} paragraphs with wrapper-without-payload"
+                    )
+                    for detail in dangling_report.get("dropped_details", [])[:3]:
+                        constraint_warnings.append(
+                            f"Dangling attribution dropped: \"{detail['matched_pattern']}\""
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Dangling attribution gate failed (non-fatal): {e}", exc_info=True)
+
+        # Verbatim Leak Gate (Ideas Edition only)
+        # Catches whitelist quote text appearing in narrative prose (outside Key Excerpts/Core Claims)
+        if content_mode == ContentMode.essay and whitelist:
+            try:
+                # Extract quote texts from whitelist for comparison
+                whitelist_quote_texts = [q.text for q in whitelist]
+                final_markdown, leak_report = enforce_verbatim_leak_gate(
+                    final_markdown,
+                    whitelist_quote_texts,
+                    min_match_len=25,  # Require 25+ char match to avoid false positives
+                )
+                if leak_report["paragraphs_dropped"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Verbatim leak gate - dropped "
+                        f"{leak_report['paragraphs_dropped']} paragraphs with whitelist leaks"
+                    )
+                    for detail in leak_report.get("dropped_details", [])[:3]:
+                        constraint_warnings.append(
+                            f"Verbatim leak dropped ({detail['match_type']}): \"{detail['matched_quote'][:30]}...\""
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Verbatim leak gate failed (non-fatal): {e}", exc_info=True)
 
         # Anachronism filter (Ideas Edition safety net) - only for essay mode
         # Catches contemporary framing that slipped past generation prompts
