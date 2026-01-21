@@ -1339,6 +1339,51 @@ class TestSpeakerNormalization:
         assert result == text
         assert report["normalized_count"] == 0
 
+    def test_finds_longer_canonical_form(self):
+        """Test that 'David (GUEST)' finds 'David Deutsch (GUEST)' as longer form.
+
+        This handles the case where the registry has a longer canonical form
+        that contains the shorter name as a component.
+        """
+        from src.services.whitelist_service import normalize_speaker_names
+
+        # Registry where "David Deutsch" is the canonical but we don't have "David" mapped
+        # This simulates when known_guests wasn't populated during whitelist building
+        registry = {
+            "David Deutsch": "David Deutsch (GUEST)",
+            "Deutsch": "David Deutsch (GUEST)",
+            # Note: "David" is NOT in the registry keys
+        }
+
+        text = '''> "A great quote"
+> — David (GUEST)
+'''
+
+        result, report = normalize_speaker_names(text, registry)
+
+        # Should find "David Deutsch (GUEST)" as the longer canonical form
+        assert "David Deutsch (GUEST)" in result
+        assert "— David (GUEST)" not in result
+        assert report["normalized_count"] == 1
+
+    def test_longer_canonical_respects_role(self):
+        """Test that longer canonical matching respects role type."""
+        from src.services.whitelist_service import normalize_speaker_names
+
+        registry = {
+            "Naval Ravikant": "Naval Ravikant (HOST)",
+        }
+
+        # "Naval (HOST)" should find "Naval Ravikant (HOST)"
+        text = '''> "A quote"
+> — Naval (HOST)
+'''
+
+        result, report = normalize_speaker_names(text, registry)
+
+        assert "Naval Ravikant (HOST)" in result
+        assert report["normalized_count"] == 1
+
 
 class TestFormatExcerptsMarkdown:
     def test_formats_single_excerpt(self):

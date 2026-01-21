@@ -2332,6 +2332,177 @@ Deutsch points, there is only one truth.
         assert "points out that there" in result
 
 
+class TestFixTruncatedAttributions:
+    """Tests for fix_truncated_attributions - joins split attribution lines."""
+
+    def test_joins_truncated_notes_comma(self):
+        """'Deutsch notes,' at EOL followed by content is joined."""
+        text = """## Chapter 1
+
+Deutsch notes,
+
+This transformation went beyond gadgets.
+
+### Key Excerpts"""
+
+        result, report = draft_service.fix_truncated_attributions(text)
+
+        assert "notes," not in result or "notes, " in result  # Either joined or unchanged
+        assert "notes that this transformation" in result
+        assert report["fixes_applied"] == 1
+
+    def test_joins_truncated_says_comma(self):
+        """'He says,' at EOL is joined with next paragraph."""
+        text = """## Chapter 1
+
+He says,
+
+This idea challenges us.
+
+### Key Excerpts"""
+
+        result, report = draft_service.fix_truncated_attributions(text)
+
+        assert "says that this idea" in result
+        assert report["fixes_applied"] == 1
+
+    def test_joins_truncated_points_adds_out(self):
+        """'Deutsch points,' becomes 'Deutsch points out that'."""
+        text = """## Chapter 1
+
+Deutsch points,
+
+There is only one truth.
+
+### Key Excerpts"""
+
+        result, report = draft_service.fix_truncated_attributions(text)
+
+        assert "points out that there" in result
+        assert report["fixes_applied"] == 1
+
+    def test_preserves_non_truncated(self):
+        """Normal paragraphs are not modified."""
+        text = """## Chapter 1
+
+The Enlightenment changed everything.
+
+Progress accelerated rapidly.
+
+### Key Excerpts"""
+
+        result, report = draft_service.fix_truncated_attributions(text)
+
+        assert "Enlightenment changed everything" in result
+        assert "Progress accelerated rapidly" in result
+        assert report["fixes_applied"] == 0
+
+    def test_does_not_join_with_headers(self):
+        """Truncated attribution before header is not joined."""
+        text = """## Chapter 1
+
+Deutsch notes,
+
+### Key Excerpts"""
+
+        result, report = draft_service.fix_truncated_attributions(text)
+
+        # Should not try to join with the header
+        assert "### Key Excerpts" in result
+        assert report["fixes_applied"] == 0
+
+
+class TestRemoveDiscourseMarkers:
+    """Tests for remove_discourse_markers - removes verbal fillers from prose."""
+
+    def test_removes_okay_at_sentence_start(self):
+        """'Okay,' at sentence start is removed."""
+        text = """## Chapter 1
+
+Okay, I entirely agree with the idea.
+
+### Key Excerpts"""
+
+        result, report = draft_service.remove_discourse_markers(text)
+
+        assert "Okay," not in result
+        assert "I entirely agree" in result
+        assert report["markers_removed"] == 1
+
+    def test_removes_in_fact(self):
+        """'In fact,' at sentence start is removed."""
+        text = """## Chapter 1
+
+He explained. In fact, that's not the case.
+
+### Key Excerpts"""
+
+        result, report = draft_service.remove_discourse_markers(text)
+
+        assert "In fact," not in result
+        assert "That's not the case" in result
+        assert report["markers_removed"] == 1
+
+    def test_removes_yes_period(self):
+        """'Yes.' at sentence start is removed."""
+        text = """## Chapter 1
+
+Yes. This is not only desirable but inevitable.
+
+### Key Excerpts"""
+
+        result, report = draft_service.remove_discourse_markers(text)
+
+        assert "Yes." not in result
+        assert "This is not only desirable" in result
+        assert report["markers_removed"] == 1
+
+    def test_preserves_key_excerpts(self):
+        """Discourse markers in Key Excerpts are preserved (verbatim quotes)."""
+        text = """## Chapter 1
+
+### Key Excerpts
+
+> "Okay, I entirely agree with Stephen Hawking."
+> — Speaker (GUEST)"""
+
+        result, report = draft_service.remove_discourse_markers(text)
+
+        # Quote content should be preserved
+        assert "Okay, I entirely agree" in result
+        assert report["markers_removed"] == 0
+
+    def test_preserves_core_claims(self):
+        """Discourse markers in Core Claims are preserved."""
+        text = """## Chapter 1
+
+### Core Claims
+
+- **Claim**: "Yes, this is true."
+"""
+
+        result, report = draft_service.remove_discourse_markers(text)
+
+        # Core Claims content should be preserved
+        assert "Yes, this is true" in result
+        assert report["markers_removed"] == 0
+
+    def test_removes_multiple_markers(self):
+        """Multiple markers in prose are all removed."""
+        text = """## Chapter 1
+
+Okay, first point here. Well, second point here. Actually, third point.
+
+### Key Excerpts"""
+
+        result, report = draft_service.remove_discourse_markers(text)
+
+        assert "Okay," not in result
+        assert "Well," not in result
+        assert "Actually," not in result
+        assert report["markers_removed"] == 3
+
+
 class TestChapterNarrativeFallback:
     """Tests for ensure_chapter_narrative_minimum - prevents content collapse."""
 

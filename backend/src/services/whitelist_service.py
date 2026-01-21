@@ -305,6 +305,9 @@ def normalize_speaker_names(text: str, registry: dict[str, str]) -> tuple[str, d
     Finds blockquote attributions like "> — David" and normalizes them
     to the canonical form like "> — David Deutsch (GUEST)".
 
+    Also handles the case where "David (GUEST)" should become "David Deutsch (GUEST)"
+    by checking if the name appears as a part of any longer canonical form.
+
     Args:
         text: Markdown text with speaker attributions.
         registry: Speaker registry from build_speaker_registry().
@@ -316,6 +319,38 @@ def normalize_speaker_names(text: str, registry: dict[str, str]) -> tuple[str, d
     """
     if not registry:
         return text, {"normalized_count": 0, "normalizations": []}
+
+    # Build a set of all canonical forms for quick lookup
+    canonical_forms = set(registry.values())
+
+    def find_longer_canonical(name: str, role: str) -> str | None:
+        """Find a longer canonical form that contains this name.
+
+        E.g., if name="David" and role="(GUEST)", and we have
+        "David Deutsch (GUEST)" in canonical_forms, return it.
+        """
+        name_lower = name.lower()
+        role_upper = role.strip().upper() if role else ""
+
+        for canonical in canonical_forms:
+            # Extract the name part (before the role)
+            if '(' in canonical:
+                canon_name = canonical[:canonical.rfind('(')].strip()
+                canon_role = canonical[canonical.rfind('('):].strip().upper()
+            else:
+                canon_name = canonical.strip()
+                canon_role = ""
+
+            # Check if our name is a part of this canonical name
+            canon_name_lower = canon_name.lower()
+            canon_parts = canon_name_lower.split()
+
+            if name_lower in canon_parts and len(canon_name) > len(name):
+                # Found a longer form - check role compatibility
+                if not role_upper or role_upper == canon_role:
+                    return canonical
+
+        return None
 
     # Pattern for blockquote attributions: > — Speaker Name (optional role)
     # Match variations: "— Name", "- Name", "— Name (ROLE)"
@@ -329,25 +364,34 @@ def normalize_speaker_names(text: str, registry: dict[str, str]) -> tuple[str, d
     def normalize_match(match):
         prefix = match.group(1)  # "> — " or "> - "
         name = match.group(2).strip()  # "David" or "David Deutsch"
-        existing_role = match.group(3)  # "(GUEST)" or None
+        existing_role = match.group(3)  # " (GUEST)" or None
 
         # If already has a role annotation, check if it's canonical
         if existing_role:
             current = f"{name}{existing_role}"
-            # Check if this matches a known canonical form
-            for partial, canonical in registry.items():
-                if canonical == current:
-                    # Already canonical, no change
-                    return match.group(0)
-            # Has role but might need name normalization
+            # Check if this matches a known canonical form exactly
+            if current in canonical_forms:
+                return match.group(0)
+
+            # Check direct registry lookup
             if name in registry:
                 canonical = registry[name]
-                if f"{name}{existing_role}" != canonical:
+                if current != canonical:
                     normalizations.append({
-                        "original": f"{name}{existing_role}",
+                        "original": current,
                         "canonical": canonical,
                     })
                     return f"{prefix}{canonical}"
+
+            # Check if there's a longer canonical form containing this name
+            longer_canonical = find_longer_canonical(name, existing_role)
+            if longer_canonical and current != longer_canonical:
+                normalizations.append({
+                    "original": current,
+                    "canonical": longer_canonical,
+                })
+                return f"{prefix}{longer_canonical}"
+
             return match.group(0)
 
         # No role - lookup in registry
@@ -358,6 +402,15 @@ def normalize_speaker_names(text: str, registry: dict[str, str]) -> tuple[str, d
                 "canonical": canonical,
             })
             return f"{prefix}{canonical}"
+
+        # Check for longer canonical form
+        longer_canonical = find_longer_canonical(name, None)
+        if longer_canonical:
+            normalizations.append({
+                "original": name,
+                "canonical": longer_canonical,
+            })
+            return f"{prefix}{longer_canonical}"
 
         # Not in registry - leave as-is
         return match.group(0)

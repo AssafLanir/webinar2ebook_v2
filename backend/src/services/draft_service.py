@@ -1857,6 +1857,198 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
     }
 
 
+def fix_truncated_attributions(text: str) -> tuple[str, dict]:
+    """Fix attributions that got truncated at end of line/paragraph.
+
+    Detects patterns like:
+        "Deutsch notes,"
+
+        "This transformation went beyond..."
+
+    And joins them:
+        "Deutsch notes that this transformation went beyond..."
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (fixed_text, report_dict).
+    """
+    # Pattern for attribution verb ending a paragraph (followed by paragraph break)
+    # "Deutsch notes," or "He says," at end of line
+    truncated_pattern = re.compile(
+        r'((?:Deutsch|David Deutsch|He|She|They)\s+'
+        r'(?:notes?|observes?|argues?|says?|states?|explains?|suggests?|'
+        r'points?(?:\s+out)?|warns?|cautions?|asserts?|claims?|contends?|'
+        r'remarks?|adds?|believes?|maintains?|emphasizes?))'
+        r'\s*[,:]\s*$',  # Ends with comma/colon at end of line
+        re.IGNORECASE | re.MULTILINE
+    )
+
+    fixes = []
+    lines = text.split('\n')
+    result_lines = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        match = truncated_pattern.search(line)
+
+        if match:
+            # Found truncated attribution - look for next non-empty line
+            subject_verb = match.group(1)
+            j = i + 1
+
+            # Skip empty lines
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+
+            if j < len(lines):
+                next_line = lines[j].strip()
+                # Don't join with headers or special content
+                if not next_line.startswith('#') and not next_line.startswith('>'):
+                    # Handle "points" → "points out"
+                    if re.search(r'\bpoints?\s*$', subject_verb, re.IGNORECASE):
+                        if not re.search(r'\bpoints?\s+out\s*$', subject_verb, re.IGNORECASE):
+                            subject_verb = re.sub(r'(\bpoints?)\s*$', r'\1 out', subject_verb, flags=re.IGNORECASE)
+
+                    # Join with "that" and lowercase first letter
+                    first_char = next_line[0].lower() if next_line else ''
+                    rest = next_line[1:] if len(next_line) > 1 else ''
+                    joined = f"{line[:match.start()]}{subject_verb} that {first_char}{rest}"
+
+                    fixes.append({
+                        "original_line": line.strip(),
+                        "next_line": next_line[:40] + "..." if len(next_line) > 40 else next_line,
+                        "joined": joined[:60] + "..." if len(joined) > 60 else joined,
+                    })
+
+                    result_lines.append(joined)
+                    # Skip the lines we consumed (empty lines + content line)
+                    i = j + 1
+                    continue
+
+        result_lines.append(line)
+        i += 1
+
+    result = '\n'.join(result_lines)
+
+    if fixes:
+        logger.info(f"Fixed {len(fixes)} truncated attributions by joining paragraphs")
+
+    return result, {
+        "fixes_applied": len(fixes),
+        "fix_details": fixes,
+    }
+
+
+def remove_discourse_markers(text: str) -> tuple[str, dict]:
+    """Remove transcript discourse markers from prose.
+
+    Discourse markers like "Okay,", "In fact,", "Yes." are verbal fillers
+    that shouldn't appear in polished prose. This function removes them
+    from the start of sentences.
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (cleaned_text, report_dict).
+    """
+    # Discourse markers that appear at start of sentences
+    # These are verbal fillers from transcript that leaked into prose
+    markers = [
+        (r'\bOkay,\s*', 'Okay,'),
+        (r'\bOK,\s*', 'OK,'),
+        (r'\bYeah,\s*', 'Yeah,'),
+        (r'\bYes\.\s+', 'Yes.'),
+        (r'\bYes,\s*', 'Yes,'),
+        (r'\bWell,\s*', 'Well,'),
+        (r'\bSo,\s*', 'So,'),
+        (r'\bNow,\s*', 'Now,'),
+        (r'\bIn fact,\s*', 'In fact,'),
+        (r'\bActually,\s*', 'Actually,'),
+        (r'\bI mean,\s*', 'I mean,'),
+        (r'\bYou know,\s*', 'You know,'),
+        (r'\bLook,\s*', 'Look,'),
+        (r'\bRight,\s*', 'Right,'),
+    ]
+
+    removals = []
+
+    # Split into paragraphs to track sections
+    paragraphs = text.split('\n\n')
+    result_paragraphs = []
+
+    in_key_excerpts = False
+    in_core_claims = False
+
+    for para in paragraphs:
+        stripped = para.strip()
+
+        # Track section boundaries
+        if '### Key Excerpts' in stripped:
+            in_key_excerpts = True
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+        elif '### Core Claims' in stripped:
+            in_key_excerpts = False
+            in_core_claims = True
+            result_paragraphs.append(para)
+            continue
+        elif stripped.startswith('## '):
+            in_key_excerpts = False
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+
+        # Don't modify Key Excerpts (quotes should be verbatim)
+        if in_key_excerpts:
+            result_paragraphs.append(para)
+            continue
+
+        # Don't modify Core Claims quotes
+        if in_core_claims:
+            result_paragraphs.append(para)
+            continue
+
+        # Skip blockquotes
+        if stripped.startswith('>'):
+            result_paragraphs.append(para)
+            continue
+
+        # Remove discourse markers from narrative prose
+        modified = para
+        for pattern, marker_name in markers:
+            matches = list(re.finditer(pattern, modified, re.IGNORECASE))
+            for match in reversed(matches):  # Reverse to preserve positions
+                # Only remove if at start of sentence (after period, or start of paragraph)
+                before = modified[:match.start()]
+                if not before or before.rstrip().endswith(('.', '!', '?', '\n')):
+                    # Capitalize the next word after removal
+                    after = modified[match.end():]
+                    if after and after[0].islower():
+                        after = after[0].upper() + after[1:]
+                    modified = before + after
+                    removals.append({
+                        "marker": marker_name,
+                        "context": modified[max(0, match.start()-10):match.start()+30],
+                    })
+
+        result_paragraphs.append(modified)
+
+    result = '\n\n'.join(result_paragraphs)
+
+    if removals:
+        logger.info(f"Removed {len(removals)} discourse markers from prose")
+
+    return result, {
+        "markers_removed": len(removals),
+        "removal_details": removals[:10],  # Limit details
+    }
+
+
 def ensure_chapter_narrative_minimum(
     text: str,
     min_prose_paragraphs: int = 1,
@@ -4571,23 +4763,57 @@ async def _generate_draft_task(
         except Exception as e:
             logger.error(f"Job {job_id}: Attribution enforcement failed (non-fatal): {e}", exc_info=True)
 
+        # Fix Truncated Attributions (Ideas Edition only)
+        # Fixes "Deutsch notes," at end of line followed by content in next paragraph
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, truncated_report = fix_truncated_attributions(final_markdown)
+                if truncated_report["fixes_applied"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Fixed {truncated_report['fixes_applied']} truncated attributions"
+                    )
+                    for detail in truncated_report.get("fix_details", [])[:3]:
+                        constraint_warnings.append(
+                            f"Truncated attribution fixed: \"{detail['original_line'][:30]}...\""
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Truncated attribution fix failed (non-fatal): {e}", exc_info=True)
+
         # Dangling Attribution Gate (Ideas Edition only)
-        # Catches "Deutsch notes, For ages..." patterns where wrapper has no proper quote payload
+        # Rewrites "Deutsch notes, For ages..." to "Deutsch notes that for ages..."
         if content_mode == ContentMode.essay:
             try:
                 final_markdown, dangling_report = enforce_dangling_attribution_gate(final_markdown)
-                if dangling_report["paragraphs_dropped"] > 0:
+                if dangling_report["rewrites_applied"] > 0:
                     logger.info(
-                        f"Job {job_id}: Dangling attribution gate - dropped "
-                        f"{dangling_report['paragraphs_dropped']} paragraphs with wrapper-without-payload"
+                        f"Job {job_id}: Dangling attribution gate - rewrote "
+                        f"{dangling_report['rewrites_applied']} patterns to indirect speech"
                     )
-                    for detail in dangling_report.get("dropped_details", [])[:3]:
+                    for detail in dangling_report.get("rewrite_details", [])[:3]:
                         constraint_warnings.append(
-                            f"Dangling attribution dropped: \"{detail['matched_pattern']}\""
+                            f"Dangling attribution rewritten: \"{detail['original']}\" → indirect speech"
                         )
                     await update_job(job_id, constraint_warnings=constraint_warnings)
             except Exception as e:
                 logger.error(f"Job {job_id}: Dangling attribution gate failed (non-fatal): {e}", exc_info=True)
+
+        # Remove Discourse Markers (Ideas Edition only)
+        # Removes "Okay,", "In fact,", "Yes." from prose
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, discourse_report = remove_discourse_markers(final_markdown)
+                if discourse_report["markers_removed"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Removed {discourse_report['markers_removed']} discourse markers"
+                    )
+                    for detail in discourse_report.get("removal_details", [])[:3]:
+                        constraint_warnings.append(
+                            f"Discourse marker removed: \"{detail['marker']}\""
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Discourse marker removal failed (non-fatal): {e}", exc_info=True)
 
         # Verbatim Leak Gate (Ideas Edition only)
         # Catches whitelist quote text appearing in narrative prose (outside Key Excerpts/Core Claims)
