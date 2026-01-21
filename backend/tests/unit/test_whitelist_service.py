@@ -1414,6 +1414,43 @@ class TestSpeakerNormalization:
         assert result.count("— David Deutsch (GUEST)") == 2
         assert report["normalized_count"] == 1
 
+    def test_normalizes_partial_name_when_in_canonical_forms(self):
+        """REGRESSION Draft 14: 'David (GUEST)' must normalize even when it's in canonical_forms.
+
+        When a whitelist quote has partial name "David", the registry contains:
+        - "David" → "David (GUEST)"
+        This adds "David (GUEST)" to canonical_forms.
+
+        BUT if another quote has "David Deutsch", the registry also contains:
+        - "David Deutsch" → "David Deutsch (GUEST)"
+        - "David" → "David Deutsch (GUEST)" (partial name mapping)
+
+        The normalizer must prefer the LONGER form even when the shorter form
+        is technically in canonical_forms.
+        """
+        from src.services.whitelist_service import normalize_speaker_names
+
+        # Simulates a mixed registry where some quotes have partial names
+        # This creates the bug condition: "David (GUEST)" is in canonical_forms
+        registry = {
+            "David": "David (GUEST)",  # From a partial-name quote
+            "David Deutsch": "David Deutsch (GUEST)",  # From a full-name quote
+            "Deutsch": "David Deutsch (GUEST)",
+        }
+
+        text = '''### Key Excerpts
+
+> "Quote from someone with partial name in whitelist."
+> — David (GUEST)
+'''
+
+        result, report = normalize_speaker_names(text, registry)
+
+        # MUST prefer the longer canonical form
+        assert "— David (GUEST)" not in result
+        assert "— David Deutsch (GUEST)" in result
+        assert report["normalized_count"] == 1
+
 
 class TestFormatExcerptsMarkdown:
     def test_formats_single_excerpt(self):
@@ -1743,7 +1780,12 @@ class TestDetectVerbatimLeaks:
     """Tests for detect_verbatim_leaks function (removes leaks, not just detects)."""
 
     def test_removes_leak_from_prose(self):
-        """Test that verbatim whitelist text in prose is removed."""
+        """Test that verbatim whitelist text in prose is removed.
+
+        Note: detect_verbatim_leaks removes the text cleanly (no placeholder).
+        Dangling connectives like "argues that ." are cleaned up by
+        cleanup_dangling_connectives in draft_service.py, not here.
+        """
         from src.services.whitelist_service import detect_verbatim_leaks
 
         whitelist = [
@@ -1770,8 +1812,10 @@ David Deutsch argues that the truth of the matter is that wisdom like scientific
         assert report["leaks_found"] == 1
         # The text should no longer contain the verbatim quote in prose
         assert "truth of the matter is that wisdom" not in result
-        # Should have replacement text
-        assert "[as discussed in the excerpts above]" in result
+        # Text is removed cleanly (no placeholder) - dangling connectives handled downstream
+        # The remaining text has "argues that . This" which cleanup_dangling_connectives fixes
+        assert "David Deutsch argues that" in result
+        assert "This is a profound insight" in result
         # The leak detail should be recorded
         assert len(report["leaks_removed"]) == 1
         assert "truth of the matter" in report["leaks_removed"][0]["text"]

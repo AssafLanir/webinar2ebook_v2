@@ -5260,9 +5260,30 @@ async def _generate_draft_task(
             except Exception as e:
                 logger.error(f"Job {job_id}: Verbatim leak gate failed (non-fatal): {e}", exc_info=True)
 
+        # Anachronism filter (Ideas Edition safety net) - only for essay mode
+        # Catches contemporary framing that slipped past generation prompts
+        # NOTE: Must run BEFORE Chapter Narrative Minimum so fallback can fix any prose-zero created
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, anachronism_report = filter_anachronism_paragraphs(final_markdown)
+                if anachronism_report["paragraphs_removed"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Anachronism filter - removed "
+                        f"{anachronism_report['paragraphs_removed']} paragraphs with contemporary framing"
+                    )
+                    # Add to constraint warnings
+                    for detail in anachronism_report.get("removed_details", [])[:3]:
+                        constraint_warnings.append(
+                            f"Anachronism filtered ('{detail['keyword']}'): \"{detail['paragraph'][:40]}...\""
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Anachronism filter failed (non-fatal): {e}", exc_info=True)
+
         # Chapter Narrative Minimum (Ideas Edition only)
         # Ensures each chapter has at least one prose paragraph to prevent content collapse
         # If gates dropped all prose, insert a safe fallback narrative
+        # NOTE: Must run AFTER all paragraph-dropping gates (anachronism, leak, etc.)
         if content_mode == ContentMode.essay:
             try:
                 final_markdown, narrative_report = ensure_chapter_narrative_minimum(
@@ -5281,25 +5302,6 @@ async def _generate_draft_task(
                     await update_job(job_id, constraint_warnings=constraint_warnings)
             except Exception as e:
                 logger.error(f"Job {job_id}: Chapter narrative fallback failed (non-fatal): {e}", exc_info=True)
-
-        # Anachronism filter (Ideas Edition safety net) - only for essay mode
-        # Catches contemporary framing that slipped past generation prompts
-        if content_mode == ContentMode.essay:
-            try:
-                final_markdown, anachronism_report = filter_anachronism_paragraphs(final_markdown)
-                if anachronism_report["paragraphs_removed"] > 0:
-                    logger.info(
-                        f"Job {job_id}: Anachronism filter - removed "
-                        f"{anachronism_report['paragraphs_removed']} paragraphs with contemporary framing"
-                    )
-                    # Add to constraint warnings
-                    for detail in anachronism_report.get("removed_details", [])[:3]:
-                        constraint_warnings.append(
-                            f"Anachronism filtered ('{detail['keyword']}'): \"{detail['paragraph'][:40]}...\""
-                        )
-                    await update_job(job_id, constraint_warnings=constraint_warnings)
-            except Exception as e:
-                logger.error(f"Job {job_id}: Anachronism filter failed (non-fatal): {e}", exc_info=True)
 
         # Strip quote characters from prose (Ideas Edition only)
         # Policy: quotes only allowed in Key Excerpts blockquotes and Core Claims bullets

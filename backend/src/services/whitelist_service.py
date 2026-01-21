@@ -369,7 +369,20 @@ def normalize_speaker_names(text: str, registry: dict[str, str]) -> tuple[str, d
         # If already has a role annotation, check if it's canonical
         if existing_role:
             current = f"{name}{existing_role}"
+
+            # ALWAYS check for longer canonical form first
+            # This handles the case where "David (GUEST)" is in canonical_forms
+            # but "David Deutsch (GUEST)" is the preferred longer form
+            longer_canonical = find_longer_canonical(name, existing_role)
+            if longer_canonical and current != longer_canonical:
+                normalizations.append({
+                    "original": current,
+                    "canonical": longer_canonical,
+                })
+                return f"{prefix}{longer_canonical}"
+
             # Check if this matches a known canonical form exactly
+            # (only if no longer form exists)
             if current in canonical_forms:
                 return match.group(0)
 
@@ -382,15 +395,6 @@ def normalize_speaker_names(text: str, registry: dict[str, str]) -> tuple[str, d
                         "canonical": canonical,
                     })
                     return f"{prefix}{canonical}"
-
-            # Check if there's a longer canonical form containing this name
-            longer_canonical = find_longer_canonical(name, existing_role)
-            if longer_canonical and current != longer_canonical:
-                normalizations.append({
-                    "original": current,
-                    "canonical": longer_canonical,
-                })
-                return f"{prefix}{longer_canonical}"
 
             return match.group(0)
 
