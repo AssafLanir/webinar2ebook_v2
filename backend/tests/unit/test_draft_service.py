@@ -2252,6 +2252,24 @@ Deutsch insists, The Enlightenment ushered in a new era.
         assert "insists that the" in result
         assert report["rewrites_applied"] == 1
 
+    def test_rewrites_lowercase_first_letter(self):
+        """'Deutsch insists, because...' (lowercase) is rewritten correctly."""
+        text = """## Chapter 1
+
+Deutsch insists, because we are capable of explanatory knowledge.
+
+Deutsch points, environments usually kill their species.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        assert "insists, because" not in result
+        assert "insists that because" in result
+        assert "points, environments" not in result
+        assert "points out that environments" in result
+        assert report["rewrites_applied"] == 2
+
     def test_preserves_proper_attribution_with_that(self):
         """'Deutsch argues that knowledge...' (already indirect) is preserved."""
         text = """## Chapter 1

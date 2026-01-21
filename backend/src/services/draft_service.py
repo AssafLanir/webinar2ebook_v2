@@ -4926,6 +4926,20 @@ async def _generate_draft_task(
             except Exception as e:
                 logger.warning(f"Job {job_id}: Final speaker normalization failed (non-fatal): {e}")
 
+        # Final dangling attribution pass (Ideas Edition only)
+        # Re-run after all content modifications to catch any patterns
+        # introduced by injection passes, fallback narratives, or other gates
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, final_dangling_report = enforce_dangling_attribution_gate(final_markdown)
+                if final_dangling_report["rewrites_applied"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Final dangling attribution pass - rewrote "
+                        f"{final_dangling_report['rewrites_applied']} patterns"
+                    )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Final dangling attribution pass failed (non-fatal): {e}")
+
         # Strip empty section headers (Ideas Edition render guard)
         # This is the render guard - empty Key Excerpts/Core Claims sections are removed
         if content_mode == ContentMode.essay:
