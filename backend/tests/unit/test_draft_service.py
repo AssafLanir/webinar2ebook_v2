@@ -2250,3 +2250,137 @@ Knowledge grew rapidly during this period.
         assert "Enlightenment changed" in result
         assert "Knowledge grew" in result
         assert report["paragraphs_dropped"] == 0
+
+    def test_drops_extended_colon_captures_this(self):
+        """'Deutsch captures this transformation:' pattern is dropped."""
+        text = """## Chapter 1
+
+Deutsch captures this transformation: This shift changed how people approached knowledge.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        assert "captures this transformation:" not in result
+        assert report["paragraphs_dropped"] == 1
+
+    def test_drops_extended_colon_sums_it_up(self):
+        """'Deutsch sums it up:' pattern is dropped."""
+        text = """## Chapter 1
+
+Deutsch sums it up: This idea challenges us to consider our capacity.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        assert "sums it up:" not in result
+        assert report["paragraphs_dropped"] == 1
+
+    def test_drops_extended_colon_captures_this_idea(self):
+        """'David Deutsch captures this idea:' pattern is dropped."""
+        text = """## Chapter 1
+
+David Deutsch captures this idea: This shared framework allows us to derive knowledge.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        assert "captures this idea:" not in result
+        assert report["paragraphs_dropped"] == 1
+
+
+class TestChapterNarrativeFallback:
+    """Tests for ensure_chapter_narrative_minimum - prevents content collapse."""
+
+    def test_inserts_fallback_for_prose_zero_chapter(self):
+        """Chapter with only Key Excerpts gets fallback narrative."""
+        text = """## Chapter 1: The Impact
+
+### Key Excerpts
+
+> "Quote here"
+> — Speaker (GUEST)
+
+### Core Claims
+
+- **Claim**: Support text."""
+
+        result, report = draft_service.ensure_chapter_narrative_minimum(text)
+
+        # Should have inserted fallback
+        assert report["chapters_fixed"] == 1
+        assert "This chapter explores" in result or "The discussion in this chapter" in result
+        # Structure preserved
+        assert "Key Excerpts" in result
+        assert "Core Claims" in result
+
+    def test_preserves_chapter_with_prose(self):
+        """Chapter with existing prose is not modified."""
+        text = """## Chapter 2: Human Potential
+
+This is existing prose that should be preserved.
+
+### Key Excerpts
+
+> "Quote here"
+> — Speaker (GUEST)"""
+
+        result, report = draft_service.ensure_chapter_narrative_minimum(text)
+
+        # Should not have modified
+        assert report["chapters_fixed"] == 0
+        assert "This is existing prose" in result
+
+    def test_handles_multiple_chapters(self):
+        """Correctly handles mix of prose and prose-zero chapters."""
+        text = """## Chapter 1: First
+
+This chapter has prose.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+## Chapter 2: Second
+
+### Key Excerpts
+
+> "Another quote"
+> — Speaker
+
+## Chapter 3: Third
+
+This chapter also has prose.
+
+### Key Excerpts
+
+> "Third quote"
+> — Speaker"""
+
+        result, report = draft_service.ensure_chapter_narrative_minimum(text)
+
+        # Only Chapter 2 should be fixed
+        assert report["chapters_fixed"] == 1
+        assert report["fixed_details"][0]["chapter"] == 2
+        # Original prose preserved
+        assert "This chapter has prose" in result
+        assert "This chapter also has prose" in result
+
+    def test_fallback_uses_chapter_title(self):
+        """Fallback narrative incorporates chapter title."""
+        text = """## Chapter 1: Human Potential and the Universe
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker"""
+
+        result, report = draft_service.ensure_chapter_narrative_minimum(text)
+
+        # Should reference the title theme
+        assert report["chapters_fixed"] == 1
+        # The fallback should mention the title (lowercased)
+        assert "human potential" in result.lower()

@@ -1770,6 +1770,17 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
             r'\b(?:Deutsch|David Deutsch)\s*:\s*[A-Z]',
             re.IGNORECASE
         ),
+        # "Deutsch captures this transformation:" - extended colon patterns
+        # These are quote-introducer wrappers that escaped the basic patterns
+        re.compile(
+            r'\b(?:Deutsch|David Deutsch)\s+'
+            r'(?:captures?|sums?|puts?|frames?|expresses?|articulates?|'
+            r'conveys?|describes?|characterizes?|summarizes?|encapsulates?)'
+            r'(?:\s+(?:this|the|it|his|her|their|that|an?)\s+\w+)*'  # Optional object phrase
+            r'(?:\s+(?:up|well|succinctly|clearly|eloquently|perfectly))?'  # Optional adverb
+            r'\s*:\s*[A-Z]',  # Colon followed by capital
+            re.IGNORECASE
+        ),
     ]
 
     # Split into paragraphs
@@ -1841,6 +1852,139 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         "paragraphs_dropped": len(dropped_details),
         "dropped_details": dropped_details,
     }
+
+
+def ensure_chapter_narrative_minimum(
+    text: str,
+    min_prose_paragraphs: int = 1,
+) -> tuple[str, dict]:
+    """Ensure each chapter has minimum narrative prose.
+
+    If a chapter has zero prose paragraphs (only Key Excerpts + Core Claims),
+    insert a minimal safe narrative. This prevents content collapse from
+    overly aggressive gates while maintaining structural validity.
+
+    The fallback narrative is purely rhetorical and never quotes or paraphrases
+    transcript content, avoiding any grounding violations.
+
+    Args:
+        text: The draft markdown text.
+        min_prose_paragraphs: Minimum required prose paragraphs per chapter.
+
+    Returns:
+        Tuple of (updated_text, report_dict).
+    """
+    # Find all chapter boundaries
+    chapter_pattern = re.compile(r'^## Chapter (\d+)[:\s]*(.*?)$', re.MULTILINE)
+    chapters = list(chapter_pattern.finditer(text))
+
+    if not chapters:
+        return text, {"chapters_fixed": 0, "fixed_details": []}
+
+    fixed_details = []
+    result_parts = []
+    last_end = 0
+
+    for i, chapter_match in enumerate(chapters):
+        chapter_num = int(chapter_match.group(1))
+        chapter_title = chapter_match.group(2).strip()
+        chapter_start = chapter_match.start()
+        chapter_end = chapters[i + 1].start() if i + 1 < len(chapters) else len(text)
+        chapter_text = text[chapter_start:chapter_end]
+
+        # Add text before this chapter
+        result_parts.append(text[last_end:chapter_start])
+
+        # Find Key Excerpts position (narrative should be before this)
+        key_excerpts_match = re.search(r'^### Key Excerpts', chapter_text, re.MULTILINE)
+
+        if key_excerpts_match:
+            # Get the text between chapter header and Key Excerpts
+            header_end = chapter_match.end() - chapter_start
+            narrative_section = chapter_text[header_end:key_excerpts_match.start()]
+
+            # Count prose paragraphs (non-empty, non-header paragraphs)
+            paragraphs = [p.strip() for p in narrative_section.split('\n\n') if p.strip()]
+            prose_paragraphs = [
+                p for p in paragraphs
+                if not p.startswith('#') and not p.startswith('>')
+            ]
+
+            if len(prose_paragraphs) < min_prose_paragraphs:
+                # Insert fallback narrative
+                fallback_narrative = _generate_fallback_narrative(chapter_num, chapter_title)
+
+                # Reconstruct chapter: header + fallback + rest
+                new_chapter = (
+                    chapter_text[:header_end] +
+                    '\n\n' + fallback_narrative + '\n' +
+                    chapter_text[key_excerpts_match.start():]
+                )
+                result_parts.append(new_chapter)
+
+                fixed_details.append({
+                    "chapter": chapter_num,
+                    "title": chapter_title,
+                    "original_prose_count": len(prose_paragraphs),
+                    "action": "inserted_fallback",
+                })
+                logger.info(
+                    f"Chapter {chapter_num} had {len(prose_paragraphs)} prose paragraphs, "
+                    f"inserted fallback narrative"
+                )
+            else:
+                # Chapter has enough prose, keep as-is
+                result_parts.append(chapter_text)
+        else:
+            # No Key Excerpts section found, keep chapter as-is
+            result_parts.append(chapter_text)
+
+        last_end = chapter_end
+
+    # Add any remaining text after the last chapter
+    result_parts.append(text[last_end:])
+
+    return ''.join(result_parts), {
+        "chapters_fixed": len(fixed_details),
+        "fixed_details": fixed_details,
+    }
+
+
+def _generate_fallback_narrative(chapter_num: int, chapter_title: str) -> str:
+    """Generate a minimal safe narrative for a chapter with no prose.
+
+    The fallback is purely rhetorical and structural - it never quotes or
+    paraphrases any content, only points to the excerpts below.
+
+    Args:
+        chapter_num: The chapter number.
+        chapter_title: The chapter title (may be empty).
+
+    Returns:
+        A safe fallback narrative paragraph.
+    """
+    # Clean up title for use in narrative
+    title_text = chapter_title.strip() if chapter_title else f"themes in this section"
+
+    # Fallback narratives that are purely structural
+    # These never quote or paraphrase - they only reference the excerpts
+    fallback_templates = [
+        (
+            f"This chapter explores {title_text.lower() if chapter_title else 'key ideas'} "
+            f"through the lens of the conversation's most illuminating moments. "
+            f"The excerpts below capture the essential insights, while the claims "
+            f"synthesize the core arguments that emerge from this discussion."
+        ),
+        (
+            f"The discussion in this chapter centers on {title_text.lower() if chapter_title else 'significant concepts'}. "
+            f"Rather than paraphrase, the key excerpts below preserve the speaker's voice, "
+            f"and the core claims distill the central arguments."
+        ),
+    ]
+
+    # Use chapter number to deterministically select template (for consistency)
+    template_idx = (chapter_num - 1) % len(fallback_templates)
+    return fallback_templates[template_idx]
 
 
 def _extract_verb(full_match: str, speaker: str) -> str:
@@ -4465,6 +4609,28 @@ async def _generate_draft_task(
                     await update_job(job_id, constraint_warnings=constraint_warnings)
             except Exception as e:
                 logger.error(f"Job {job_id}: Verbatim leak gate failed (non-fatal): {e}", exc_info=True)
+
+        # Chapter Narrative Minimum (Ideas Edition only)
+        # Ensures each chapter has at least one prose paragraph to prevent content collapse
+        # If gates dropped all prose, insert a safe fallback narrative
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, narrative_report = ensure_chapter_narrative_minimum(
+                    final_markdown,
+                    min_prose_paragraphs=1,
+                )
+                if narrative_report["chapters_fixed"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Chapter narrative fallback - fixed "
+                        f"{narrative_report['chapters_fixed']} chapters with no prose"
+                    )
+                    for detail in narrative_report.get("fixed_details", [])[:3]:
+                        constraint_warnings.append(
+                            f"Chapter {detail['chapter']} prose collapsed, inserted fallback"
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Chapter narrative fallback failed (non-fatal): {e}", exc_info=True)
 
         # Anachronism filter (Ideas Edition safety net) - only for essay mode
         # Catches contemporary framing that slipped past generation prompts
