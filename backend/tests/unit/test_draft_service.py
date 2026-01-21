@@ -2574,6 +2574,28 @@ The insight, as He points out is crucial for understanding.
         # Must NOT add 'that' to "as X notes" pattern
         assert "as He points out that" not in result
 
+    def test_skips_as_x_argues_interpolation_draft16(self):
+        """REGRESSION Draft 16: 'as Deutsch argues, is key' must NOT get 'that'.
+
+        Input: 'Explanatory knowledge, as Deutsch argues, is key'
+        This is a valid interpolation where the attribution is parenthetical.
+        Adding 'that' would produce: 'as Deutsch argues that is key' (ungrammatical)
+        """
+        text = """## Chapter 1
+
+Explanatory knowledge, as Deutsch argues, is key to human innovation and progress.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Must NOT add 'that' to "as X argues" interpolation
+        assert "as Deutsch argues that" not in result
+        # Must preserve the original structure
+        assert "as Deutsch argues, is" in result
+        # No rewrites should have been applied
+        assert report["rewrites_applied"] == 0
+
     def test_removes_orphan_wrapper_noting(self):
         """REGRESSION: Orphan wrappers like 'noting. This' should be cleaned up.
 
@@ -3165,3 +3187,107 @@ Valid prose here.
 
         # Should pass - violations in Key Excerpts and Core Claims are OK
         assert is_valid
+
+
+class TestStructuralIntegrityValidator:
+    """Tests for validate_structural_integrity function - P0 hard gate."""
+
+    def test_detects_unclosed_quote_in_core_claim(self):
+        """REGRESSION Draft 16: Core Claim with unclosed quote must be detected."""
+        text = '''## Chapter 2
+
+Some prose here.
+
+### Core Claims
+
+- **Human influence is inevitable**: "Yes. This is not only desirable, as Stephen Hawking says, but it's really inevitable. Human history is deeply connected
+
+## Chapter 3
+
+More prose here.'''
+
+        is_valid, report = draft_service.validate_structural_integrity(text)
+
+        assert not is_valid
+        assert report["violation_count"] >= 1
+        violations = report["violations"]
+        assert any(v["type"] == "unclosed_quote_in_core_claim" for v in violations)
+
+    def test_detects_heading_absorbed_by_core_claim(self):
+        """Core Claim that absorbed a chapter heading must be detected."""
+        text = '''## Chapter 2
+
+### Core Claims
+
+- **Claim with absorbed content**: "Quote starts here but never ends
+
+## Chapter 3: This heading got absorbed
+
+More content here.
+
+### Key Excerpts'''
+
+        is_valid, report = draft_service.validate_structural_integrity(text)
+
+        assert not is_valid
+        violations = report["violations"]
+        # Should detect either unclosed quote or heading absorption
+        assert len(violations) >= 1
+
+    def test_passes_valid_core_claims(self):
+        """Valid Core Claims with proper quotes should pass."""
+        text = '''## Chapter 1
+
+Some prose here.
+
+### Core Claims
+
+- **The Enlightenment marked a significant change**: "This line is the most important thing that's ever happened."
+- **Science is about laws**: "Science is about finding laws of nature."
+- **Progress is possible**: "We have learned to live with the fact that everything improves."
+
+## Chapter 2
+
+More prose.'''
+
+        is_valid, report = draft_service.validate_structural_integrity(text)
+
+        assert is_valid
+        assert report["violation_count"] == 0
+
+    def test_passes_core_claims_without_quotes(self):
+        """Core Claims without quotes (placeholder text) should pass."""
+        text = '''## Chapter 1
+
+### Core Claims
+
+*No fully grounded claims available for this chapter.*
+
+## Chapter 2'''
+
+        is_valid, report = draft_service.validate_structural_integrity(text)
+
+        assert is_valid
+        assert report["violation_count"] == 0
+
+    def test_detects_multi_paragraph_quote_absorption(self):
+        """Quote that spans multiple paragraphs indicates structural corruption."""
+        # This simulates Draft 16's issue where quote absorbed entire chapter
+        text = '''## Chapter 2
+
+### Core Claims
+
+- **Human influence is inevitable**: "Yes. This is not only desirable.
+
+Human history is deeply connected to how we develop knowledge.
+
+The Enlightenment marked a turning point.
+
+## Chapter 3'''
+
+        is_valid, report = draft_service.validate_structural_integrity(text)
+
+        assert not is_valid
+        # Should detect unclosed quote in the Core Claim bullet
+        violations = report["violations"]
+        assert any(v["type"] == "unclosed_quote_in_core_claim" for v in violations)

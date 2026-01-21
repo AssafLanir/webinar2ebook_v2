@@ -1905,8 +1905,10 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
     def rewrite_to_indirect(match):
         """Convert direct attribution to indirect speech.
 
-        IMPORTANT: Skip parenthetical attributions like ", Deutsch points out, are..."
-        These should NOT be rewritten - only introducer patterns should get "that".
+        IMPORTANT: Skip these patterns (return unchanged):
+        1. Parenthetical: ", Deutsch points out, are..." (leading comma + lowercase payload)
+        2. Interpolation: ", as Deutsch argues, is..." (preceded by ", as " or " as ")
+        Only introducer patterns should get "that".
         """
         nonlocal rewrite_count
         leading_comma = match.group(1)  # Optional leading comma
@@ -1919,6 +1921,18 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         # it's a parenthetical insert, not a clause introducer
         if leading_comma and first_letter.islower():
             # Return the original match unchanged
+            return match.group(0)
+
+        # SKIP interpolations: ", as Deutsch argues, is..." or "As Deutsch remarks, this..."
+        # Check the left context for "as " pattern preceding the subject
+        match_start = match.start()
+        # Get text before the match (up to 20 chars for context)
+        left_context = text[max(0, match_start - 20):match_start].lower()
+        # Check if this is an "as X argues" interpolation
+        # Pattern: ", as " or " as " immediately before the match
+        if re.search(r',?\s+as\s*$', left_context):
+            # This is an interpolation like ", as Deutsch argues, is"
+            # Don't rewrite - return original
             return match.group(0)
 
         # Handle "points" → "points out" (grammatically required)
@@ -2478,6 +2492,139 @@ def validate_token_integrity(text: str) -> tuple[bool, dict]:
         )
         for v in violations[:5]:
             logger.warning(f"  - {v['type']} at line {v['line_num']}: {v['matched']}")
+
+    return is_valid, {
+        'valid': is_valid,
+        'violations': violations,
+        'violation_count': len(violations),
+    }
+
+
+def validate_structural_integrity(text: str) -> tuple[bool, dict]:
+    """Validate structural integrity of the draft - HARD GATE.
+
+    This is a P0 invariant check. If violations are found, the draft should be REJECTED,
+    not cleaned up. These patterns indicate fundamental corruption that cannot be safely
+    patched.
+
+    Patterns detected:
+    1. Unclosed quotes in Core Claims bullets
+       - Each Core Claim bullet should have exactly 2 double-quote chars (open + close)
+       - OR 0 if the claim uses no quotes
+    2. Headings (## or ###) inside quote spans
+       - A quote that starts but doesn't close before a heading indicates structural corruption
+    3. Multi-paragraph content absorbed into quotes
+       - Paragraphs (double newline) inside a quote span indicate the LLM didn't close the quote
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (is_valid, report) where:
+        - is_valid: True if no violations found, False otherwise
+        - report: Dict with violation details
+    """
+    violations = []
+
+    # Check 1: Core Claims bullets with unclosed quotes
+    in_core_claims = False
+    lines = text.split('\n')
+
+    for line_num, line in enumerate(lines, 1):
+        stripped = line.strip()
+
+        # Track section boundaries
+        if stripped.startswith('### Core Claims'):
+            in_core_claims = True
+            continue
+        elif stripped.startswith('## ') or stripped.startswith('### '):
+            in_core_claims = False
+            continue
+
+        # Check Core Claims bullets
+        if in_core_claims and stripped.startswith('- **'):
+            # Count double quote characters (straight and curly)
+            quote_chars = sum(1 for c in stripped if c in '"\u201c\u201d')
+
+            # Valid states: 0 quotes (no quote in claim) or 2 quotes (open + close)
+            # Invalid: 1 quote (unclosed) or odd number
+            if quote_chars % 2 != 0:
+                violations.append({
+                    'type': 'unclosed_quote_in_core_claim',
+                    'line_num': line_num,
+                    'quote_count': quote_chars,
+                    'context': stripped[:100] + ('...' if len(stripped) > 100 else ''),
+                })
+
+            # Check for headings inside the bullet (structural corruption)
+            # If the line contains ## or ### after the opening, it absorbed content
+            if '## ' in stripped[4:] or '### ' in stripped[4:]:
+                violations.append({
+                    'type': 'heading_inside_core_claim',
+                    'line_num': line_num,
+                    'context': stripped[:100] + ('...' if len(stripped) > 100 else ''),
+                })
+
+    # Check 2: Quote spans that absorb multiple paragraphs
+    # Find opening quotes in narrative that don't close before a paragraph break
+    paragraphs = text.split('\n\n')
+    for para_num, para in enumerate(paragraphs):
+        stripped_para = para.strip()
+
+        # Skip Key Excerpts and Core Claims sections (they have their own rules)
+        if stripped_para.startswith('### Key Excerpts') or stripped_para.startswith('### Core Claims'):
+            continue
+        if stripped_para.startswith('>'):  # Blockquotes are OK
+            continue
+        if stripped_para.startswith('- **'):  # Core Claims bullets
+            continue
+
+        # Check for unclosed quotes in narrative paragraphs
+        # Count quote characters
+        open_quotes = stripped_para.count('"') + stripped_para.count('\u201c')
+        close_quotes = stripped_para.count('"') + stripped_para.count('\u201d')
+
+        # Simple heuristic: if paragraph has more opens than closes, it's suspicious
+        # Note: This is imperfect but catches the "quote absorbs chapter" case
+        if open_quotes > close_quotes + 1:  # Allow 1 imbalance for edge cases
+            # Find line number
+            para_start = text.find(stripped_para[:50]) if stripped_para else -1
+            approx_line = text[:para_start].count('\n') + 1 if para_start > 0 else 0
+
+            violations.append({
+                'type': 'unclosed_quote_in_paragraph',
+                'line_num': approx_line,
+                'open_quotes': open_quotes,
+                'close_quotes': close_quotes,
+                'context': stripped_para[:100] + ('...' if len(stripped_para) > 100 else ''),
+            })
+
+    # Check 3: Specific pattern - Core Claims quote absorbing chapter
+    # Look for patterns where ### appears after an opening " in Core Claims
+    core_claims_sections = re.findall(
+        r'### Core Claims\n\n(.*?)(?=\n## |\n### |\Z)',
+        text,
+        re.DOTALL
+    )
+    for section in core_claims_sections:
+        # Find all bullets
+        bullets = re.findall(r'- \*\*[^*]+\*\*[^\n]*(?:\n(?!- \*\*|\n)[^\n]*)*', section)
+        for bullet in bullets:
+            # Check if bullet contains a heading (absorbed content)
+            if '\n## ' in bullet or '\n### ' in bullet:
+                violations.append({
+                    'type': 'core_claim_absorbed_chapter',
+                    'context': bullet[:150] + ('...' if len(bullet) > 150 else ''),
+                })
+
+    is_valid = len(violations) == 0
+
+    if violations:
+        logger.error(
+            f"Structural integrity check FAILED: {len(violations)} violations found"
+        )
+        for v in violations[:5]:
+            logger.error(f"  - {v['type']}: {v.get('context', '')[:60]}...")
 
     return is_valid, {
         'valid': is_valid,
@@ -5642,6 +5789,30 @@ async def _generate_draft_task(
                     # raise ValueError(f"Token integrity check failed: {integrity_report['violation_count']} violations")
             except Exception as e:
                 logger.error(f"Job {job_id}: Token integrity check failed: {e}", exc_info=True)
+
+        # STRUCTURAL INTEGRITY HARD GATE (Ideas Edition)
+        # P0 invariant: unclosed quotes, headings inside quotes, quote absorption
+        # These indicate fundamental corruption that cannot be safely patched.
+        if content_mode == ContentMode.essay:
+            try:
+                is_valid, struct_report = validate_structural_integrity(final_markdown)
+                if not is_valid:
+                    logger.error(
+                        f"Job {job_id}: STRUCTURAL INTEGRITY VIOLATION - "
+                        f"{struct_report['violation_count']} structural corruption detected"
+                    )
+                    for v in struct_report.get("violations", [])[:5]:
+                        logger.error(
+                            f"  - {v['type']}: {v.get('context', '')[:60]}..."
+                        )
+                        constraint_warnings.append(
+                            f"STRUCTURAL CORRUPTION: {v['type']}"
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+                    # TODO: Elevate to hard-fail once we're confident in the detection:
+                    # raise ValueError(f"Structural integrity check failed: {struct_report['violation_count']} violations")
+            except Exception as e:
+                logger.error(f"Job {job_id}: Structural integrity check failed: {e}", exc_info=True)
 
         await update_job(
             job_id,
