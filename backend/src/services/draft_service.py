@@ -1724,16 +1724,17 @@ def enforce_verbatim_leak_gate(
 
 
 def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
-    """Drop paragraphs containing dangling attribution patterns.
+    """Rewrite dangling attribution patterns to indirect speech.
 
     Detects patterns like:
-    - "Deutsch notes, For ages..." (verb + comma + Capital)
-    - "Deutsch observes: Before..." (verb + colon + Capital)
-    - "stating, This idea..." (participial + comma + Capital)
+    - "He says, This idea..." → "He says that this idea..."
+    - "Deutsch notes, For ages..." → "Deutsch notes that for ages..."
+    - "He cautions, To try..." → "He cautions that to try..."
 
     These patterns indicate the LLM generated an attribution wrapper but
-    the content wasn't properly quoted. Rather than try to fix it surgically,
-    we drop the entire paragraph.
+    the content wasn't properly quoted. Instead of dropping (which causes
+    content collapse), we rewrite to indirect speech by inserting "that"
+    and lowercasing the following word.
 
     Args:
         text: The draft markdown text.
@@ -1741,52 +1742,64 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
     Returns:
         Tuple of (cleaned_text, report_dict).
     """
-    # Patterns for dangling attributions (wrapper without proper quote payload)
-    # These match: attribution verb + punctuation + Capital letter (unquoted content)
-    dangling_patterns = [
-        # "Deutsch notes, For ages..." - subject + verb + comma + Capital
-        re.compile(
-            r'\b(?:Deutsch|David Deutsch|He|She)\s+'
-            r'(?:notes?|observes?|argues?|says?|states?|explains?|suggests?|'
-            r'points?\s+out|warns?|asserts?|claims?|contends?|believes?|'
-            r'maintains?|emphasizes?|stresses?|highlights?|remarks?|adds?|'
-            r'captures?\s+this|marks?\s+this|underscores?\s+this)'
-            r'(?:\s+that)?'
-            r'\s*[,:]\s*'
-            r'[A-Z]',  # Followed by capital letter (unquoted content)
-            re.IGNORECASE
-        ),
-        # "noting, For ages..." - participial + comma + Capital
-        re.compile(
-            r'\b(?:noting|observing|arguing|saying|stating|explaining|'
-            r'suggesting|warning|asserting|claiming|emphasizing|stressing|'
-            r'adding|remarking|capturing)'
-            r'\s*[,:]\s*'
-            r'[A-Z]',
-            re.IGNORECASE
-        ),
-        # "Deutsch:" followed by unquoted capital (colon pattern)
-        re.compile(
-            r'\b(?:Deutsch|David Deutsch)\s*:\s*[A-Z]',
-            re.IGNORECASE
-        ),
-        # "Deutsch captures this transformation:" - extended colon patterns
-        # These are quote-introducer wrappers that escaped the basic patterns
-        re.compile(
-            r'\b(?:Deutsch|David Deutsch)\s+'
-            r'(?:captures?|sums?|puts?|frames?|expresses?|articulates?|'
-            r'conveys?|describes?|characterizes?|summarizes?|encapsulates?)'
-            r'(?:\s+(?:this|the|it|his|her|their|that|an?)\s+\w+)*'  # Optional object phrase
-            r'(?:\s+(?:up|well|succinctly|clearly|eloquently|perfectly))?'  # Optional adverb
-            r'\s*:\s*[A-Z]',  # Colon followed by capital
-            re.IGNORECASE
-        ),
-    ]
+    # Pattern to match dangling attributions for rewriting
+    # Captures: (subject + verb)(punctuation)(first word of payload)
+    # We'll rewrite: "He says, This" → "He says that this"
+    rewrite_pattern = re.compile(
+        r'\b((?:Deutsch|David Deutsch|He|She|They|The\s+guest|The\s+host)\s+'
+        r'(?:notes?|observes?|argues?|says?|said|states?|stated|explains?|explained|'
+        r'suggests?|suggested|points?(?:\s+out)?|warns?|warned|cautions?|cautioned|'
+        r'asserts?|asserted|claims?|claimed|contends?|contended|believes?|believed|'
+        r'maintains?|maintained|emphasizes?|emphasized|stresses?|stressed|'
+        r'highlights?|highlighted|remarks?|remarked|adds?|added|'
+        r'captures?|captured|marks?|marked|underscores?|underscored))'
+        r'(\s*[,:]\s*)'  # Punctuation (comma or colon)
+        r'([A-Za-z])',   # First letter of payload
+        re.IGNORECASE
+    )
 
-    # Split into paragraphs
+    # Participial pattern: "noting, This..." → "noting that this..."
+    participial_pattern = re.compile(
+        r'\b((?:noting|observing|arguing|saying|stating|explaining|'
+        r'suggesting|pointing\s+out|warning|cautioning|asserting|claiming|'
+        r'emphasizing|stressing|adding|remarking|capturing))'
+        r'(\s*[,:]\s*)'
+        r'([A-Za-z])',
+        re.IGNORECASE
+    )
+
+    rewrite_count = 0
+    rewrite_details = []
+
+    def rewrite_to_indirect(match):
+        """Convert direct attribution to indirect speech."""
+        nonlocal rewrite_count
+        subject_verb = match.group(1)
+        punctuation = match.group(2)
+        first_letter = match.group(3)
+
+        # Handle "points" → "points out" (grammatically required)
+        # "He points, This" → "He points out that this"
+        if re.search(r'\bpoints?\s*$', subject_verb, re.IGNORECASE):
+            if not re.search(r'\bpoints?\s+out\s*$', subject_verb, re.IGNORECASE):
+                subject_verb = re.sub(r'(\bpoints?)\s*$', r'\1 out', subject_verb, flags=re.IGNORECASE)
+
+        # Build the replacement: "says," → "says that"
+        # Lowercase the first letter of payload
+        replacement = f"{subject_verb} that {first_letter.lower()}"
+
+        rewrite_count += 1
+        original = match.group(0)
+        rewrite_details.append({
+            "original": original,
+            "replacement": replacement[:len(original) + 10],
+        })
+
+        return replacement
+
+    # Split into paragraphs to track sections
     paragraphs = text.split('\n\n')
-    kept_paragraphs = []
-    dropped_details = []
+    result_paragraphs = []
 
     in_key_excerpts = False
     in_core_claims = False
@@ -1798,59 +1811,49 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         if '### Key Excerpts' in stripped:
             in_key_excerpts = True
             in_core_claims = False
-            kept_paragraphs.append(para)
+            result_paragraphs.append(para)
             continue
         elif '### Core Claims' in stripped:
             in_key_excerpts = False
             in_core_claims = True
-            kept_paragraphs.append(para)
+            result_paragraphs.append(para)
             continue
         elif stripped.startswith('## '):
             in_key_excerpts = False
             in_core_claims = False
-            kept_paragraphs.append(para)
+            result_paragraphs.append(para)
             continue
         elif stripped.startswith('### '):
             in_key_excerpts = False
             in_core_claims = False
-            kept_paragraphs.append(para)
+            result_paragraphs.append(para)
             continue
 
-        # Allow Key Excerpts and Core Claims content
+        # Don't modify Key Excerpts or Core Claims content
         if in_key_excerpts or in_core_claims:
-            kept_paragraphs.append(para)
+            result_paragraphs.append(para)
             continue
 
         # Skip blockquotes
         if stripped.startswith('>'):
-            kept_paragraphs.append(para)
+            result_paragraphs.append(para)
             continue
 
-        # Check for dangling attribution patterns
-        found_dangling = False
-        matched_pattern = None
+        # Apply rewrites to narrative prose
+        modified = para
+        modified = rewrite_pattern.sub(rewrite_to_indirect, modified)
+        modified = participial_pattern.sub(rewrite_to_indirect, modified)
 
-        for pattern in dangling_patterns:
-            match = pattern.search(stripped)
-            if match:
-                found_dangling = True
-                matched_pattern = match.group(0)
-                break
+        result_paragraphs.append(modified)
 
-        if found_dangling:
-            logger.info(f"Dangling attribution gate: dropping paragraph with pattern '{matched_pattern}': {stripped[:60]}...")
-            dropped_details.append({
-                "paragraph": stripped[:80] + '...' if len(stripped) > 80 else stripped,
-                "matched_pattern": matched_pattern,
-            })
-        else:
-            kept_paragraphs.append(para)
+    result = '\n\n'.join(result_paragraphs)
 
-    result = '\n\n'.join(kept_paragraphs)
+    if rewrite_count > 0:
+        logger.info(f"Dangling attribution gate: rewrote {rewrite_count} patterns to indirect speech")
 
     return result, {
-        "paragraphs_dropped": len(dropped_details),
-        "dropped_details": dropped_details,
+        "rewrites_applied": rewrite_count,
+        "rewrite_details": rewrite_details,
     }
 
 

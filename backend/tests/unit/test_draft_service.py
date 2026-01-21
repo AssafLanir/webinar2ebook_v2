@@ -2152,10 +2152,10 @@ The ideas are paraphrased in original language.
 
 
 class TestDanglingAttributionGate:
-    """Tests for enforce_dangling_attribution_gate - drops paragraphs with wrapper-without-payload."""
+    """Tests for enforce_dangling_attribution_gate - rewrites to indirect speech."""
 
-    def test_drops_paragraph_with_noting_comma_capital(self):
-        """'Deutsch notes, For ages...' pattern is dropped."""
+    def test_rewrites_noting_comma_capital(self):
+        """'noting, For ages...' is rewritten to 'noting that for ages...'."""
         text = """## Chapter 1
 
 David Deutsch marks this period as crucial, noting, For ages, human progress crawled slowly.
@@ -2165,10 +2165,11 @@ David Deutsch marks this period as crucial, noting, For ages, human progress cra
         result, report = draft_service.enforce_dangling_attribution_gate(text)
 
         assert "noting, For ages" not in result
-        assert report["paragraphs_dropped"] == 1
+        assert "noting that for ages" in result
+        assert report["rewrites_applied"] == 1
 
-    def test_drops_paragraph_with_stating_comma_capital(self):
-        """'stating, This idea...' pattern is dropped."""
+    def test_rewrites_stating_comma_capital(self):
+        """'stating, This idea...' is rewritten to 'stating that this idea...'."""
         text = """## Chapter 1
 
 Deutsch underscores this by stating, This idea captures the essence of progress.
@@ -2178,10 +2179,11 @@ Deutsch underscores this by stating, This idea captures the essence of progress.
         result, report = draft_service.enforce_dangling_attribution_gate(text)
 
         assert "stating, This idea" not in result
-        assert report["paragraphs_dropped"] == 1
+        assert "stating that this idea" in result
+        assert report["rewrites_applied"] == 1
 
-    def test_drops_paragraph_with_observes_comma_capital(self):
-        """'Deutsch observes, Before...' pattern is dropped."""
+    def test_rewrites_observes_comma_capital(self):
+        """'Deutsch observes, Before...' is rewritten to 'Deutsch observes that before...'."""
         text = """## Chapter 1
 
 Deutsch observes, Before the Enlightenment, there was practically nobody who questioned slavery.
@@ -2191,23 +2193,53 @@ Deutsch observes, Before the Enlightenment, there was practically nobody who que
         result, report = draft_service.enforce_dangling_attribution_gate(text)
 
         assert "observes, Before" not in result
-        assert report["paragraphs_dropped"] == 1
+        assert "observes that before" in result
+        assert report["rewrites_applied"] == 1
 
-    def test_drops_paragraph_with_colon_capital(self):
-        """'Deutsch:' followed by unquoted capital is dropped."""
+    def test_rewrites_he_says_comma_capital(self):
+        """'He says, This...' is rewritten to 'He says that this...'."""
         text = """## Chapter 1
 
-Deutsch: The universe follows a single set of physical laws.
+He says, This idea challenges us to rethink what it means to be wise.
 
 ### Key Excerpts"""
 
         result, report = draft_service.enforce_dangling_attribution_gate(text)
 
-        assert "Deutsch: The universe" not in result
-        assert report["paragraphs_dropped"] == 1
+        assert "He says, This" not in result
+        assert "He says that this" in result
+        assert report["rewrites_applied"] == 1
+
+    def test_rewrites_he_cautions_comma_capital(self):
+        """'He cautions, To...' is rewritten to 'He cautions that to...'."""
+        text = """## Chapter 1
+
+He cautions, To try to do that is a recipe for disaster.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        assert "He cautions, To" not in result
+        assert "He cautions that to" in result
+        assert report["rewrites_applied"] == 1
+
+    def test_rewrites_points_to_points_out(self):
+        """'David Deutsch points, there...' becomes 'points out that there...'."""
+        text = """## Chapter 1
+
+David Deutsch points, there is only one set of laws of physics.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        assert "points, there" not in result
+        assert "points out that there" in result
+        assert report["rewrites_applied"] == 1
 
     def test_preserves_proper_attribution_with_that(self):
-        """'Deutsch argues that knowledge...' (lowercase continuation) is preserved."""
+        """'Deutsch argues that knowledge...' (already indirect) is preserved."""
         text = """## Chapter 1
 
 Deutsch argues that knowledge is infinite and ever-growing.
@@ -2216,12 +2248,12 @@ Deutsch argues that knowledge is infinite and ever-growing.
 
         result, report = draft_service.enforce_dangling_attribution_gate(text)
 
-        # This is valid - "that" followed by lowercase is proper attribution
+        # This is already valid indirect speech
         assert "Deutsch argues that knowledge" in result
-        assert report["paragraphs_dropped"] == 0
+        assert report["rewrites_applied"] == 0
 
     def test_preserves_key_excerpts(self):
-        """Key Excerpts section is never dropped."""
+        """Key Excerpts section is never modified."""
         text = """## Chapter 1
 
 ### Key Excerpts
@@ -2231,9 +2263,10 @@ Deutsch argues that knowledge is infinite and ever-growing.
 
         result, report = draft_service.enforce_dangling_attribution_gate(text)
 
-        # Key Excerpts should be preserved even with the pattern inside
+        # Key Excerpts content should be preserved unchanged
         assert "Key Excerpts" in result
-        assert report["paragraphs_dropped"] == 0
+        assert "noting, For ages" in result  # Preserved in quotes
+        assert report["rewrites_applied"] == 0
 
     def test_preserves_clean_prose(self):
         """Clean prose without dangling patterns is preserved."""
@@ -2249,46 +2282,54 @@ Knowledge grew rapidly during this period.
 
         assert "Enlightenment changed" in result
         assert "Knowledge grew" in result
-        assert report["paragraphs_dropped"] == 0
+        assert report["rewrites_applied"] == 0
 
-    def test_drops_extended_colon_captures_this(self):
-        """'Deutsch captures this transformation:' pattern is dropped."""
+    def test_rewrites_extended_colon_captures_this(self):
+        """'Deutsch captures, This...' is rewritten to indirect speech."""
         text = """## Chapter 1
 
-Deutsch captures this transformation: This shift changed how people approached knowledge.
+Deutsch captures, This shift changed how people approached knowledge.
 
 ### Key Excerpts"""
 
         result, report = draft_service.enforce_dangling_attribution_gate(text)
 
-        assert "captures this transformation:" not in result
-        assert report["paragraphs_dropped"] == 1
+        assert "captures, This" not in result
+        assert "captures that this" in result
+        assert report["rewrites_applied"] == 1
 
-    def test_drops_extended_colon_sums_it_up(self):
-        """'Deutsch sums it up:' pattern is dropped."""
+    def test_rewrites_suggests_comma_capital(self):
+        """'Deutsch suggests, humans...' is rewritten correctly."""
         text = """## Chapter 1
 
-Deutsch sums it up: This idea challenges us to consider our capacity.
+Deutsch suggests, humans can decide that any pattern of behavior is best.
 
 ### Key Excerpts"""
 
         result, report = draft_service.enforce_dangling_attribution_gate(text)
 
-        assert "sums it up:" not in result
-        assert report["paragraphs_dropped"] == 1
+        assert "suggests, humans" not in result
+        assert "suggests that humans" in result
+        assert report["rewrites_applied"] == 1
 
-    def test_drops_extended_colon_captures_this_idea(self):
-        """'David Deutsch captures this idea:' pattern is dropped."""
+    def test_rewrites_multiple_patterns_in_document(self):
+        """Multiple dangling patterns are all rewritten."""
         text = """## Chapter 1
 
-David Deutsch captures this idea: This shared framework allows us to derive knowledge.
+He says, This idea challenges us.
+
+He cautions, To try is risky.
+
+Deutsch points, there is only one truth.
 
 ### Key Excerpts"""
 
         result, report = draft_service.enforce_dangling_attribution_gate(text)
 
-        assert "captures this idea:" not in result
-        assert report["paragraphs_dropped"] == 1
+        assert report["rewrites_applied"] == 3
+        assert "says that this" in result
+        assert "cautions that to" in result
+        assert "points out that there" in result
 
 
 class TestChapterNarrativeFallback:
