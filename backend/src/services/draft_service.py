@@ -778,6 +778,92 @@ def enforce_quote_grounding(
 
     return result, report
 
+def validate_core_claims_structure(text: str) -> tuple[str, dict]:
+    """Validate Core Claims have proper quote structure.
+
+    This is a STRUCTURAL safety net that catches malformed Core Claims
+    that slipped through enforcement (e.g., due to exceptions).
+
+    Drops any Core Claim bullet where:
+    1. The quote is not properly closed (missing closing ")
+    2. The quote contains known garbage suffixes (e.g., " choose.")
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (cleaned_text, report_dict).
+    """
+    # Known garbage patterns that indicate content corruption
+    GARBAGE_SUFFIXES = [
+        r'\s+choose\.$',
+        r'\s+so\s+choose\.$',
+    ]
+    garbage_pattern = re.compile('|'.join(GARBAGE_SUFFIXES), re.IGNORECASE)
+
+    lines = text.split('\n')
+    result_lines = []
+    dropped = []
+    in_core_claims_section = False
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        # Detect Core Claims section start
+        if line.strip() == '### Core Claims':
+            in_core_claims_section = True
+            result_lines.append(line)
+            i += 1
+            continue
+
+        # Detect end of Core Claims section
+        if in_core_claims_section and line.strip().startswith('#'):
+            in_core_claims_section = False
+            # Fall through to append
+
+        # Process Core Claim bullets
+        if in_core_claims_section and line.strip().startswith('- **'):
+            # Check 1: Quote must be properly closed
+            # Valid pattern: - **Claim**: "quote text"
+            has_opening_quote = re.search(r'["\u201c]', line)
+            has_closing_quote = re.search(r'["\u201d]\s*$', line) or re.search(r'["\u201d](?:\s*—|\s*$)', line)
+
+            if has_opening_quote and not has_closing_quote:
+                dropped.append({
+                    "claim": line[:50],
+                    "reason": "missing_closing_quote",
+                })
+                i += 1
+                continue
+
+            # Check 2: No garbage suffixes inside quote
+            quote_match = re.search(r'["\u201c]([^"\u201d]+)["\u201d]', line)
+            if quote_match:
+                quote_text = quote_match.group(1)
+                if garbage_pattern.search(quote_text):
+                    dropped.append({
+                        "claim": line[:50],
+                        "reason": "garbage_suffix_in_quote",
+                    })
+                    i += 1
+                    continue
+
+        result_lines.append(line)
+        i += 1
+
+    result = '\n'.join(result_lines)
+
+    if dropped:
+        logger.info(
+            f"Core Claims structure validation: dropped {len(dropped)} malformed claims"
+        )
+
+    return result, {
+        "dropped_count": len(dropped),
+        "dropped": dropped,
+    }
+
 
 def drop_claims_with_invalid_quotes(
     text: str,
@@ -4939,6 +5025,25 @@ async def _generate_draft_task(
                     )
             except Exception as e:
                 logger.warning(f"Job {job_id}: Final dangling attribution pass failed (non-fatal): {e}")
+
+        # Core Claims structure validation (Ideas Edition safety net)
+        # Catches malformed claims that slipped through enforcement (e.g., due to exceptions)
+        # Drops claims with missing closing quotes or known garbage suffixes
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, structure_report = validate_core_claims_structure(final_markdown)
+                if structure_report["dropped_count"] > 0:
+                    logger.warning(
+                        f"Job {job_id}: Core Claims structure validation - dropped "
+                        f"{structure_report['dropped_count']} malformed claims"
+                    )
+                    for detail in structure_report.get("dropped", [])[:3]:
+                        constraint_warnings.append(
+                            f"Malformed Core Claim dropped ({detail['reason']})"
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Core Claims structure validation failed (non-fatal): {e}")
 
         # Strip empty section headers (Ideas Edition render guard)
         # This is the render guard - empty Key Excerpts/Core Claims sections are removed

@@ -1711,6 +1711,74 @@ class TestFixUnquotedExcerpts:
         assert report["fixes_made"] == 2
 
 
+class TestValidateCoreClaimsStructure:
+    """Tests for validate_core_claims_structure - structural safety net."""
+
+    def test_drops_claim_with_missing_closing_quote(self):
+        """Test that claims without closing quote are dropped."""
+        text = (
+            "## Chapter 1\n\n"
+            "### Core Claims\n\n"
+            '- **Valid claim**: "This is properly quoted."\n'
+            '- **Broken claim**: "This quote has no closing quote\n'
+            "\n## Chapter 2"
+        )
+
+        result, report = draft_service.validate_core_claims_structure(text)
+
+        assert "Valid claim" in result
+        assert "Broken claim" not in result
+        assert report["dropped_count"] == 1
+        assert report["dropped"][0]["reason"] == "missing_closing_quote"
+
+    def test_drops_claim_with_garbage_suffix(self):
+        """Test that claims with ' choose.' garbage suffix are dropped."""
+        text = (
+            "## Chapter 1\n\n"
+            "### Core Claims\n\n"
+            '- **Valid claim**: "This is properly quoted."\n'
+            '- **Corrupted claim**: "This quote has garbage choose."\n'
+            "\n## Chapter 2"
+        )
+
+        result, report = draft_service.validate_core_claims_structure(text)
+
+        assert "Valid claim" in result
+        assert "Corrupted claim" not in result
+        assert report["dropped_count"] == 1
+        assert report["dropped"][0]["reason"] == "garbage_suffix_in_quote"
+
+    def test_preserves_valid_claims(self):
+        """Test that valid claims are preserved."""
+        text = (
+            "## Chapter 1\n\n"
+            "### Core Claims\n\n"
+            '- **First claim**: "Valid quote one."\n'
+            '- **Second claim**: "Valid quote two."\n'
+            "\n## Chapter 2"
+        )
+
+        result, report = draft_service.validate_core_claims_structure(text)
+
+        assert "First claim" in result
+        assert "Second claim" in result
+        assert report["dropped_count"] == 0
+
+    def test_handles_empty_core_claims(self):
+        """Test that empty Core Claims section is handled."""
+        text = (
+            "## Chapter 1\n\n"
+            "### Core Claims\n\n"
+            "*No fully grounded claims available.*\n"
+            "\n## Chapter 2"
+        )
+
+        result, report = draft_service.validate_core_claims_structure(text)
+
+        assert "*No fully grounded claims available.*" in result
+        assert report["dropped_count"] == 0
+
+
 class TestDropClaimsWithInvalidQuotes:
     """Tests for drop_claims_with_invalid_quotes - Core Claims hard gate."""
 
