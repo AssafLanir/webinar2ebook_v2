@@ -1522,21 +1522,49 @@ def enforce_attributed_speech_hard(
                 'action': 'quoted',
             })
         else:
-            # INVALID: Delete entire sentence containing this attribution
+            # INVALID: Delete the full_match (attribution clause) - NOT the whole sentence
+            # This is the key fix: surgical removal of just the attribution wrapper + content
             pos = result.find(full_match)
             if pos == -1:
                 continue
 
-            # Find and delete the entire sentence
-            sent_start, sent_end = get_sentence_boundaries(result, pos)
-            deleted_sentence = result[sent_start:sent_end].strip()
+            # Delete the exact match span
+            before = result[:pos]
+            after = result[pos + len(full_match):]
 
-            result = result[:sent_start] + result[sent_end:]
+            # Clean up punctuation around the deletion
+            # Remove trailing punctuation/space from 'before' if 'after' starts with punctuation
+            before = before.rstrip()
+            after = after.lstrip()
+
+            # Handle common artifacts:
+            # 1. "Text. Deutsch argues, X. More text" → "Text. More text"
+            # 2. "Text, Deutsch argues, X, more text" → "Text, more text" (keep one comma)
+            # 3. "Text Deutsch argues, X more text" → "Text more text"
+
+            # If 'before' ends with sentence-ending punct and 'after' starts lowercase, add space
+            if before and after:
+                if before[-1] in '.!?:' and after[0].islower():
+                    # Probably a fragment - capitalize the after part
+                    after = after[0].upper() + after[1:] if len(after) > 1 else after.upper()
+                    before = before + ' '
+                elif before[-1] in '.!?:' and after[0].isupper():
+                    # Clean transition between sentences
+                    before = before + ' '
+                elif before[-1] in ',;' and after and after[0] not in '.!?,;:':
+                    # Keep the comma, add space
+                    before = before + ' '
+                elif before[-1] not in '.!?,;:' and after and after[0] not in '.!?,;:':
+                    # No punctuation on either side - add space
+                    before = before + ' '
+
+            result = before + after
+
             invalid_deleted.append({
                 'speaker': speaker,
                 'content': content[:50] + '...' if len(content) > 50 else content,
                 'reason': validation['reason'],
-                'deleted_sentence': deleted_sentence[:80] + '...' if len(deleted_sentence) > 80 else deleted_sentence,
+                'deleted_match': full_match[:80] + '...' if len(full_match) > 80 else full_match,
             })
 
     # Clean up multiple consecutive newlines/spaces
@@ -1545,6 +1573,12 @@ def enforce_attributed_speech_hard(
 
     # Grammar repair pass: remove orphan fragments
     result = repair_grammar_fragments(result)
+
+    # Cleanup pass: remove dangling attribution wrappers
+    # These are artifacts like "Deutsch notes." or "saying," left after content removal
+    result, dangling_count = cleanup_dangling_attributions(result)
+    if dangling_count > 0:
+        logger.info(f"Attribution enforcement: cleaned up {dangling_count} dangling wrappers")
 
     if valid_converted:
         logger.info(
@@ -1741,6 +1775,96 @@ def repair_grammar_fragments(text: str) -> str:
             repaired_paragraphs.append(repaired_para)
 
     return '\n\n'.join(repaired_paragraphs)
+
+
+def cleanup_dangling_attributions(text: str) -> tuple[str, int]:
+    """Remove dangling attribution wrappers left after content deletion.
+
+    These are patterns like:
+    - "Deutsch argues," (trailing comma, no content)
+    - "Deutsch notes." (period immediately after verb)
+    - "saying." (orphan participial)
+    - "Deutsch says:" (colon with no content)
+    - "David Deutsch captures this idea, stating," (trailing comma)
+
+    Args:
+        text: Text that may have dangling attribution fragments.
+
+    Returns:
+        Tuple of (cleaned_text, count_of_removals).
+    """
+    result = text
+    removal_count = 0
+
+    # Patterns for dangling attributions (attribution verb followed by just punctuation)
+    # These indicate the content was removed but the wrapper remained
+    dangling_patterns = [
+        # "Deutsch argues," or "Deutsch argues." at end of sentence/before newline
+        (
+            r'\b(?:Deutsch|David Deutsch|He|She)\s+'
+            r'(?:argues?|says?|notes?|observes?|warns?|asserts?|claims?|explains?|'
+            r'points?\s+out|suggests?|states?|contends?|believes?|maintains?|emphasizes?|'
+            r'stresses?|highlights?|insists?|remarks?|cautions?|envisions?|tells?|adds?|'
+            r'writes?|acknowledges?|reflects?|challenges?|sees?|views?|thinks?|considers?|'
+            r'describes?|calls?|puts?|captures?\s+this\s+idea)'
+            r'(?:\s+that)?'  # Optional "that"
+            r'\s*[,.:;]\s*(?=\n|$|[A-Z])',  # Ends with punct, followed by newline/end/capital
+            re.IGNORECASE
+        ),
+        # "saying." or "noting," as orphan participial
+        (
+            r'\b(?:saying|noting|arguing|observing|warning|explaining|claiming|asserting|'
+            r'adding|suggesting|stating|emphasizing|stressing|insisting|remarking)'
+            r'\s*[,.:;]\s*(?=\n|$|[A-Z])',
+            re.IGNORECASE
+        ),
+        # Double punctuation artifacts: ", ." or ": ," or ", ,"
+        (
+            r'[,.:;]\s*[,.:;]',
+            0  # No flags
+        ),
+        # Attribution with colon but no content: "Deutsch says: " followed by capital/newline
+        (
+            r'\b(?:Deutsch|David Deutsch|He|She)\s*:\s*(?=\n|$|[A-Z])',
+            re.IGNORECASE
+        ),
+    ]
+
+    for pattern, flags in dangling_patterns:
+        compiled = re.compile(pattern, flags) if flags else re.compile(pattern)
+
+        # Process from right to left to maintain positions
+        matches = list(compiled.finditer(result))
+        for match in reversed(matches):
+            matched_text = match.group(0)
+            start, end = match.start(), match.end()
+
+            # Don't remove if it's part of a larger valid structure
+            # (e.g., "Deutsch argues, " followed by a quote)
+            after_text = result[end:end + 10] if end < len(result) else ""
+            if after_text.lstrip().startswith('"') or after_text.lstrip().startswith('\u201c'):
+                continue
+
+            # Remove the dangling attribution
+            before = result[:start].rstrip()
+            after = result[end:].lstrip()
+
+            # Add space if needed for sentence flow
+            if before and after and before[-1] in '.!?' and after[0].isupper():
+                result = before + ' ' + after
+            elif before and after and before[-1] not in '.!?,;:' and after[0] not in '.!?,;:':
+                result = before + ' ' + after
+            else:
+                result = before + after
+
+            removal_count += 1
+            logger.info(f"Removed dangling attribution: '{matched_text}'")
+
+    # Clean up multiple spaces/newlines
+    result = re.sub(r'  +', ' ', result)
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    return result, removal_count
 
 
 def repair_whitespace(text: str) -> str:

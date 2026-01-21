@@ -456,6 +456,144 @@ def find_short_support_claims(markdown: str) -> list[ShortSupportViolation]:
     return violations
 
 
+class DanglingAttributionViolation(TypedDict):
+    chapter: int
+    text: str
+    line_num: int
+
+
+class TokenCorruptionViolation(TypedDict):
+    chapter: int
+    text: str
+    line_num: int
+    pattern: str
+
+
+def find_dangling_attributions(markdown: str) -> list[DanglingAttributionViolation]:
+    """Find dangling attribution wrappers (content removed but wrapper remains).
+
+    Patterns like:
+    - "Deutsch argues," or "Deutsch notes." (verb followed by just punctuation)
+    - "saying." or "stating," (orphan participial)
+
+    Args:
+        markdown: Full document markdown.
+
+    Returns:
+        List of dangling attribution violations.
+    """
+    violations = []
+    lines = markdown.split('\n')
+    current_chapter = 0
+
+    # Patterns for dangling attributions
+    dangling_patterns = [
+        # "Deutsch argues," or "Deutsch argues." followed by newline/capital
+        re.compile(
+            r'\b(?:Deutsch|David Deutsch|He|She)\s+'
+            r'(?:argues?|says?|notes?|observes?|warns?|asserts?|claims?|explains?|'
+            r'points?\s+out|suggests?|states?|contends?|believes?|maintains?|emphasizes?|'
+            r'stresses?|highlights?|insists?|remarks?|cautions?|envisions?|tells?|adds?|'
+            r'writes?|acknowledges?|reflects?|challenges?|sees?|views?|thinks?|considers?|'
+            r'describes?|calls?|puts?|captures?\s+this\s+idea)'
+            r'(?:\s+that)?'
+            r'\s*[,.:;]\s*$',  # Ends line with punctuation
+            re.IGNORECASE
+        ),
+        # "saying." or "noting," at end of line
+        re.compile(
+            r'\b(?:saying|noting|arguing|observing|warning|explaining|claiming|asserting|'
+            r'adding|suggesting|stating|emphasizing|stressing|insisting|remarking)'
+            r'\s*[,.:;]\s*$',
+            re.IGNORECASE
+        ),
+    ]
+
+    for line_num, line in enumerate(lines, 1):
+        stripped = line.strip()
+
+        # Track chapter
+        if stripped.startswith('## Chapter'):
+            match = re.match(r'## Chapter (\d+)', stripped)
+            if match:
+                current_chapter = int(match.group(1))
+            continue
+
+        # Skip headers and blockquotes
+        if stripped.startswith('#') or stripped.startswith('>'):
+            continue
+
+        # Check for dangling patterns
+        for pattern in dangling_patterns:
+            match = pattern.search(stripped)
+            if match:
+                violations.append({
+                    "chapter": current_chapter,
+                    "text": match.group(0),
+                    "line_num": line_num,
+                })
+
+    return violations
+
+
+def find_token_corruption(markdown: str) -> list[TokenCorruptionViolation]:
+    """Find likely token corruption from bad replacements.
+
+    Patterns like:
+    - "he oxygen" (missing capital "T" from "The")
+    - Sequences of letters that look like partial word deletions
+
+    Args:
+        markdown: Full document markdown.
+
+    Returns:
+        List of token corruption violations.
+    """
+    violations = []
+    lines = markdown.split('\n')
+    current_chapter = 0
+
+    # Patterns that indicate corruption
+    corruption_patterns = [
+        # Lowercase word that looks like it should be capitalized after period
+        # e.g., ". he oxygen" or ". t oxygen"
+        (r'\.\s+([a-z]{1,2})\s+[a-z]+', 'lowercase_after_period'),
+        # Common corrupted article patterns
+        (r'\b(he|t|a|n|nd)\s+(oxygen|carbon|hydrogen|water|air|earth|sun|moon)', 'corrupted_article'),
+        # Double punctuation that escaped cleanup
+        (r'[,.:;]\s*[,.:;]', 'double_punctuation'),
+        # Orphan single letter mid-sentence (likely partial deletion)
+        (r'\s[a-z]\s+[a-z]{3,}', 'orphan_letter'),
+    ]
+
+    for line_num, line in enumerate(lines, 1):
+        stripped = line.strip()
+
+        # Track chapter
+        if stripped.startswith('## Chapter'):
+            match = re.match(r'## Chapter (\d+)', stripped)
+            if match:
+                current_chapter = int(match.group(1))
+            continue
+
+        # Skip headers
+        if stripped.startswith('#'):
+            continue
+
+        # Check for corruption patterns
+        for pattern, pattern_name in corruption_patterns:
+            matches = re.finditer(pattern, stripped, re.IGNORECASE)
+            for match in matches:
+                violations.append({
+                    "chapter": current_chapter,
+                    "text": match.group(0),
+                    "line_num": line_num,
+                    "pattern": pattern_name,
+                })
+
+    return violations
+
+
 def validate_structural_invariants(
     markdown: str,
     whitelist_quotes: list[str] | None = None,
@@ -474,6 +612,8 @@ def validate_structural_invariants(
     placeholder_glue = find_placeholder_glue(markdown)
     claims_gaps = find_claims_coverage_gaps(markdown)
     short_supports = find_short_support_claims(markdown)
+    dangling_attributions = find_dangling_attributions(markdown)
+    token_corruption = find_token_corruption(markdown)
 
     # Verbatim leaks only checked if whitelist provided
     verbatim_leaks = []
@@ -487,6 +627,8 @@ def validate_structural_invariants(
         and len(claims_gaps) == 0
         and len(short_supports) == 0
         and len(verbatim_leaks) == 0
+        and len(dangling_attributions) == 0
+        and len(token_corruption) == 0
     )
 
     return {
@@ -497,4 +639,6 @@ def validate_structural_invariants(
         "verbatim_leaks": verbatim_leaks,
         "claims_gaps": claims_gaps,
         "short_supports": short_supports,
+        "dangling_attributions": dangling_attributions,
+        "token_corruption": token_corruption,
     }
