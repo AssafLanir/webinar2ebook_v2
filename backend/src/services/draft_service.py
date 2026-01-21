@@ -1832,17 +1832,19 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
     # Captures: (optional leading comma)(subject + verb)(punctuation)(first word of payload)
     # We'll rewrite: "He says, This" → "He says that this"
     # BUT skip parenthetical: ", Deutsch points out, are" should NOT become "points out that are"
-    # AND skip "as X notes": "as Deutsch notes, is" should NOT become "as Deutsch notes that is"
+    # AND skip mid-sentence interpolations: ", as Deutsch notes, is" should NOT be rewritten
+    # NOTE: Sentence-start "As Deutsch remarks, This" SHOULD be rewritten (no comma before "as")
     rewrite_pattern = re.compile(
         r'(,\s*)?'  # Group 1: Optional leading comma (indicates parenthetical)
-        r'(?<!as )'  # Negative lookbehind: skip "as X notes" interpolations
+        r'(?<!, as )'  # Negative lookbehind: skip ", as X notes" mid-sentence interpolations
         r'\b((?:Deutsch|David Deutsch|He|She|They|The\s+guest|The\s+host)\s+'
+        r'(?:[a-z]+ly\s+)?'  # Optional adverb (e.g., "poignantly", "eloquently")
         r'(?:notes?|observes?|argues?|says?|said|states?|stated|explains?|explained|'
         r'suggests?|suggested|points?(?:\s+out)?|warns?|warned|cautions?|cautioned|'
         r'asserts?|asserted|claims?|claimed|contends?|contended|believes?|believed|'
         r'maintains?|maintained|emphasizes?|emphasized|stresses?|stressed|'
         r'highlights?|highlighted|remarks?|remarked|adds?|added|'
-        r'insists?|insisted|'
+        r'insists?|insisted|predicts?|predicted|'
         r'captures?|captured|marks?|marked|underscores?|underscored))'
         r'(\s*[,:]\s*)'  # Group 3: Punctuation (comma or colon)
         r'([A-Za-z])',   # Group 4: First letter of payload
@@ -1851,13 +1853,13 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
 
     # Participial pattern: "noting, This..." → "noting that this..."
     # Also captures optional leading comma for parenthetical detection
-    # Also skips "as X notes" interpolations via negative lookbehind
+    # Also skips mid-sentence ", as X notes" interpolations via negative lookbehind
     participial_pattern = re.compile(
         r'(,\s*)?'  # Group 1: Optional leading comma (indicates parenthetical)
-        r'(?<!as )'  # Negative lookbehind: skip "as X notes" interpolations
+        r'(?<!, as )'  # Negative lookbehind: skip ", as X notes" mid-sentence interpolations
         r'\b((?:noting|observing|arguing|saying|stating|explaining|'
         r'suggesting|pointing\s+out|warning|cautioning|asserting|claiming|'
-        r'emphasizing|stressing|adding|remarking|capturing))'
+        r'emphasizing|stressing|adding|remarking|capturing|predicting))'
         r'(\s*[,:]\s*)'  # Group 3: Punctuation
         r'([A-Za-z])',   # Group 4: First letter
         re.IGNORECASE

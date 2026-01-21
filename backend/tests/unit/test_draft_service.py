@@ -2609,6 +2609,64 @@ Science evolved, observing. The method changed everything.
         # Sentence should flow
         assert ". The method" in result
 
+    def test_rewrites_sentence_start_as_x_remarks(self):
+        """REGRESSION Draft 13: Sentence-start 'As X remarks, This' SHOULD be rewritten.
+
+        Input: 'As Deutsch poignantly remarks, This insight reflects...'
+        Unlike mid-sentence ', as X notes, is', this is a sentence-start introducer
+        that needs 'that' insertion.
+        """
+        text = """## Chapter 1
+
+As Deutsch poignantly remarks, This insight reflects the spirit of the Enlightenment.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Should be rewritten to indirect speech
+        assert "remarks that this insight" in result
+        # Original dangling pattern should be gone
+        assert "remarks, This" not in result
+        assert report["rewrites_applied"] >= 1
+
+    def test_rewrites_he_predicts_comma(self):
+        """REGRESSION Draft 13: 'He predicts, This' should be rewritten.
+
+        Input: 'He predicts, This vision highlights...'
+        """
+        text = """## Chapter 1
+
+He predicts, This vision highlights human ingenuity's role.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Should be rewritten to indirect speech
+        assert "predicts that this vision" in result
+        assert "predicts, This" not in result
+        assert report["rewrites_applied"] >= 1
+
+    def test_still_skips_mid_sentence_as_x_notes(self):
+        """Mid-sentence ', as X notes, is' should still be skipped.
+
+        This ensures the lookbehind refinement didn't break the skip logic.
+        """
+        text = """## Chapter 1
+
+Science, as Deutsch notes, is about finding laws of nature. As He remarks, This is key.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Mid-sentence interpolation should NOT be rewritten
+        assert "as Deutsch notes, is" in result
+        assert "notes that is" not in result
+        # But sentence-start introducer SHOULD be rewritten
+        assert "remarks that this is key" in result
+
 
 class TestFixTruncatedAttributions:
     """Tests for fix_truncated_attributions - joins split attribution lines."""
