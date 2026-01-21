@@ -1440,7 +1440,10 @@ def enforce_attributed_speech_hard(
     - Detect patterns like "Deutsch argues, X" / "He says, X" / "Deutsch: X"
     - Validate X against transcript (exact substring match)
     - If valid AND no ellipsis: wrap X in quotes → Deutsch argues, "X".
-    - If invalid OR has ellipsis: DELETE entire clause/sentence
+    - If invalid OR has ellipsis: DROP THE ENTIRE PARAGRAPH (not surgical edit)
+
+    This uses paragraph-level dropping to avoid corruption from partial deletions.
+    Paragraphs are atomic units - either they're valid or they're removed entirely.
 
     Args:
         text: The generated text.
@@ -1452,11 +1455,15 @@ def enforce_attributed_speech_hard(
     attributed = find_attributed_speech(text)
 
     valid_converted = []  # Valid attributions that got quotes added
-    invalid_deleted = []  # Invalid attributions that were deleted
-    result = text
+    invalid_deleted = []  # Invalid attributions - paragraphs dropped
+    paragraphs_with_invalid = set()  # Track which paragraph indices have invalid content
 
-    # Process in reverse order to maintain positions
-    for attr in reversed(attributed):
+    # Split text into paragraphs (double newline separated)
+    # Preserve section headers as separate "paragraphs" that are never dropped
+    paragraphs = text.split('\n\n')
+
+    # First pass: identify which paragraphs contain invalid attributions
+    for attr in attributed:
         content = attr['content']
         speaker = attr['speaker']
         full_match = attr['full_match']
@@ -1464,121 +1471,115 @@ def enforce_attributed_speech_hard(
         # Validate content against transcript
         validation = validate_attributed_content(content, transcript)
 
-        if validation['valid']:
-            # VALID: Wrap content in quotes
-            # "Deutsch argues, X becomes Y." → "Deutsch argues, "X becomes Y.""
-            pos = result.find(full_match)
-            if pos == -1:
+        if not validation['valid']:
+            # Find which paragraph contains this invalid attribution
+            char_pos = text.find(full_match)
+            if char_pos == -1:
                 continue
 
-            # Build the quoted version
-            if attr['pattern_type'] == 'suffix':
-                # "X, Deutsch argues." → ""X," Deutsch argues."
-                # Extract the full attribution clause (everything after content)
-                # to preserve phrases like "Deutsch tells me" or "Deutsch points out here"
-                attribution_clause = full_match[len(content):].strip()
-                # Remove leading comma if present
-                if attribution_clause.startswith(','):
-                    attribution_clause = attribution_clause[1:].strip()
-                # Ensure it ends with a period
-                if not attribution_clause.endswith('.'):
-                    attribution_clause = attribution_clause + '.'
-                quoted_version = f'"{content}," {attribution_clause}'
-            elif attr['pattern_type'] == 'mid':
-                # "X, he says, Y" → ""X," he says, Y"
-                # We wrap the content in quotes and keep the trailing comma
-                verb = _extract_verb(full_match, speaker)
-                quoted_version = f'"{content}," {speaker} {verb}, '
-            elif attr['pattern_type'] == 'colon':
-                # "Deutsch: X" → "Deutsch: "X""
-                quoted_version = f'{speaker}: "{content}"'
-            elif attr['pattern_type'] == 'colon_extended':
-                # "Deutsch's thoughts illustrate this: X" → preserve lead-in, quote content
-                # Extract everything before the colon + content
-                colon_pos = full_match.rfind(':')
-                lead_in = full_match[:colon_pos + 1].strip()
-                quoted_version = f'{lead_in} "{content}"'
-            elif attr['pattern_type'] == 'participial':
-                # "Deutsch agrees with X, saying Content." → "Deutsch agrees with X, saying "Content.""
-                # Extract lead-in (everything before content)
-                content_start = full_match.find(content)
-                lead_in = full_match[:content_start].strip()
-                quoted_version = f'{lead_in} "{content}."'
-            elif attr['pattern_type'] == 'as_prefix':
-                # "As Deutsch puts it, Content." → "As Deutsch puts it, "Content.""
-                # Extract lead-in (everything before content)
-                content_start = full_match.find(content)
-                lead_in = full_match[:content_start].strip()
-                quoted_version = f'{lead_in} "{content}."'
-            else:
-                # "Deutsch argues, X." → "Deutsch argues, "X.""
-                verb = _extract_verb(full_match, speaker)
-                quoted_version = f'{speaker} {verb}, "{content}."'
+            # Determine paragraph index by counting \n\n before this position
+            text_before = text[:char_pos]
+            para_idx = text_before.count('\n\n')
 
-            result = result[:pos] + quoted_version + result[pos + len(full_match):]
-            valid_converted.append({
-                'speaker': speaker,
-                'content': content[:50] + '...' if len(content) > 50 else content,
-                'action': 'quoted',
-            })
+            # Don't drop header paragraphs (## or ###)
+            if para_idx < len(paragraphs):
+                para_text = paragraphs[para_idx].strip()
+                if not para_text.startswith('#'):
+                    paragraphs_with_invalid.add(para_idx)
+                    invalid_deleted.append({
+                        'speaker': speaker,
+                        'content': content[:50] + '...' if len(content) > 50 else content,
+                        'reason': validation['reason'],
+                        'paragraph_idx': para_idx,
+                        'paragraph_preview': para_text[:80] + '...' if len(para_text) > 80 else para_text,
+                    })
+
+    # Second pass: process valid attributions (wrap in quotes)
+    # Work on the original text, processing in reverse to maintain positions
+    result = text
+    for attr in reversed(attributed):
+        content = attr['content']
+        speaker = attr['speaker']
+        full_match = attr['full_match']
+
+        # Skip if this attribution's paragraph will be dropped
+        char_pos = result.find(full_match)
+        if char_pos == -1:
+            continue
+
+        text_before = result[:char_pos]
+        para_idx = text_before.count('\n\n')
+        if para_idx in paragraphs_with_invalid:
+            continue  # This paragraph will be dropped, skip processing
+
+        validation = validate_attributed_content(content, transcript)
+        if not validation['valid']:
+            continue  # Already tracked for paragraph drop
+
+        # VALID: Wrap content in quotes
+        pos = result.find(full_match)
+        if pos == -1:
+            continue
+
+        # Build the quoted version based on pattern type
+        if attr['pattern_type'] == 'suffix':
+            attribution_clause = full_match[len(content):].strip()
+            if attribution_clause.startswith(','):
+                attribution_clause = attribution_clause[1:].strip()
+            if not attribution_clause.endswith('.'):
+                attribution_clause = attribution_clause + '.'
+            quoted_version = f'"{content}," {attribution_clause}'
+        elif attr['pattern_type'] == 'mid':
+            verb = _extract_verb(full_match, speaker)
+            quoted_version = f'"{content}," {speaker} {verb}, '
+        elif attr['pattern_type'] == 'colon':
+            quoted_version = f'{speaker}: "{content}"'
+        elif attr['pattern_type'] == 'colon_extended':
+            colon_pos = full_match.rfind(':')
+            lead_in = full_match[:colon_pos + 1].strip()
+            quoted_version = f'{lead_in} "{content}"'
+        elif attr['pattern_type'] == 'participial':
+            content_start = full_match.find(content)
+            lead_in = full_match[:content_start].strip()
+            quoted_version = f'{lead_in} "{content}."'
+        elif attr['pattern_type'] == 'as_prefix':
+            content_start = full_match.find(content)
+            lead_in = full_match[:content_start].strip()
+            quoted_version = f'{lead_in} "{content}."'
         else:
-            # INVALID: Delete the full_match (attribution clause) - NOT the whole sentence
-            # This is the key fix: surgical removal of just the attribution wrapper + content
-            pos = result.find(full_match)
-            if pos == -1:
-                continue
+            verb = _extract_verb(full_match, speaker)
+            quoted_version = f'{speaker} {verb}, "{content}."'
 
-            # Delete the exact match span
-            before = result[:pos]
-            after = result[pos + len(full_match):]
+        result = result[:pos] + quoted_version + result[pos + len(full_match):]
+        valid_converted.append({
+            'speaker': speaker,
+            'content': content[:50] + '...' if len(content) > 50 else content,
+            'action': 'quoted',
+        })
 
-            # Clean up punctuation around the deletion
-            # Remove trailing punctuation/space from 'before' if 'after' starts with punctuation
-            before = before.rstrip()
-            after = after.lstrip()
+    # Third pass: drop paragraphs with invalid content
+    # Re-split since we may have modified valid paragraphs
+    if paragraphs_with_invalid:
+        new_paragraphs = result.split('\n\n')
+        kept_paragraphs = []
+        for idx, para in enumerate(new_paragraphs):
+            if idx in paragraphs_with_invalid:
+                logger.info(f"Dropping paragraph {idx} with invalid attribution: {para[:60]}...")
+            else:
+                kept_paragraphs.append(para)
+        result = '\n\n'.join(kept_paragraphs)
 
-            # Handle common artifacts:
-            # 1. "Text. Deutsch argues, X. More text" → "Text. More text"
-            # 2. "Text, Deutsch argues, X, more text" → "Text, more text" (keep one comma)
-            # 3. "Text Deutsch argues, X more text" → "Text more text"
-
-            # If 'before' ends with sentence-ending punct and 'after' starts lowercase, add space
-            if before and after:
-                if before[-1] in '.!?:' and after[0].islower():
-                    # Probably a fragment - capitalize the after part
-                    after = after[0].upper() + after[1:] if len(after) > 1 else after.upper()
-                    before = before + ' '
-                elif before[-1] in '.!?:' and after[0].isupper():
-                    # Clean transition between sentences
-                    before = before + ' '
-                elif before[-1] in ',;' and after and after[0] not in '.!?,;:':
-                    # Keep the comma, add space
-                    before = before + ' '
-                elif before[-1] not in '.!?,;:' and after and after[0] not in '.!?,;:':
-                    # No punctuation on either side - add space
-                    before = before + ' '
-
-            result = before + after
-
-            invalid_deleted.append({
-                'speaker': speaker,
-                'content': content[:50] + '...' if len(content) > 50 else content,
-                'reason': validation['reason'],
-                'deleted_match': full_match[:80] + '...' if len(full_match) > 80 else full_match,
-            })
-
-    # Clean up multiple consecutive newlines/spaces
+    # SAFE cleanup only - no aggressive fragment removal
+    # Just normalize whitespace and fix obvious punctuation issues
     result = re.sub(r'\n{3,}', '\n\n', result)
     result = re.sub(r'  +', ' ', result)
+    result = re.sub(r'[,.:;]\s*[,.:;]', '.', result)  # Fix double punctuation
 
-    # Grammar repair pass: remove orphan fragments
-    result = repair_grammar_fragments(result)
+    # NOTE: We deliberately DO NOT call repair_grammar_fragments here
+    # That function causes token corruption by doing aggressive in-paragraph edits.
+    # Paragraph-level dropping is cleaner - either keep the paragraph or drop it entirely.
 
-    # Cleanup pass: remove dangling attribution wrappers
-    # These are artifacts like "Deutsch notes." or "saying," left after content removal
-    result, dangling_count = cleanup_dangling_attributions(result)
-    if dangling_count > 0:
-        logger.info(f"Attribution enforcement: cleaned up {dangling_count} dangling wrappers")
+    dangling_count = 0  # No longer doing dangling cleanup - paragraphs are dropped whole
 
     if valid_converted:
         logger.info(

@@ -541,7 +541,9 @@ def find_token_corruption(markdown: str) -> list[TokenCorruptionViolation]:
 
     Patterns like:
     - "he oxygen" (missing capital "T" from "The")
-    - Sequences of letters that look like partial word deletions
+    - "The effects The belief" (stitched fragments from deletion)
+    - "this,pointing" (missing space after comma)
+    - "he ir," (partial word deletion)
 
     Args:
         markdown: Full document markdown.
@@ -564,6 +566,27 @@ def find_token_corruption(markdown: str) -> list[TokenCorruptionViolation]:
         (r'[,.:;]\s*[,.:;]', 'double_punctuation'),
         # Orphan single letter mid-sentence (likely partial deletion)
         (r'\s[a-z]\s+[a-z]{3,}', 'orphan_letter'),
+
+        # === New patterns from Draft 18 analysis ===
+
+        # Stitched fragments: "The effects The belief" - two capitalized phrases welded
+        (r'\b(The\s+\w+)\s+(The\s+\w+)', 'stitched_fragments'),
+        # "these The relationship" - lowercase followed by capital mid-sentence
+        (r'\b(these|those|this|that)\s+The\s+\w+', 'stitched_lowercase_capital'),
+        # Comma immediately followed by letter (missing space): "this,pointing"
+        (r',[a-zA-Z]', 'missing_space_after_comma'),
+        # Truncated word pattern: "he ir," - partial word followed by comma
+        (r'\bhe\s+ir\b', 'truncated_word'),
+        # Orphaned "However," + capital (broken sentence): "However, There are"
+        (r'However,\s+There\b', 'orphaned_however'),
+        # Orphaned "Colonization raises The" - sentence fragment + capital
+        (r'\b\w+\s+raises?\s+The\s+', 'orphaned_raises'),
+        # Orphaned "When it comes to X, It" - comma followed by orphan It
+        (r',\s+It\s+(challenges?|shows?|is|was|suggests?|demonstrates?)\b', 'orphaned_it'),
+        # "Deutsch points," without continuation (incomplete attribution)
+        (r'\bDeutsch\s+points,\s+[A-Z]', 'incomplete_attribution'),
+        # "noting, For" or "saying, The" - participial without quote content
+        (r'\b(noting|saying|arguing|stating),\s+[A-Z]', 'orphan_participial'),
     ]
 
     for line_num, line in enumerate(lines, 1):
