@@ -5567,7 +5567,7 @@ async def _generate_draft_task(
         if content_mode == ContentMode.essay and whitelist:
             try:
                 # Extract quote texts from whitelist for comparison
-                whitelist_quote_texts = [q.text for q in whitelist]
+                whitelist_quote_texts = [q.quote_text for q in whitelist]
                 final_markdown, leak_report = enforce_verbatim_leak_gate(
                     final_markdown,
                     whitelist_quote_texts,
