@@ -2238,6 +2238,20 @@ David Deutsch points, there is only one set of laws of physics.
         assert "points out that there" in result
         assert report["rewrites_applied"] == 1
 
+    def test_rewrites_insists_comma_capital(self):
+        """'Deutsch insists, The...' is rewritten to 'Deutsch insists that the...'."""
+        text = """## Chapter 1
+
+Deutsch insists, The Enlightenment ushered in a new era.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        assert "insists, The" not in result
+        assert "insists that the" in result
+        assert report["rewrites_applied"] == 1
+
     def test_preserves_proper_attribution_with_that(self):
         """'Deutsch argues that knowledge...' (already indirect) is preserved."""
         text = """## Chapter 1

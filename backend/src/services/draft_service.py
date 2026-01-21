@@ -1752,6 +1752,7 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         r'asserts?|asserted|claims?|claimed|contends?|contended|believes?|believed|'
         r'maintains?|maintained|emphasizes?|emphasized|stresses?|stressed|'
         r'highlights?|highlighted|remarks?|remarked|adds?|added|'
+        r'insists?|insisted|'
         r'captures?|captured|marks?|marked|underscores?|underscored))'
         r'(\s*[,:]\s*)'  # Punctuation (comma or colon)
         r'([A-Za-z])',   # First letter of payload
@@ -4907,6 +4908,23 @@ async def _generate_draft_task(
                 )
             except Exception as e:
                 logger.warning(f"Job {job_id}: Second excerpt injection pass failed (non-fatal): {e}")
+
+        # Final speaker normalization pass (Ideas Edition only)
+        # Re-run after all content modifications to catch any non-canonical names
+        # introduced by injection passes or other gates
+        if content_mode == ContentMode.essay and whitelist:
+            try:
+                speaker_registry = build_speaker_registry(whitelist)
+                final_markdown, final_speaker_report = normalize_speaker_names(
+                    final_markdown, speaker_registry
+                )
+                final_norm_count = final_speaker_report.get("normalized_count", 0)
+                if final_norm_count > 0:
+                    logger.info(
+                        f"Job {job_id}: Final speaker normalization - normalized {final_norm_count} attributions"
+                    )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Final speaker normalization failed (non-fatal): {e}")
 
         # Strip empty section headers (Ideas Edition render guard)
         # This is the render guard - empty Key Excerpts/Core Claims sections are removed
