@@ -2345,6 +2345,185 @@ def fix_truncated_attributions(text: str) -> tuple[str, dict]:
     }
 
 
+# Known valid short words that can follow "he " legitimately
+VALID_HE_WORDS = {
+    'is', 'was', 'has', 'had', 'can', 'may', 'did', 'does', 'will', 'would',
+    'could', 'should', 'might', 'must', 'a', 'an', 'the', 'and', 'or', 'but',
+    'in', 'on', 'at', 'to', 'of', 'for', 'by', 'as', 'if', 'so', 'no', 'up',
+    'it', 'be', 'we', 'us', 'his', 'her', 'its', 'our', 'my', 'me', 'him',
+}
+
+
+def validate_token_integrity(text: str) -> tuple[bool, dict]:
+    """Validate that no token truncation artifacts exist in the draft.
+
+    This is a HARD GATE - if violations are found, the draft should be rejected.
+    Token truncation indicates a buggy transform mutated text mid-word.
+
+    Patterns detected:
+    1. ", he [fragment]," where fragment is not a valid English word
+       Examples: "he n,", "he p,", "he power," (power isn't a verb after "he")
+    2. Orphan tail lines like "so choose." appearing standalone
+    3. Mid-word truncation signatures in prose
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (is_valid, report) where:
+        - is_valid: True if no violations found, False otherwise
+        - report: Dict with violation details
+    """
+    violations = []
+
+    # Split into lines for analysis
+    lines = text.split('\n')
+
+    in_key_excerpts = False
+    in_core_claims = False
+
+    for line_num, line in enumerate(lines, 1):
+        stripped = line.strip()
+
+        # Track section boundaries
+        if '### Key Excerpts' in stripped:
+            in_key_excerpts = True
+            in_core_claims = False
+            continue
+        elif '### Core Claims' in stripped:
+            in_key_excerpts = False
+            in_core_claims = True
+            continue
+        elif stripped.startswith('## '):
+            in_key_excerpts = False
+            in_core_claims = False
+            continue
+        elif stripped.startswith('### '):
+            in_key_excerpts = False
+            in_core_claims = False
+            continue
+
+        # Pattern 2: Orphan tail lines (standalone fragments)
+        # "so choose." or just "choose." appearing standalone
+        # These are ALWAYS invalid, even in Key Excerpts or Core Claims sections
+        # (they're structural corruption, not valid quote content)
+        orphan_tail_pattern = re.compile(
+            r'^(so\s+)?choose\.$',
+            re.IGNORECASE
+        )
+        if orphan_tail_pattern.match(stripped):
+            violations.append({
+                'type': 'orphan_tail_line',
+                'line_num': line_num,
+                'matched': stripped,
+                'context': stripped,
+            })
+            continue  # Don't process further patterns for this line
+
+        # Skip protected sections for other checks
+        if in_key_excerpts or in_core_claims:
+            continue
+
+        # Skip blockquotes and empty lines
+        if stripped.startswith('>') or not stripped:
+            continue
+
+        # Pattern 1: ", he [fragment]," where fragment is suspicious
+        # Matches: ", he n," or ", he power," (truncated attributions)
+        he_fragment_pattern = re.compile(
+            r',\s*he\s+([a-z]{1,10})\s*[,.]',
+            re.IGNORECASE
+        )
+        for match in he_fragment_pattern.finditer(stripped):
+            fragment = match.group(1).lower()
+            # Check if this is a valid word
+            if fragment not in VALID_HE_WORDS:
+                # Additional check: is it a known verb?
+                # Valid verbs: notes, says, argues, explains, etc.
+                valid_verbs = {
+                    'notes', 'says', 'argues', 'explains', 'states', 'claims',
+                    'suggests', 'warns', 'adds', 'points', 'observes', 'believes',
+                    'maintains', 'asserts', 'contends', 'remarks', 'emphasizes',
+                }
+                if fragment not in valid_verbs:
+                    violations.append({
+                        'type': 'truncated_he_fragment',
+                        'line_num': line_num,
+                        'matched': match.group(0),
+                        'fragment': fragment,
+                        'context': stripped[:80],
+                    })
+
+        # Pattern 3: Mid-word truncation signatures
+        # Two consecutive short words glued by punctuation in unexpected places
+        # e.g., "technology," followed by single letter fragments
+        mid_truncation_pattern = re.compile(
+            r',\s+([a-z])\s*,',  # ", n," or ", y," style artifacts
+            re.IGNORECASE
+        )
+        for match in mid_truncation_pattern.finditer(stripped):
+            violations.append({
+                'type': 'mid_word_truncation',
+                'line_num': line_num,
+                'matched': match.group(0),
+                'fragment': match.group(1),
+                'context': stripped[:80],
+            })
+
+    is_valid = len(violations) == 0
+
+    if violations:
+        logger.warning(
+            f"Token integrity check FAILED: {len(violations)} violations found"
+        )
+        for v in violations[:5]:
+            logger.warning(f"  - {v['type']} at line {v['line_num']}: {v['matched']}")
+
+    return is_valid, {
+        'valid': is_valid,
+        'violations': violations,
+        'violation_count': len(violations),
+    }
+
+
+# Debug patterns for snapshot detection
+_DEBUG_CORRUPTION_PATTERNS = [
+    (re.compile(r',\s*he\s+n\s*,', re.IGNORECASE), 'he_n_truncation'),
+    (re.compile(r',\s*he\s+power\s*,', re.IGNORECASE), 'he_power_truncation'),
+    (re.compile(r'^so\s+choose\.$', re.IGNORECASE | re.MULTILINE), 'so_choose_orphan'),
+    (re.compile(r',\s+[a-z]\s*,'), 'single_letter_truncation'),
+]
+
+
+def _check_for_corruption(text: str, step_name: str, job_id: str = "") -> bool:
+    """Debug helper: check if known corruption patterns exist in text.
+
+    Call this after each transform to identify which one introduces corruption.
+
+    Args:
+        text: The markdown text to check.
+        step_name: Name of the transform that just completed.
+        job_id: Optional job ID for logging.
+
+    Returns:
+        True if corruption detected, False otherwise.
+    """
+    found = []
+    for pattern, name in _DEBUG_CORRUPTION_PATTERNS:
+        matches = pattern.findall(text)
+        if matches:
+            found.append((name, matches[:3]))
+
+    if found:
+        logger.error(
+            f"CORRUPTION DETECTED after '{step_name}' (job {job_id}):"
+        )
+        for name, matches in found:
+            logger.error(f"  - {name}: {matches}")
+        return True
+    return False
+
+
 def remove_discourse_markers(text: str) -> tuple[str, dict]:
     """Remove transcript discourse markers from prose.
 
@@ -5437,6 +5616,32 @@ async def _generate_draft_task(
                     )
             except Exception as e:
                 logger.warning(f"Job {job_id}: Placeholder glue cleanup failed (non-fatal): {e}")
+
+        # TOKEN INTEGRITY HARD GATE (Ideas Edition)
+        # This is the final structural invariant check - if violations are found,
+        # the draft pipeline has a bug that corrupted text mid-word.
+        # Currently logs warnings; will be elevated to hard-fail once source is identified.
+        if content_mode == ContentMode.essay:
+            try:
+                is_valid, integrity_report = validate_token_integrity(final_markdown)
+                if not is_valid:
+                    logger.error(
+                        f"Job {job_id}: TOKEN INTEGRITY VIOLATION - "
+                        f"{integrity_report['violation_count']} token truncation artifacts detected"
+                    )
+                    for v in integrity_report.get("violations", [])[:5]:
+                        logger.error(
+                            f"  - {v['type']} at line {v['line_num']}: '{v['matched']}' "
+                            f"in context: '{v['context'][:60]}...'"
+                        )
+                        constraint_warnings.append(
+                            f"TOKEN CORRUPTION: {v['type']} - '{v['matched']}'"
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+                    # TODO: Once root cause is identified and fixed, elevate to hard-fail:
+                    # raise ValueError(f"Token integrity check failed: {integrity_report['violation_count']} violations")
+            except Exception as e:
+                logger.error(f"Job {job_id}: Token integrity check failed: {e}", exc_info=True)
 
         await update_job(
             job_id,

@@ -3024,3 +3024,144 @@ Science provides the . Evidence shows this clearly.
         # Dangling "the ." should be handled
         assert "provides the ." not in result
         assert "Evidence shows" in result
+
+
+class TestTokenIntegrityValidator:
+    """Tests for validate_token_integrity function - HARD GATE for token truncation."""
+
+    def test_detects_truncated_he_fragment(self):
+        """REGRESSION Draft 15: 'he n,' pattern must be detected as truncation."""
+        text = """## Chapter 1
+
+This environment can help humans thrive, he n, framing progress as necessary.
+
+### Key Excerpts
+
+> "Some quote"
+> — Speaker"""
+
+        is_valid, report = draft_service.validate_token_integrity(text)
+
+        assert not is_valid
+        assert report["violation_count"] >= 1
+        violations = report["violations"]
+        assert any(v["type"] == "truncated_he_fragment" for v in violations)
+        assert any("he n" in v["matched"] for v in violations)
+
+    def test_detects_he_power_truncation(self):
+        """REGRESSION Draft 15: 'he power,' pattern must be detected as truncation."""
+        text = """## Chapter 2
+
+We have the power to get things right, he power, capturing the essence.
+
+### Key Excerpts
+
+> "Some quote"
+> — Speaker"""
+
+        is_valid, report = draft_service.validate_token_integrity(text)
+
+        assert not is_valid
+        assert report["violation_count"] >= 1
+        violations = report["violations"]
+        assert any(v["type"] == "truncated_he_fragment" for v in violations)
+
+    def test_detects_orphan_tail_so_choose(self):
+        """REGRESSION Draft 15: 'so choose.' orphan line must be detected."""
+        text = """## Chapter 1
+
+Some valid prose here.
+
+### Core Claims
+
+- **A claim**: "Evidence"
+
+so choose.
+
+## Chapter 2
+
+More prose."""
+
+        is_valid, report = draft_service.validate_token_integrity(text)
+
+        assert not is_valid
+        assert report["violation_count"] >= 1
+        violations = report["violations"]
+        assert any(v["type"] == "orphan_tail_line" for v in violations)
+
+    def test_detects_single_letter_truncation(self):
+        """Mid-word truncation like ', n,' must be detected."""
+        text = """## Chapter 1
+
+The technology, n, advanced rapidly.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker"""
+
+        is_valid, report = draft_service.validate_token_integrity(text)
+
+        assert not is_valid
+        violations = report["violations"]
+        assert any(v["type"] == "mid_word_truncation" for v in violations)
+
+    def test_passes_valid_prose(self):
+        """Valid prose should pass integrity check."""
+        text = """## Chapter 1
+
+David Deutsch argues that progress is limitless. He notes that the Enlightenment changed everything. This represents a major shift in understanding.
+
+### Key Excerpts
+
+> "The lesson of universality is that there is only one set of laws."
+> — David Deutsch (GUEST)
+
+### Core Claims
+
+- **Universal laws govern physics**: "The lesson of universality is that there is only one set of laws."
+
+## Chapter 2
+
+More valid prose here. He is clearly correct about this."""
+
+        is_valid, report = draft_service.validate_token_integrity(text)
+
+        assert is_valid
+        assert report["violation_count"] == 0
+
+    def test_allows_valid_he_verbs(self):
+        """Valid 'he says' / 'he notes' patterns should pass."""
+        text = """## Chapter 1
+
+Deutsch makes a key point, he says, about progress.
+
+The idea, he notes, is profound.
+
+### Key Excerpts"""
+
+        is_valid, report = draft_service.validate_token_integrity(text)
+
+        assert is_valid
+        assert report["violation_count"] == 0
+
+    def test_preserves_key_excerpts_with_oddities(self):
+        """Key Excerpts should not be checked for violations."""
+        text = """## Chapter 1
+
+Valid prose here.
+
+### Key Excerpts
+
+> "Quote with, he n, oddity"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "so choose."
+"""
+
+        is_valid, report = draft_service.validate_token_integrity(text)
+
+        # Should pass - violations in Key Excerpts and Core Claims are OK
+        assert is_valid
