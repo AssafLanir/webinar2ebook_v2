@@ -2070,6 +2070,194 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
     }
 
 
+def cleanup_dangling_connectives(text: str) -> tuple[str, dict]:
+    """Clean up dangling articles/connectives left when payload was dropped.
+
+    When a gate drops a quote or clause but doesn't expand the deletion to
+    include the grammatical "handle", we get broken patterns like:
+        - "offers a . Traits that once helped..." (dangling article)
+        - "suggesting that . This stark warning..." (dangling 'that' introducer)
+
+    This function cleans up these orphaned connectives deterministically.
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (cleaned_text, report_dict).
+    """
+    cleanup_count = 0
+    cleanup_details = []
+
+    # Pattern A: Dangling determiners/articles before sentence boundary
+    # "offers a . Traits" or "the . This" - delete the broken fragment
+    # We delete from the start of the broken clause (after previous sentence end)
+    dangling_article_pattern = re.compile(
+        r'([.!?]\s+)'           # Previous sentence end (group 1)
+        r'([^.!?]*?)'           # Any content before the article (group 2)
+        r'\b(a|an|the)\s*'      # The dangling article (group 3)
+        r'\.\s+'                # The orphan period + space
+        r'([A-Z])',             # Start of next sentence (group 4)
+        re.IGNORECASE
+    )
+
+    def fix_dangling_article(match):
+        nonlocal cleanup_count
+        prev_sentence_end = match.group(1)
+        fragment_before = match.group(2).strip()
+        article = match.group(3)
+        next_sentence_start = match.group(4)
+
+        cleanup_count += 1
+        cleanup_details.append({
+            "type": "dangling_article",
+            "original": match.group(0)[:50] + "...",
+            "article": article,
+        })
+
+        # If there's meaningful content before the dangling article, try to salvage
+        # Otherwise just connect to next sentence
+        if fragment_before and len(fragment_before) > 10:
+            # There's a partial sentence - end it properly and start next
+            return f"{prev_sentence_end}{fragment_before}. {next_sentence_start}"
+        else:
+            # Just the dangling article - skip to next sentence
+            return f"{prev_sentence_end}{next_sentence_start}"
+
+    # Pattern B: Dangling "that" introducers after attribution verbs
+    # ", suggesting that . This" → ". This"
+    dangling_that_pattern = re.compile(
+        r',\s*'                 # Comma before the attribution
+        r'(suggesting|stating|arguing|claiming|warning|noting|'
+        r'observing|explaining|asserting|contending|maintaining|'
+        r'emphasizing|stressing|adding|remarking)'
+        r'\s+that\s*'          # The verb + "that"
+        r'\.\s+'               # Orphan period + space
+        r'([A-Z])',            # Start of next sentence
+        re.IGNORECASE
+    )
+
+    def fix_dangling_that(match):
+        nonlocal cleanup_count
+        verb = match.group(1)
+        next_sentence_start = match.group(2)
+
+        cleanup_count += 1
+        cleanup_details.append({
+            "type": "dangling_that_introducer",
+            "original": match.group(0),
+            "verb": verb,
+        })
+
+        # Replace ", suggesting that ." with ". "
+        return f". {next_sentence_start}"
+
+    # Pattern C: Simple dangling article at start or after comma
+    # "However, Stephen Hawking offers a . Traits" - the "However..." clause is broken
+    # We need to delete from the clause start
+    simple_dangling_pattern = re.compile(
+        r'([A-Z][^.!?]*?)'      # Sentence fragment starting with capital (group 1)
+        r'\b(a|an|the)\s*'      # Dangling article (group 2)
+        r'\.\s+'                # Orphan period
+        r'([A-Z])',             # Next sentence start (group 3)
+    )
+
+    def fix_simple_dangling(match):
+        nonlocal cleanup_count
+        fragment = match.group(1).strip()
+        article = match.group(2)
+        next_start = match.group(3)
+
+        # Only fix if the fragment ends awkwardly (with a verb or preposition)
+        # This avoids false positives on valid sentences
+        awkward_endings = (
+            'offers', 'offer', 'offered',
+            'provides', 'provide', 'provided',
+            'gives', 'give', 'gave',
+            'presents', 'present', 'presented',
+            'has', 'have', 'had',
+            'is', 'are', 'was', 'were',
+            'requires', 'require', 'required',
+            'needs', 'need', 'needed',
+            'describes', 'describe', 'described',
+            'mentions', 'mention', 'mentioned',
+        )
+
+        words = fragment.split()
+        if words and words[-1].lower() in awkward_endings:
+            cleanup_count += 1
+            cleanup_details.append({
+                "type": "dangling_article_clause",
+                "original": match.group(0)[:60] + "...",
+                "fragment": fragment[-30:] if len(fragment) > 30 else fragment,
+            })
+            # Delete the broken clause entirely, keep next sentence
+            return next_start
+        else:
+            # Not a clear case - leave it alone
+            return match.group(0)
+
+    # Split into paragraphs and process only narrative prose
+    paragraphs = text.split('\n\n')
+    result_paragraphs = []
+
+    in_key_excerpts = False
+    in_core_claims = False
+
+    for para in paragraphs:
+        stripped = para.strip()
+
+        # Track section boundaries
+        if '### Key Excerpts' in stripped:
+            in_key_excerpts = True
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+        elif '### Core Claims' in stripped:
+            in_key_excerpts = False
+            in_core_claims = True
+            result_paragraphs.append(para)
+            continue
+        elif stripped.startswith('## '):
+            in_key_excerpts = False
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+        elif stripped.startswith('### '):
+            in_key_excerpts = False
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+
+        # Don't modify Key Excerpts or Core Claims content
+        if in_key_excerpts or in_core_claims:
+            result_paragraphs.append(para)
+            continue
+
+        # Skip blockquotes
+        if stripped.startswith('>'):
+            result_paragraphs.append(para)
+            continue
+
+        # Apply cleanups to narrative prose
+        modified = para
+        modified = dangling_that_pattern.sub(fix_dangling_that, modified)
+        modified = dangling_article_pattern.sub(fix_dangling_article, modified)
+        modified = simple_dangling_pattern.sub(fix_simple_dangling, modified)
+
+        result_paragraphs.append(modified)
+
+    result = '\n\n'.join(result_paragraphs)
+
+    if cleanup_count > 0:
+        logger.info(f"Dangling connective cleanup: fixed {cleanup_count} orphaned articles/connectives")
+
+    return result, {
+        "cleanups_applied": cleanup_count,
+        "cleanup_details": cleanup_details,
+    }
+
+
 def fix_truncated_attributions(text: str) -> tuple[str, dict]:
     """Fix attributions that got truncated at end of line/paragraph.
 
@@ -5011,6 +5199,24 @@ async def _generate_draft_task(
             except Exception as e:
                 logger.error(f"Job {job_id}: Dangling attribution gate failed (non-fatal): {e}", exc_info=True)
 
+        # Dangling Connective Cleanup (Ideas Edition only)
+        # Fixes orphaned articles/connectives: "offers a ." → next sentence, ", suggesting that ." → "."
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, connective_report = cleanup_dangling_connectives(final_markdown)
+                if connective_report["cleanups_applied"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Dangling connective cleanup - fixed "
+                        f"{connective_report['cleanups_applied']} orphaned connectives"
+                    )
+                    for detail in connective_report.get("cleanup_details", [])[:3]:
+                        constraint_warnings.append(
+                            f"Dangling connective cleaned: {detail['type']}"
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Dangling connective cleanup failed (non-fatal): {e}", exc_info=True)
+
         # Remove Discourse Markers (Ideas Edition only)
         # Removes "Okay,", "In fact,", "Yes." from prose
         if content_mode == ContentMode.essay:
@@ -5151,6 +5357,19 @@ async def _generate_draft_task(
                     )
             except Exception as e:
                 logger.warning(f"Job {job_id}: Final dangling attribution pass failed (non-fatal): {e}")
+
+        # Final dangling connective cleanup (Ideas Edition only)
+        # Re-run after all modifications to catch any orphaned articles/connectives
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, final_connective_report = cleanup_dangling_connectives(final_markdown)
+                if final_connective_report["cleanups_applied"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Final dangling connective pass - fixed "
+                        f"{final_connective_report['cleanups_applied']} orphaned connectives"
+                    )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Final dangling connective pass failed (non-fatal): {e}")
 
         # Core Claims structure validation (Ideas Edition safety net)
         # Catches malformed claims that slipped through enforcement (e.g., due to exceptions)

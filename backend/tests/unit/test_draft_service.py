@@ -2874,3 +2874,95 @@ This chapter also has prose.
         assert report["chapters_fixed"] == 1
         # The fallback should mention the title (lowercased)
         assert "human potential" in result.lower()
+
+
+class TestCleanupDanglingConnectives:
+    """Tests for cleanup_dangling_connectives - fixes orphaned articles/connectives."""
+
+    def test_fixes_dangling_article_offers_a(self):
+        """REGRESSION Draft 12: 'offers a .' with dropped payload is cleaned up.
+
+        Input: 'However, Stephen Hawking offers a . Traits that once helped...'
+        The 'a' was supposed to introduce a noun/quote that got dropped.
+        We delete the broken clause and keep the next sentence.
+        """
+        text = """## Chapter 2
+
+However, Stephen Hawking offers a . Traits that once helped humans survive could now pose serious risks.
+
+### Key Excerpts"""
+
+        result, report = draft_service.cleanup_dangling_connectives(text)
+
+        # The dangling "offers a ." should be removed
+        assert "offers a ." not in result
+        # The next sentence should survive
+        assert "Traits that once helped" in result
+        assert report["cleanups_applied"] >= 1
+
+    def test_fixes_dangling_that_introducer(self):
+        """REGRESSION Draft 12: ', suggesting that .' with dropped clause is cleaned up.
+
+        Input: 'Deutsch warns of the danger, suggesting that . This stark warning...'
+        The 'that' was supposed to introduce a clause that got dropped.
+        We replace ', suggesting that .' with '. '
+        """
+        text = """## Chapter 4
+
+Deutsch warns of the danger of rejecting these principles, suggesting that . This stark warning urges us to stay committed.
+
+### Key Excerpts"""
+
+        result, report = draft_service.cleanup_dangling_connectives(text)
+
+        # The dangling ", suggesting that ." should become ". "
+        assert ", suggesting that ." not in result
+        # The next sentence should survive
+        assert "This stark warning" in result
+        # Should have proper sentence boundary
+        assert ". This stark warning" in result
+        assert report["cleanups_applied"] >= 1
+
+    def test_preserves_valid_article_usage(self):
+        """Valid 'a' usage should not be modified."""
+        text = """## Chapter 1
+
+This represents a major shift in understanding. The change was profound.
+
+### Key Excerpts"""
+
+        result, report = draft_service.cleanup_dangling_connectives(text)
+
+        # Valid article usage preserved
+        assert "a major shift" in result
+        assert report["cleanups_applied"] == 0
+
+    def test_preserves_key_excerpts(self):
+        """Key Excerpts should not be modified."""
+        text = """## Chapter 1
+
+Some prose here.
+
+### Key Excerpts
+
+> "He offers a . strange view"
+> — Speaker"""
+
+        result, report = draft_service.cleanup_dangling_connectives(text)
+
+        # Key Excerpts preserved even with odd content
+        assert 'offers a . strange' in result
+
+    def test_fixes_dangling_the(self):
+        """Dangling 'the' before period should be cleaned."""
+        text = """## Chapter 1
+
+Science provides the . Evidence shows this clearly.
+
+### Key Excerpts"""
+
+        result, report = draft_service.cleanup_dangling_connectives(text)
+
+        # Dangling "the ." should be handled
+        assert "provides the ." not in result
+        assert "Evidence shows" in result
