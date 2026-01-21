@@ -1855,8 +1855,30 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         re.IGNORECASE
     )
 
+    # Extended colon-wrapper pattern: "Deutsch captures this shift: This..."
+    # Catches speaker + verb + optional phrase + colon + Capital
+    # These wrappers introduce pseudo-quotes and should be removed/rewritten
+    colon_wrapper_pattern = re.compile(
+        r'\b((?:Deutsch|David Deutsch|He|She|They|The\s+guest|The\s+host)\s+'
+        r'(?:captures?|sums?\s+(?:it\s+)?up|puts?\s+it|describes?|'
+        r'frames?|characterizes?|encapsulates?|expresses?|conveys?|'
+        r'illustrates?|demonstrates?|shows?|reveals?|makes?\s+clear)'
+        r'(?:\s+[^:]{1,40})?)'  # Optional short phrase (max 40 chars)
+        r'(:\s*)'               # Colon + space
+        r'([A-Z])',             # Capital letter starting the "quote"
+        re.IGNORECASE
+    )
+
     rewrite_count = 0
     rewrite_details = []
+
+    # Words that should be lowercased after "that" (pronouns/determiners)
+    # These are never proper nouns, so always safe to lowercase
+    LOWERCASE_AFTER_THAT = {
+        'this', 'that', 'these', 'those', 'it', 'we', 'they', 'he', 'she',
+        'the', 'a', 'an', 'our', 'their', 'his', 'her', 'its', 'my', 'your',
+        'such', 'there', 'here', 'what', 'which', 'who', 'how', 'when', 'where',
+    }
 
     def rewrite_to_indirect(match):
         """Convert direct attribution to indirect speech."""
@@ -1883,6 +1905,47 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         })
 
         return replacement
+
+    def fix_that_capitalization(text_to_fix: str) -> str:
+        """Fix 'that This/That/These...' patterns to lowercase.
+
+        Catches cases where 'that' is followed by a capitalized
+        pronoun/determiner that should be lowercase in indirect speech.
+        E.g., 'suggests that This' → 'suggests that this'
+        """
+        def lowercase_after_that(m):
+            word = m.group(1)
+            if word.lower() in LOWERCASE_AFTER_THAT:
+                return f"that {word.lower()}"
+            return m.group(0)  # Keep original if it's a proper noun
+
+        return re.sub(
+            r'\bthat\s+([A-Z][a-z]+)\b',
+            lowercase_after_that,
+            text_to_fix
+        )
+
+    def remove_colon_wrapper(match):
+        """Remove colon wrappers, keeping just the content.
+
+        'Deutsch captures this shift: This revolution...' → 'This revolution...'
+
+        We remove the wrapper entirely because converting to indirect speech
+        would be awkward ('Deutsch captures this shift that this revolution...')
+        """
+        nonlocal rewrite_count
+        wrapper = match.group(1)
+        colon = match.group(2)
+        first_letter = match.group(3)
+
+        rewrite_count += 1
+        rewrite_details.append({
+            "original": match.group(0),
+            "replacement": f"[wrapper removed] {first_letter}",
+        })
+
+        # Keep just the first letter (start of actual content)
+        return first_letter
 
     # Split into paragraphs to track sections
     paragraphs = text.split('\n\n')
@@ -1930,6 +1993,10 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         modified = para
         modified = rewrite_pattern.sub(rewrite_to_indirect, modified)
         modified = participial_pattern.sub(rewrite_to_indirect, modified)
+        modified = colon_wrapper_pattern.sub(remove_colon_wrapper, modified)
+
+        # Fix any "that This/That/These..." capitalization issues
+        modified = fix_that_capitalization(modified)
 
         result_paragraphs.append(modified)
 
@@ -4911,7 +4978,7 @@ async def _generate_draft_task(
                 final_markdown, leak_report = enforce_verbatim_leak_gate(
                     final_markdown,
                     whitelist_quote_texts,
-                    min_match_len=25,  # Require 25+ char match to avoid false positives
+                    min_match_len=12,  # Tightened from 25 to catch shorter verbatim leaks
                 )
                 if leak_report["paragraphs_dropped"] > 0:
                     logger.info(

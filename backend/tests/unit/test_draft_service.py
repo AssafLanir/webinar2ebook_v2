@@ -2218,6 +2218,22 @@ The ideas are paraphrased in original language.
         assert "paraphrased in original language" in result
         assert report["paragraphs_dropped"] == 0
 
+    def test_catches_short_verbatim_leak_12_chars(self):
+        """REGRESSION: 12-char threshold catches shorter verbatim leaks."""
+        # "how totally—" is 12 chars and should be detected
+        whitelist = ["you're grossly underestimating how bad the past was, how totally—"]
+        text = """## Chapter 1
+
+Looking back, we see a stark reality: you're grossly underestimating how bad the past was, how totally— Deutsch's acknowledgment of past suffering matters.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_verbatim_leak_gate(text, whitelist, min_match_len=12)
+
+        # Paragraph with verbatim leak should be dropped
+        assert "how totally—" not in result
+        assert report["paragraphs_dropped"] == 1
+
 
 class TestDanglingAttributionGate:
     """Tests for enforce_dangling_attribution_gate - rewrites to indirect speech."""
@@ -2430,6 +2446,62 @@ Deutsch points, there is only one truth.
         assert "says that this" in result
         assert "cautions that to" in result
         assert "points out that there" in result
+
+    def test_fixes_that_this_capitalization(self):
+        """REGRESSION: 'that This' is fixed to 'that this'."""
+        text = """## Chapter 1
+
+Deutsch suggests that This view opened up possibilities.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # The capitalization fixer should lowercase "This" after "that"
+        assert "that This" not in result
+        assert "that this" in result
+
+    def test_removes_colon_wrapper(self):
+        """REGRESSION: 'Deutsch captures this: This...' removes wrapper."""
+        text = """## Chapter 1
+
+David Deutsch captures this connection: This revolution reshaped our understanding.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # The colon wrapper should be removed
+        assert "captures this connection:" not in result
+        # Content should remain (starting with "This")
+        assert "This revolution reshaped" in result
+        assert report["rewrites_applied"] >= 1
+
+    def test_removes_sums_it_up_colon_wrapper(self):
+        """REGRESSION: 'Deutsch sums it up: The...' removes wrapper."""
+        text = """## Chapter 1
+
+Deutsch sums it up: The Enlightenment changed everything.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        assert "sums it up:" not in result
+        assert "The Enlightenment changed" in result
+
+    def test_preserves_proper_nouns_after_that(self):
+        """Proper nouns like 'Earth' should NOT be lowercased after 'that'."""
+        text = """## Chapter 1
+
+Deutsch argues that Earth is our home.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # "Earth" should stay capitalized (it's a proper noun)
+        assert "that Earth" in result
 
 
 class TestFixTruncatedAttributions:
