@@ -6,17 +6,23 @@ Runs the Ideas Edition pipeline across a corpus of transcripts and measures:
 - Yield metrics: sentences generated/kept/dropped
 - Fallback usage rate per chapter
 - Drop reasons histogram
+- Entity retention (org/product names preserved vs person names blocked)
 - Final word counts (overall + prose only)
+
+Verdict logic:
+- PASS: All invariants pass, metrics within thresholds
+- WARN: Invariants pass but some metrics exceed soft thresholds
+- FAIL: Structural invariants violated or hard thresholds exceeded
 
 Usage:
     python scripts/batch_eval.py --input_dir corpora/ --edition ideas --out report.json
+    python scripts/batch_eval.py --input_dir corpora/ --ci  # CI mode, exits non-zero on FAIL
 
 Run from backend directory:
     python scripts/batch_eval.py --help
 """
 
 import argparse
-import asyncio
 import json
 import os
 import re
@@ -24,6 +30,7 @@ import sys
 from collections import Counter
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -34,14 +41,35 @@ from services.draft_service import (
     sanitize_speaker_framing,
     enforce_no_names_in_prose,
     sanitize_meta_discourse,
-    ensure_required_sections_exist,
     DYNAMIC_NAME_POLICY_ENABLED,
 )
 from services.entity_allowlist import (
     build_person_blacklist,
     build_entity_allowlist,
     PersonBlacklist,
+    EntityAllowlist,
 )
+
+
+# =============================================================================
+# Thresholds (tune based on calibration)
+# =============================================================================
+
+# Hard thresholds (FAIL if exceeded)
+HARD_FALLBACK_THRESHOLD = 0.50  # 50% of chapters using fallback
+HARD_DROP_RATIO_THRESHOLD = 0.60  # 60% of sentences dropped
+HARD_MIN_PROSE_WORDS_PER_CHAPTER = 50  # Absolute minimum
+
+# Soft thresholds (WARN if exceeded)
+SOFT_FALLBACK_THRESHOLD = 0.25  # 25% of chapters
+SOFT_DROP_RATIO_THRESHOLD = 0.40  # 40% of sentences
+SOFT_MIN_PROSE_WORDS_PER_CHAPTER = 120  # Target minimum
+
+
+class Verdict(str, Enum):
+    PASS = "PASS"
+    WARN = "WARN"
+    FAIL = "FAIL"
 
 
 @dataclass
@@ -51,17 +79,41 @@ class ChapterMetrics:
     chapter_title: str = ""
     prose_word_count: int = 0
     prose_sentence_count: int = 0
+    sentences_dropped: int = 0
+    drop_reasons: dict = field(default_factory=dict)
     has_key_excerpts: bool = False
     has_core_claims: bool = False
     key_excerpt_count: int = 0
     core_claim_count: int = 0
     used_fallback: bool = False
+    verdict: str = "PASS"
+    issues: list = field(default_factory=list)
+
+
+@dataclass
+class EntityMetrics:
+    """Entity retention metrics."""
+    # Allowlisted entities found in prose
+    allowed_entity_mentions: int = 0
+    unique_entities_used: int = 0
+    entity_names_found: list = field(default_factory=list)
+
+    # Person names blocked
+    person_mentions_blocked: int = 0
+    person_names_blocked: list = field(default_factory=list)
+
+    # Retention ratio (higher is better)
+    retention_ratio: float = 0.0
 
 
 @dataclass
 class TranscriptResult:
     """Evaluation result for a single transcript."""
     filename: str
+    verdict: str = "PASS"
+    failure_causes: list = field(default_factory=list)
+
+    # Structural
     structural_pass: bool = False
     structural_issues: list = field(default_factory=list)
 
@@ -71,12 +123,13 @@ class TranscriptResult:
     sentences_kept: int = 0
     drop_ratio: float = 0.0
 
-    # Drop reasons
+    # Drop reasons histogram
     drop_reasons: dict = field(default_factory=dict)
 
     # Word counts
     total_word_count: int = 0
     prose_word_count: int = 0
+    avg_prose_words_per_chapter: float = 0.0
 
     # Chapter metrics
     chapter_count: int = 0
@@ -84,11 +137,8 @@ class TranscriptResult:
     fallback_ratio: float = 0.0
     chapter_metrics: list = field(default_factory=list)
 
-    # Entity allowlist metrics (when flag enabled)
-    person_blacklist_size: int = 0
-    entity_allowlist_orgs: int = 0
-    entity_allowlist_products: int = 0
-    sentences_kept_due_to_allowlist: int = 0
+    # Entity metrics
+    entity_metrics: dict = field(default_factory=dict)
 
     # Timing
     eval_time_ms: int = 0
@@ -105,23 +155,31 @@ class BatchReport:
     transcript_count: int
     dynamic_name_policy_enabled: bool
 
-    # Aggregate pass/fail
-    structural_pass_count: int = 0
-    structural_fail_count: int = 0
+    # Overall verdict
+    overall_verdict: str = "PASS"
+
+    # Counts by verdict
+    pass_count: int = 0
+    warn_count: int = 0
+    fail_count: int = 0
+
+    # Top failure causes across corpus
+    top_failure_causes: dict = field(default_factory=dict)
 
     # Aggregate metrics
     avg_drop_ratio: float = 0.0
     avg_fallback_ratio: float = 0.0
     avg_prose_words_per_chapter: float = 0.0
 
+    # Entity retention aggregate
+    total_entity_mentions: int = 0
+    total_person_blocked: int = 0
+
     # Top drop reasons across corpus
     top_drop_reasons: dict = field(default_factory=dict)
 
-    # Per-transcript results
+    # Per-transcript results (sorted by verdict)
     results: list = field(default_factory=list)
-
-    # Threshold violations
-    threshold_violations: list = field(default_factory=list)
 
 
 def extract_chapters(markdown: str) -> list[dict]:
@@ -146,7 +204,53 @@ def extract_chapters(markdown: str) -> list[dict]:
     return chapters
 
 
-def analyze_chapter(chapter: dict) -> ChapterMetrics:
+def count_entity_mentions(
+    prose: str,
+    entity_allowlist: Optional[EntityAllowlist],
+    person_blacklist: Optional[PersonBlacklist],
+) -> EntityMetrics:
+    """Count entity mentions in prose text."""
+    metrics = EntityMetrics()
+
+    if not entity_allowlist and not person_blacklist:
+        return metrics
+
+    # Find capitalized words/phrases that might be entities
+    entity_pattern = re.compile(r'\b([A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)*)\b')
+
+    found_entities = set()
+    found_persons = set()
+
+    for match in entity_pattern.finditer(prose):
+        candidate = match.group(1)
+
+        # Check if it's an allowlisted entity
+        if entity_allowlist and entity_allowlist.contains(candidate):
+            metrics.allowed_entity_mentions += 1
+            found_entities.add(candidate)
+
+        # Check if it would have been blocked as person
+        if person_blacklist and person_blacklist.matches(candidate):
+            metrics.person_mentions_blocked += 1
+            found_persons.add(candidate)
+
+    metrics.unique_entities_used = len(found_entities)
+    metrics.entity_names_found = list(found_entities)[:10]  # Top 10
+    metrics.person_names_blocked = list(found_persons)[:10]
+
+    # Retention ratio: entities kept / (entities kept + persons blocked)
+    total = metrics.allowed_entity_mentions + metrics.person_mentions_blocked
+    if total > 0:
+        metrics.retention_ratio = metrics.allowed_entity_mentions / total
+
+    return metrics
+
+
+def analyze_chapter(
+    chapter: dict,
+    entity_allowlist: Optional[EntityAllowlist] = None,
+    person_blacklist: Optional[PersonBlacklist] = None,
+) -> ChapterMetrics:
     """Analyze a single chapter for metrics."""
     content = chapter["content"]
     metrics = ChapterMetrics(
@@ -157,7 +261,6 @@ def analyze_chapter(chapter: dict) -> ChapterMetrics:
     # Check for Key Excerpts
     if "### Key Excerpts" in content:
         metrics.has_key_excerpts = True
-        # Count blockquotes in Key Excerpts section
         key_excerpts_match = re.search(
             r'### Key Excerpts\s*\n(.*?)(?=### |## |\Z)',
             content,
@@ -178,26 +281,41 @@ def analyze_chapter(chapter: dict) -> ChapterMetrics:
         if core_claims_match:
             claims_content = core_claims_match.group(1)
             metrics.core_claim_count = len(re.findall(r'^- \*\*', claims_content, re.MULTILINE))
-            # Check for fallback placeholder
             if "*No fully grounded claims" in claims_content or "*No claims available" in claims_content:
                 metrics.used_fallback = True
+                metrics.issues.append("used_fallback")
 
-    # Extract prose (between chapter header and Key Excerpts)
+    # Extract prose
     prose_match = re.search(
         r'^## Chapter.*?\n\n(.*?)(?=### Key Excerpts|### Core Claims|\Z)',
         content,
         re.DOTALL
     )
+    prose = ""
     if prose_match:
         prose = prose_match.group(1).strip()
-        # Remove any remaining headers
         prose = re.sub(r'^#+.*$', '', prose, flags=re.MULTILINE).strip()
-        # Count words and sentences
         words = prose.split()
         metrics.prose_word_count = len(words)
-        # Simple sentence count (periods followed by space or end)
         sentences = re.split(r'[.!?]+\s*', prose)
         metrics.prose_sentence_count = len([s for s in sentences if s.strip()])
+
+    # Check chapter-level thresholds
+    if metrics.prose_word_count < HARD_MIN_PROSE_WORDS_PER_CHAPTER:
+        metrics.verdict = "FAIL"
+        metrics.issues.append("prose_too_thin")
+    elif metrics.prose_word_count < SOFT_MIN_PROSE_WORDS_PER_CHAPTER:
+        if metrics.verdict != "FAIL":
+            metrics.verdict = "WARN"
+        metrics.issues.append("prose_below_target")
+
+    if not metrics.has_key_excerpts:
+        metrics.verdict = "FAIL"
+        metrics.issues.append("missing_key_excerpts")
+
+    if not metrics.has_core_claims:
+        metrics.verdict = "FAIL"
+        metrics.issues.append("missing_core_claims")
 
     return metrics
 
@@ -212,7 +330,7 @@ def check_structural_invariants(markdown: str) -> tuple[bool, list[str]]:
         markdown
     )
     if empty_key_excerpts:
-        issues.append(f"Empty Key Excerpts sections: {len(empty_key_excerpts)}")
+        issues.append(f"empty_key_excerpts:{len(empty_key_excerpts)}")
 
     # Check for empty Core Claims sections (without placeholder)
     core_claims_matches = re.finditer(
@@ -225,9 +343,9 @@ def check_structural_invariants(markdown: str) -> tuple[bool, list[str]]:
         has_bullets = bool(re.search(r'^- \*\*', content, re.MULTILINE))
         has_placeholder = '*No fully grounded claims' in content or '*No claims available' in content
         if not has_bullets and not has_placeholder:
-            issues.append("Empty Core Claims section without placeholder")
+            issues.append("empty_core_claims_no_placeholder")
 
-    # Check for quotes in prose (outside Key Excerpts/Core Claims)
+    # Check for quotes in prose
     chapters = extract_chapters(markdown)
     for chapter in chapters:
         prose_match = re.search(
@@ -237,59 +355,92 @@ def check_structural_invariants(markdown: str) -> tuple[bool, list[str]]:
         )
         if prose_match:
             prose = prose_match.group(1)
-            # Look for quote patterns in prose
             inline_quotes = re.findall(r'["\u201c][^"\u201d]{10,}["\u201d]', prose)
             if inline_quotes:
-                issues.append(f"Chapter {chapter['index'] + 1}: {len(inline_quotes)} inline quotes in prose")
+                issues.append(f"inline_quotes_ch{chapter['index'] + 1}:{len(inline_quotes)}")
 
     return len(issues) == 0, issues
+
+
+def compute_verdict(result: TranscriptResult) -> tuple[str, list[str]]:
+    """Compute verdict and failure causes for a transcript result."""
+    causes = []
+
+    # P0: Structural invariants
+    if not result.structural_pass:
+        causes.append("structural_invariant_failed")
+
+    # Hard thresholds → FAIL
+    if result.fallback_ratio > HARD_FALLBACK_THRESHOLD:
+        causes.append(f"fallback_overuse:{result.fallback_ratio:.0%}")
+
+    if result.drop_ratio > HARD_DROP_RATIO_THRESHOLD:
+        causes.append(f"drop_ratio_critical:{result.drop_ratio:.0%}")
+
+    if result.chapter_count > 0:
+        if result.avg_prose_words_per_chapter < HARD_MIN_PROSE_WORDS_PER_CHAPTER:
+            causes.append(f"prose_critical:{result.avg_prose_words_per_chapter:.0f}w/ch")
+
+    # Any hard failure → FAIL
+    if causes:
+        return Verdict.FAIL.value, causes
+
+    # Soft thresholds → WARN
+    warnings = []
+    if result.fallback_ratio > SOFT_FALLBACK_THRESHOLD:
+        warnings.append(f"fallback_high:{result.fallback_ratio:.0%}")
+
+    if result.drop_ratio > SOFT_DROP_RATIO_THRESHOLD:
+        warnings.append(f"drop_ratio_high:{result.drop_ratio:.0%}")
+
+    if result.chapter_count > 0:
+        if result.avg_prose_words_per_chapter < SOFT_MIN_PROSE_WORDS_PER_CHAPTER:
+            warnings.append(f"prose_thin:{result.avg_prose_words_per_chapter:.0f}w/ch")
+
+    if warnings:
+        return Verdict.WARN.value, warnings
+
+    return Verdict.PASS.value, []
 
 
 def evaluate_transcript(
     filepath: Path,
     person_blacklist: Optional[PersonBlacklist] = None,
+    entity_allowlist: Optional[EntityAllowlist] = None,
 ) -> TranscriptResult:
-    """Evaluate a single transcript file."""
+    """Evaluate a single transcript/draft file."""
     import time
     start_time = time.time()
 
     result = TranscriptResult(filename=filepath.name)
 
     try:
-        # Read transcript
         with open(filepath, 'r', encoding='utf-8') as f:
-            transcript = f.read()
+            content = f.read()
 
-        # For now, we evaluate the markdown structure if it looks like a draft
-        # In full implementation, this would run the generation pipeline
-        if not transcript.strip().startswith("## Chapter"):
-            # This is a raw transcript, not a draft - skip for now
-            result.error = "Raw transcript (not a draft) - skipping evaluation"
+        # Check if it's a draft (has chapter structure)
+        if not content.strip().startswith("## Chapter"):
+            result.error = "not_a_draft"
+            result.verdict = "SKIP"
             return result
 
-        markdown = transcript
+        markdown = content
 
-        # Build entity allowlist if dynamic policy enabled
-        entity_allowlist = None
-        if DYNAMIC_NAME_POLICY_ENABLED and person_blacklist:
-            entity_allowlist = build_entity_allowlist(
-                transcript,
-                person_blacklist,
-            )
-            result.entity_allowlist_orgs = len(entity_allowlist.org_names)
-            result.entity_allowlist_products = len(entity_allowlist.product_names)
-
+        # Store entity metrics
         if person_blacklist:
-            result.person_blacklist_size = len(person_blacklist.full_names)
+            result.entity_metrics["person_blacklist_size"] = len(person_blacklist.full_names)
+        if entity_allowlist:
+            result.entity_metrics["allowlist_orgs"] = len(entity_allowlist.org_names)
+            result.entity_metrics["allowlist_products"] = len(entity_allowlist.product_names)
+            result.entity_metrics["allowlist_acronyms"] = len(entity_allowlist.acronyms)
 
-        # Run gates and collect metrics
+        # Run gates and collect drop metrics
         drop_reasons = Counter()
 
         # 1. Speaker framing sanitizer
         _, sanitizer_report = sanitize_speaker_framing(markdown)
-        if sanitizer_report.get("sentences_dropped", 0) > 0:
-            for detail in sanitizer_report.get("drop_details", []):
-                drop_reasons[detail.get("type", "speaker_framing")] += 1
+        for detail in sanitizer_report.get("drop_details", []):
+            drop_reasons[detail.get("type", "speaker_framing")] += 1
 
         # 2. No-names-in-prose invariant
         _, names_report = enforce_no_names_in_prose(
@@ -297,18 +448,15 @@ def evaluate_transcript(
             person_blacklist=person_blacklist,
             entity_allowlist=entity_allowlist,
         )
-        if names_report.get("sentences_dropped", 0) > 0:
-            for detail in names_report.get("drop_details", []):
-                drop_reasons[detail.get("type", "name_in_prose")] += 1
-        result.sentences_kept_due_to_allowlist = names_report.get("sentences_kept_due_to_allowlist", 0)
+        for detail in names_report.get("drop_details", []):
+            drop_reasons[detail.get("type", "name_in_prose")] += 1
 
         # 3. Meta-discourse gate
         _, meta_report = sanitize_meta_discourse(markdown)
-        if meta_report.get("sentences_dropped", 0) > 0:
-            for detail in meta_report.get("drop_details", []):
-                drop_reasons[detail.get("type", "meta_discourse")] += 1
+        for detail in meta_report.get("drop_details", []):
+            drop_reasons[detail.get("type", "meta_discourse")] += 1
 
-        # Aggregate drop counts
+        # Aggregate drops
         total_dropped = (
             sanitizer_report.get("sentences_dropped", 0) +
             names_report.get("sentences_dropped", 0) +
@@ -317,7 +465,7 @@ def evaluate_transcript(
         result.sentences_dropped = total_dropped
         result.drop_reasons = dict(drop_reasons)
 
-        # Check structural invariants
+        # Structural invariants
         result.structural_pass, result.structural_issues = check_structural_invariants(markdown)
 
         # Analyze chapters
@@ -327,18 +475,28 @@ def evaluate_transcript(
         total_prose_words = 0
         total_prose_sentences = 0
         fallback_chapters = 0
+        all_prose = []
 
         for chapter in chapters:
-            chapter_metrics = analyze_chapter(chapter)
+            chapter_metrics = analyze_chapter(chapter, entity_allowlist, person_blacklist)
             result.chapter_metrics.append(asdict(chapter_metrics))
             total_prose_words += chapter_metrics.prose_word_count
             total_prose_sentences += chapter_metrics.prose_sentence_count
             if chapter_metrics.used_fallback:
                 fallback_chapters += 1
 
+            # Collect prose for entity counting
+            prose_match = re.search(
+                r'^## Chapter.*?\n\n(.*?)(?=### Key Excerpts|### Core Claims|\Z)',
+                chapter["content"],
+                re.DOTALL
+            )
+            if prose_match:
+                all_prose.append(prose_match.group(1))
+
         result.prose_word_count = total_prose_words
         result.total_prose_sentences = total_prose_sentences
-        result.sentences_kept = total_prose_sentences  # Approximate
+        result.sentences_kept = total_prose_sentences
         result.chapters_with_fallback = fallback_chapters
 
         # Calculate ratios
@@ -346,12 +504,23 @@ def evaluate_transcript(
             result.drop_ratio = result.sentences_dropped / (result.total_prose_sentences + result.sentences_dropped)
         if result.chapter_count > 0:
             result.fallback_ratio = result.chapters_with_fallback / result.chapter_count
+            result.avg_prose_words_per_chapter = result.prose_word_count / result.chapter_count
 
-        # Total word count
         result.total_word_count = len(markdown.split())
+
+        # Entity retention metrics
+        if entity_allowlist or person_blacklist:
+            combined_prose = "\n".join(all_prose)
+            entity_metrics = count_entity_mentions(combined_prose, entity_allowlist, person_blacklist)
+            result.entity_metrics.update(asdict(entity_metrics))
+
+        # Compute verdict
+        result.verdict, result.failure_causes = compute_verdict(result)
 
     except Exception as e:
         result.error = str(e)
+        result.verdict = "FAIL"
+        result.failure_causes = ["exception:" + str(e)[:50]]
 
     result.eval_time_ms = int((time.time() - start_time) * 1000)
     return result
@@ -378,110 +547,159 @@ def run_batch_evaluation(
         print(f"No transcript files found in {input_dir}")
         return report
 
-    print(f"Found {len(transcript_files)} transcript(s) to evaluate")
+    print(f"Found {len(transcript_files)} file(s) to evaluate")
     print(f"Dynamic name policy: {'ENABLED' if DYNAMIC_NAME_POLICY_ENABLED else 'DISABLED'}")
     print()
 
-    # Build a generic person blacklist (in real use, would be per-transcript)
+    # Build allowlists if dynamic policy enabled
     person_blacklist = PersonBlacklist() if DYNAMIC_NAME_POLICY_ENABLED else None
+    entity_allowlist = None
 
     all_drop_reasons = Counter()
-    total_drop_ratio = 0.0
-    total_fallback_ratio = 0.0
-    total_prose_words_per_chapter = 0.0
-    valid_results = 0
+    all_failure_causes = Counter()
+    results = []
 
     for filepath in transcript_files:
-        print(f"Evaluating: {filepath.name}...", end=" ")
-        result = evaluate_transcript(filepath, person_blacklist)
-        report.results.append(asdict(result))
+        # Build entity allowlist from this transcript if dynamic policy enabled
+        if DYNAMIC_NAME_POLICY_ENABLED:
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    transcript_text = f.read()
+                entity_allowlist = build_entity_allowlist(transcript_text, person_blacklist)
+            except Exception:
+                entity_allowlist = None
 
-        if result.error:
-            print(f"ERROR: {result.error}")
-            continue
+        result = evaluate_transcript(filepath, person_blacklist, entity_allowlist)
+        results.append(result)
 
-        if result.structural_pass:
-            report.structural_pass_count += 1
-            print(f"PASS ({result.eval_time_ms}ms)")
-        else:
-            report.structural_fail_count += 1
-            print(f"FAIL: {result.structural_issues}")
+        # Update counters
+        if result.verdict == "PASS":
+            report.pass_count += 1
+        elif result.verdict == "WARN":
+            report.warn_count += 1
+        elif result.verdict == "FAIL":
+            report.fail_count += 1
 
-        # Aggregate metrics
         all_drop_reasons.update(result.drop_reasons)
-        total_drop_ratio += result.drop_ratio
-        total_fallback_ratio += result.fallback_ratio
-        if result.chapter_count > 0:
-            total_prose_words_per_chapter += result.prose_word_count / result.chapter_count
-        valid_results += 1
+        for cause in result.failure_causes:
+            all_failure_causes[cause.split(":")[0]] += 1
 
-    # Calculate averages
-    if valid_results > 0:
-        report.avg_drop_ratio = total_drop_ratio / valid_results
-        report.avg_fallback_ratio = total_fallback_ratio / valid_results
-        report.avg_prose_words_per_chapter = total_prose_words_per_chapter / valid_results
+        # Aggregate entity metrics
+        if result.entity_metrics:
+            report.total_entity_mentions += result.entity_metrics.get("allowed_entity_mentions", 0)
+            report.total_person_blocked += result.entity_metrics.get("person_mentions_blocked", 0)
+
+    # Sort results: FAIL first, then WARN, then PASS
+    verdict_order = {"FAIL": 0, "WARN": 1, "PASS": 2, "SKIP": 3}
+    results.sort(key=lambda r: (verdict_order.get(r.verdict, 4), -r.drop_ratio))
+    report.results = [asdict(r) for r in results]
+
+    # Aggregate metrics
+    valid_results = [r for r in results if r.verdict != "SKIP" and not r.error]
+    if valid_results:
+        report.avg_drop_ratio = sum(r.drop_ratio for r in valid_results) / len(valid_results)
+        report.avg_fallback_ratio = sum(r.fallback_ratio for r in valid_results) / len(valid_results)
+        report.avg_prose_words_per_chapter = sum(
+            r.avg_prose_words_per_chapter for r in valid_results
+        ) / len(valid_results)
 
     report.top_drop_reasons = dict(all_drop_reasons.most_common(10))
+    report.top_failure_causes = dict(all_failure_causes.most_common(5))
 
-    # Check thresholds
-    FALLBACK_THRESHOLD = 0.25  # 25% of chapters
-    DROP_RATIO_THRESHOLD = 0.40  # 40% of sentences
-    MIN_PROSE_WORDS_PER_CHAPTER = 120
-
-    if report.avg_fallback_ratio > FALLBACK_THRESHOLD:
-        report.threshold_violations.append(
-            f"P1: Fallback ratio {report.avg_fallback_ratio:.1%} > {FALLBACK_THRESHOLD:.0%} threshold"
-        )
-    if report.avg_drop_ratio > DROP_RATIO_THRESHOLD:
-        report.threshold_violations.append(
-            f"P2: Drop ratio {report.avg_drop_ratio:.1%} > {DROP_RATIO_THRESHOLD:.0%} threshold"
-        )
-    if report.avg_prose_words_per_chapter < MIN_PROSE_WORDS_PER_CHAPTER:
-        report.threshold_violations.append(
-            f"P1: Avg prose words/chapter {report.avg_prose_words_per_chapter:.0f} < {MIN_PROSE_WORDS_PER_CHAPTER} minimum"
-        )
+    # Overall verdict
+    if report.fail_count > 0:
+        report.overall_verdict = "FAIL"
+    elif report.warn_count > 0:
+        report.overall_verdict = "WARN"
+    else:
+        report.overall_verdict = "PASS"
 
     # Write output
     if output_file:
         with open(output_file, 'w') as f:
             json.dump(asdict(report), f, indent=2)
-        print(f"\nReport written to: {output_file}")
+        print(f"Report written to: {output_file}")
 
     return report
 
 
+def print_table(report: BatchReport) -> None:
+    """Print compact results table sorted by worst offenders."""
+    print("\n" + "=" * 80)
+    print(" RESULTS TABLE (sorted by verdict, then drop ratio)")
+    print("=" * 80)
+
+    # Header
+    print(f"{'FILE':<30} {'VERDICT':<6} {'DROP%':<7} {'FALLBACK%':<10} {'W/CH':<6} {'CAUSES'}")
+    print("-" * 80)
+
+    for result in report.results:
+        if result.get("error") and result.get("verdict") == "SKIP":
+            print(f"{result['filename']:<30} {'SKIP':<6} {'--':<7} {'--':<10} {'--':<6} {result.get('error', '')}")
+            continue
+
+        causes = ", ".join(result.get("failure_causes", [])[:2]) or "-"
+        print(
+            f"{result['filename']:<30} "
+            f"{result['verdict']:<6} "
+            f"{result['drop_ratio']*100:>5.1f}% "
+            f"{result['fallback_ratio']*100:>8.1f}% "
+            f"{result['avg_prose_words_per_chapter']:>5.0f} "
+            f"{causes}"
+        )
+
+    print("-" * 80)
+
+
 def print_summary(report: BatchReport) -> None:
     """Print human-readable summary."""
-    print("\n" + "=" * 60)
-    print(" BATCH EVALUATION SUMMARY")
-    print("=" * 60)
+    print("\n" + "=" * 80)
+    print(f" BATCH EVALUATION SUMMARY - {report.overall_verdict}")
+    print("=" * 80)
 
     print(f"\nEdition: {report.edition}")
-    print(f"Transcripts evaluated: {report.transcript_count}")
+    print(f"Files evaluated: {report.transcript_count}")
     print(f"Dynamic name policy: {'ENABLED' if report.dynamic_name_policy_enabled else 'DISABLED'}")
 
-    print(f"\n--- Structural Invariants ---")
-    print(f"  Pass: {report.structural_pass_count}")
-    print(f"  Fail: {report.structural_fail_count}")
+    print(f"\n--- Verdicts ---")
+    print(f"  PASS: {report.pass_count}")
+    print(f"  WARN: {report.warn_count}")
+    print(f"  FAIL: {report.fail_count}")
 
-    print(f"\n--- Yield Metrics ---")
+    print(f"\n--- Aggregate Metrics ---")
     print(f"  Avg drop ratio: {report.avg_drop_ratio:.1%}")
     print(f"  Avg fallback ratio: {report.avg_fallback_ratio:.1%}")
     print(f"  Avg prose words/chapter: {report.avg_prose_words_per_chapter:.0f}")
 
+    if report.dynamic_name_policy_enabled:
+        print(f"\n--- Entity Retention ---")
+        print(f"  Org/product mentions kept: {report.total_entity_mentions}")
+        print(f"  Person mentions blocked: {report.total_person_blocked}")
+        if report.total_entity_mentions + report.total_person_blocked > 0:
+            retention = report.total_entity_mentions / (report.total_entity_mentions + report.total_person_blocked)
+            print(f"  Retention ratio: {retention:.1%}")
+
+    if report.top_failure_causes:
+        print(f"\n--- Top Failure Causes ---")
+        for cause, count in report.top_failure_causes.items():
+            print(f"  {cause}: {count}")
+
     if report.top_drop_reasons:
         print(f"\n--- Top Drop Reasons ---")
-        for reason, count in report.top_drop_reasons.items():
+        for reason, count in list(report.top_drop_reasons.items())[:5]:
             print(f"  {reason}: {count}")
 
-    if report.threshold_violations:
-        print(f"\n--- Threshold Violations ---")
-        for violation in report.threshold_violations:
-            print(f"  ⚠️  {violation}")
-    else:
-        print(f"\n✅ All thresholds within acceptable limits")
+    print("\n" + "=" * 80)
 
-    print("\n" + "=" * 60)
+    # Final verdict message
+    if report.overall_verdict == "PASS":
+        print("✅ All transcripts passed - safe to ship")
+    elif report.overall_verdict == "WARN":
+        print("⚠️  Some warnings - review before shipping")
+    else:
+        print("❌ Failures detected - do not ship until fixed")
+
+    print("=" * 80)
 
 
 def main():
@@ -492,7 +710,7 @@ def main():
         "--input_dir",
         type=Path,
         default=Path("corpora"),
-        help="Directory containing transcript files (default: corpora/)"
+        help="Directory containing transcript/draft files (default: corpora/)"
     )
     parser.add_argument(
         "--edition",
@@ -507,29 +725,36 @@ def main():
         help="Output JSON report file (optional)"
     )
     parser.add_argument(
-        "--summary-only",
+        "--ci",
         action="store_true",
-        help="Only print summary, don't save report"
+        help="CI mode: exit non-zero on any FAIL verdict"
+    )
+    parser.add_argument(
+        "--table-only",
+        action="store_true",
+        help="Only print results table, skip detailed summary"
     )
 
     args = parser.parse_args()
 
     if not args.input_dir.exists():
         print(f"Error: Input directory {args.input_dir} does not exist")
-        print(f"Create it and add transcript files (.txt or .md)")
         return 1
 
     report = run_batch_evaluation(
         args.input_dir,
         args.edition,
-        args.out if not args.summary_only else None,
+        args.out,
     )
 
-    print_summary(report)
+    print_table(report)
 
-    # Exit with error if P0 violations (structural failures)
-    if report.structural_fail_count > 0:
-        print(f"\n❌ {report.structural_fail_count} P0 structural failures - fix before shipping")
+    if not args.table_only:
+        print_summary(report)
+
+    # CI mode: exit with error if any FAILs
+    if args.ci and report.fail_count > 0:
+        print(f"\n❌ CI check failed: {report.fail_count} transcript(s) failed")
         return 1
 
     return 0
