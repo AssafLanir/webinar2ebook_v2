@@ -2894,6 +2894,105 @@ def sanitize_meta_discourse(text: str) -> tuple[str, dict]:
     }
 
 
+def normalize_prose_punctuation(text: str) -> tuple[str, dict]:
+    """Ensure narrative prose paragraphs end with proper terminal punctuation.
+
+    For narrative prose only (not blockquotes, not headings, not inside quotes):
+    If a paragraph ends with an alphanumeric character (no terminal punctuation),
+    append a period.
+
+    This is a final formatting pass that runs after all drops/repairs.
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (normalized_text, report_dict).
+    """
+    fixes_applied = 0
+    fix_details = []
+
+    # Process paragraph by paragraph
+    paragraphs = text.split('\n\n')
+    result_paragraphs = []
+
+    in_key_excerpts = False
+    in_core_claims = False
+
+    for para in paragraphs:
+        stripped = para.strip()
+
+        # Track section boundaries
+        if '### Key Excerpts' in stripped:
+            in_key_excerpts = True
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+        elif '### Core Claims' in stripped:
+            in_key_excerpts = False
+            in_core_claims = True
+            result_paragraphs.append(para)
+            continue
+        elif stripped.startswith('## '):
+            in_key_excerpts = False
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+        elif stripped.startswith('### '):
+            in_key_excerpts = False
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+
+        # Don't modify Key Excerpts or Core Claims content
+        if in_key_excerpts or in_core_claims:
+            result_paragraphs.append(para)
+            continue
+
+        # Skip blockquotes
+        if stripped.startswith('>'):
+            result_paragraphs.append(para)
+            continue
+
+        # Skip headings (any level)
+        if stripped.startswith('#'):
+            result_paragraphs.append(para)
+            continue
+
+        # Skip empty paragraphs
+        if not stripped:
+            result_paragraphs.append(para)
+            continue
+
+        # Check if paragraph ends without terminal punctuation
+        # Terminal punctuation: . ? ! … — "
+        # We check the last non-whitespace character
+        last_char = stripped[-1] if stripped else ''
+
+        if last_char.isalnum():
+            # Missing terminal punctuation - append period
+            # Preserve original whitespace by working with the original para
+            fixed_para = para.rstrip() + '.'
+            result_paragraphs.append(fixed_para)
+            fixes_applied += 1
+            fix_details.append({
+                "original_ending": stripped[-20:] if len(stripped) > 20 else stripped,
+                "fixed": True,
+            })
+        else:
+            result_paragraphs.append(para)
+
+    result = '\n\n'.join(result_paragraphs)
+
+    if fixes_applied > 0:
+        logger.info(f"Prose punctuation normalizer: fixed {fixes_applied} paragraphs")
+
+    return result, {
+        "fixes_applied": fixes_applied,
+        "fix_details": fix_details,
+    }
+
+
 def cleanup_dangling_connectives(text: str) -> tuple[str, dict]:
     """Clean up dangling articles/connectives left when payload was dropped.
 
@@ -7606,6 +7705,19 @@ async def _generate_draft_task(
                     )
             except Exception as e:
                 logger.warning(f"Job {job_id}: Placeholder glue cleanup failed (non-fatal): {e}")
+
+        # Prose punctuation normalizer (Ideas Edition) - final formatting pass
+        # Ensures narrative prose paragraphs end with proper terminal punctuation
+        # Must run after all content-modifying passes, before validation
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, punct_report = normalize_prose_punctuation(final_markdown)
+                if punct_report.get("fixes_applied", 0) > 0:
+                    logger.info(
+                        f"Job {job_id}: Prose punctuation normalizer - fixed {punct_report['fixes_applied']} paragraphs"
+                    )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Prose punctuation normalizer failed (non-fatal): {e}")
 
         # TOKEN INTEGRITY HARD GATE (Ideas Edition)
         # This is the final structural invariant check - if violations are found,

@@ -4759,6 +4759,97 @@ Before this era, progress was slow. The scientific method changed everything. Id
         assert report["sentences_dropped"] == 0
 
 
+class TestProsePunctuationNormalizer:
+    """Tests for normalize_prose_punctuation - ensure terminal punctuation."""
+
+    def test_fixes_missing_period_draft27(self):
+        """REGRESSION Draft 27: 'not just our actions' missing terminal period.
+
+        Prose paragraph ending with alphanumeric should get period appended.
+        """
+        text = """## Chapter 3: The Role of Knowledge
+
+The narrative that human progress is synonymous with environmental destruction ignores the reality that nature itself has posed existential threats to us, not just our actions
+
+### Key Excerpts"""
+
+        result, report = draft_service.normalize_prose_punctuation(text)
+
+        # Period should be appended
+        assert "not just our actions." in result
+        assert "not just our actions\n" not in result
+        assert report["fixes_applied"] == 1
+
+    def test_does_not_touch_blockquotes(self):
+        """Blockquotes should never be modified."""
+        text = """## Chapter 1: First
+
+Clean prose here.
+
+### Key Excerpts
+
+> "This quote ends without terminal punctuation for some reason"
+> — Author (GUEST)"""
+
+        result, report = draft_service.normalize_prose_punctuation(text)
+
+        # Blockquote unchanged
+        assert '> "This quote ends without terminal punctuation for some reason"' in result
+        assert report["fixes_applied"] == 0
+
+    def test_does_not_touch_headings(self):
+        """Headings should never get punctuation added."""
+        text = """## Chapter 1: The Enlightenment
+
+Good prose here.
+
+### Key Excerpts"""
+
+        result, report = draft_service.normalize_prose_punctuation(text)
+
+        # Headings unchanged (no period after "Enlightenment" or "Key Excerpts")
+        assert "## Chapter 1: The Enlightenment\n" in result
+        assert "### Key Excerpts" in result
+        assert report["fixes_applied"] == 0
+
+    def test_preserves_proper_punctuation(self):
+        """Paragraphs with proper terminal punctuation unchanged."""
+        text = """## Chapter 2: Knowledge
+
+This ends with a period.
+
+This ends with a question?
+
+This ends with excitement!
+
+### Key Excerpts"""
+
+        result, report = draft_service.normalize_prose_punctuation(text)
+
+        # All preserved as-is
+        assert "This ends with a period." in result
+        assert "This ends with a question?" in result
+        assert "This ends with excitement!" in result
+        assert report["fixes_applied"] == 0
+
+    def test_does_not_touch_core_claims(self):
+        """Core Claims should never be modified."""
+        text = """## Chapter 1: First
+
+Clean prose.
+
+### Core Claims
+
+- **Missing period**: "This claim text ends weirdly"
+"""
+
+        result, report = draft_service.normalize_prose_punctuation(text)
+
+        # Core Claims unchanged
+        assert '"This claim text ends weirdly"' in result
+        assert report["fixes_applied"] == 0
+
+
 class TestFirstParagraphPronounRepair:
     """Tests for repair_first_paragraph_pronouns - fix pronouns in first paragraph."""
 
