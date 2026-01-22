@@ -2122,16 +2122,20 @@ class TestDropExcerptsWithInvalidQuotes:
 
 
 class TestVerbatimLeakGate:
-    """Tests for enforce_verbatim_leak_gate - drops paragraphs with whitelist quote text in prose."""
+    """Tests for enforce_verbatim_leak_gate - drops sentences with whitelist quote text in prose.
 
-    def test_drops_paragraph_with_full_quote_match(self):
-        """Paragraph containing full whitelist quote is dropped."""
+    PHASE 2: Now uses sentence-level dropping instead of paragraph-level to preserve
+    more prose while still enforcing the verbatim leak constraint.
+    """
+
+    def test_drops_sentence_with_full_quote_preserves_others(self):
+        """PHASE 2: Only the leaking sentence is dropped, other sentences preserved."""
         whitelist = ["I entirely agree with Stephen Hawking that we should hedge our bets"]
         text = """## Chapter 1
 
 The Enlightenment changed everything.
 
-Colonization becomes a pressing topic. I entirely agree with Stephen Hawking that we should hedge our bets by moving away from Earth.
+Colonization becomes a pressing topic. I entirely agree with Stephen Hawking that we should hedge our bets by moving away from Earth. This is important for survival.
 
 ### Key Excerpts
 
@@ -2140,28 +2144,74 @@ Colonization becomes a pressing topic. I entirely agree with Stephen Hawking tha
 
         result, report = draft_service.enforce_verbatim_leak_gate(text, whitelist)
 
-        # Prose paragraph should be dropped
-        assert "Colonization becomes a pressing topic" not in result
-        # Key Excerpts should be preserved
-        assert "Key Excerpts" in result
-        assert report["paragraphs_dropped"] == 1
+        # Extract prose section (before Key Excerpts)
+        prose_section = result.split('### Key Excerpts')[0]
 
-    def test_drops_paragraph_with_substring_match(self):
-        """Paragraph containing significant substring of whitelist quote is dropped."""
+        # Leaking sentence should be dropped from prose
+        assert "I entirely agree with Stephen Hawking that we should hedge our bets by moving" not in prose_section
+        # But other sentences in same paragraph should be preserved
+        assert "Colonization becomes a pressing topic" in prose_section
+        assert "This is important for survival" in prose_section
+        # Key Excerpts should still be preserved (quote is allowed there)
+        assert "Key Excerpts" in result
+        assert report["sentences_dropped"] == 1
+        assert report["paragraphs_dropped"] == 0  # Paragraph preserved with remaining sentences
+
+    def test_drops_sentence_with_substring_match(self):
+        """Sentence containing significant substring of whitelist quote is dropped."""
         whitelist = ["The truth of the matter is that wisdom, like scientific knowledge, is also limitless"]
         text = """## Chapter 1
 
 The Enlightenment sparked change.
 
-Deutsch argues that wisdom, like scientific knowledge, is also limitless and ever-growing.
+Deutsch argues that wisdom, like scientific knowledge, is also limitless and ever-growing. Other ideas matter too.
 
 ### Key Excerpts"""
 
         result, report = draft_service.enforce_verbatim_leak_gate(text, whitelist, min_match_len=25)
 
-        # Prose paragraph with substring should be dropped
+        # Leaking sentence should be dropped
         assert "wisdom, like scientific knowledge" not in result
-        assert report["paragraphs_dropped"] == 1
+        # Other sentence preserved
+        assert "Other ideas matter too" in result
+        assert report["sentences_dropped"] == 1
+
+    def test_drops_sentence_with_verbatim_plus_he_says_draft17(self):
+        """REGRESSION Draft 17: Verbatim quote with ', he says.' suffix must be caught.
+
+        Draft 17 had this exact pattern:
+        'I entirely agree with Stephen Hawking...and so on, he says.'
+        This is the whitelist quote with a suffix attribution - still a verbatim leak.
+
+        PHASE 2: Now only the leaking sentence is dropped, other sentences preserved.
+        """
+        whitelist = [
+            "I entirely agree with Stephen Hawking that we should hedge our bets by moving away from the Earth and colonizing the solar system and then the galaxy and so on"
+        ]
+        text = """## Chapter 2: Human Potential and the Universe
+
+Deutsch sees the cosmos as a vast frontier that humanity should actively explore. I entirely agree with Stephen Hawking that we should hedge our bets by moving away from the Earth and colonizing the solar system and then the galaxy and so on, he says. Such endeavors reflect the core of human potential.
+
+### Key Excerpts
+
+> "I entirely agree with Stephen Hawking that we should hedge our bets by moving away from the Earth and colonizing the solar system and then the galaxy and so on."
+> — David Deutsch (GUEST)"""
+
+        result, report = draft_service.enforce_verbatim_leak_gate(text, whitelist)
+
+        # Extract prose section (before Key Excerpts)
+        prose_section = result.split('### Key Excerpts')[0]
+
+        # Leaking sentence should be dropped from prose
+        assert "I entirely agree with Stephen Hawking that we should hedge" not in prose_section
+        # But other sentences in same paragraph should be preserved
+        assert "Deutsch sees the cosmos" in prose_section
+        assert "Such endeavors reflect" in prose_section
+        # Key Excerpts should be preserved (quote is allowed there)
+        assert "Key Excerpts" in result
+        assert '> "I entirely agree' in result
+        assert report["sentences_dropped"] == 1
+        assert report["paragraphs_dropped"] == 0  # Paragraph preserved
 
     def test_preserves_key_excerpts_with_whitelist_text(self):
         """Key Excerpts section is allowed to contain whitelist quote text."""
@@ -2181,6 +2231,7 @@ Clean prose here.
 
         # Key Excerpts should be preserved
         assert "This is a valid quote from the transcript" in result
+        assert report["sentences_dropped"] == 0
         assert report["paragraphs_dropped"] == 0
 
     def test_preserves_core_claims_with_whitelist_text(self):
@@ -2198,6 +2249,7 @@ Clean prose here.
 
         # Core Claims should be preserved
         assert "Knowledge is infinite" in result
+        assert report["sentences_dropped"] == 0
         assert report["paragraphs_dropped"] == 0
 
     def test_preserves_clean_prose(self):
@@ -2216,6 +2268,7 @@ The ideas are paraphrased in original language.
         # Clean prose should be preserved
         assert "clean prose" in result
         assert "paraphrased in original language" in result
+        assert report["sentences_dropped"] == 0
         assert report["paragraphs_dropped"] == 0
 
     def test_catches_short_verbatim_leak_12_chars(self):
@@ -2224,15 +2277,82 @@ The ideas are paraphrased in original language.
         whitelist = ["you're grossly underestimating how bad the past was, how totally—"]
         text = """## Chapter 1
 
-Looking back, we see a stark reality: you're grossly underestimating how bad the past was, how totally— Deutsch's acknowledgment of past suffering matters.
+Looking back, we see a stark reality: you're grossly underestimating how bad the past was, how totally— Deutsch's acknowledgment of past suffering matters. History shows progress.
 
 ### Key Excerpts"""
 
         result, report = draft_service.enforce_verbatim_leak_gate(text, whitelist, min_match_len=12)
 
-        # Paragraph with verbatim leak should be dropped
+        # Leaking sentence should be dropped
         assert "how totally—" not in result
+        # Other sentence preserved
+        assert "History shows progress" in result
+        assert report["sentences_dropped"] >= 1
+
+    def test_drops_paragraph_when_all_sentences_leak(self):
+        """PHASE 2: Paragraph dropped when all its sentences contain leaks."""
+        whitelist = [
+            "wisdom is limitless",
+            "knowledge grows forever"
+        ]
+        text = """## Chapter 1
+
+Clean prose before.
+
+Wisdom is limitless according to the view. Knowledge grows forever in this framework.
+
+Clean prose after.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_verbatim_leak_gate(text, whitelist, min_match_len=12)
+
+        # All sentences leaked, so paragraph dropped
+        assert "Wisdom is limitless" not in result
+        assert "Knowledge grows forever" not in result
+        # But other paragraphs preserved
+        assert "Clean prose before" in result
+        assert "Clean prose after" in result
+        assert report["sentences_dropped"] == 2
         assert report["paragraphs_dropped"] == 1
+
+    def test_grammar_stitch_removes_orphan_however_at_start(self):
+        """PHASE 2: Grammar stitch removes orphan 'However,' when it becomes first sentence."""
+        whitelist = ["verbatim leak text here"]
+        # Structure: leak is the FIRST sentence, then "However, ..." which becomes orphaned
+        text = """## Chapter 1
+
+Verbatim leak text here appears first. However, the argument continues.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_verbatim_leak_gate(text, whitelist, min_match_len=12)
+
+        # Leaking sentence dropped
+        assert "verbatim leak text here" not in result.lower()
+        # "However," at paragraph start should be cleaned up -> "The argument continues"
+        assert "The argument continues" in result
+        # Should not have orphan "However," at start of paragraph
+        assert result.count("However,") == 0
+        assert report["sentences_dropped"] == 1
+
+    def test_grammar_stitch_preserves_however_after_context(self):
+        """PHASE 2: 'However,' is preserved when it follows another sentence (not orphaned)."""
+        whitelist = ["verbatim leak text here"]
+        text = """## Chapter 1
+
+First context stays. Verbatim leak text here is leaked. However, this continues.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_verbatim_leak_gate(text, whitelist, min_match_len=12)
+
+        # Leaking sentence dropped
+        assert "verbatim leak text here" not in result.lower()
+        # "However," is fine after "First context stays." - should be preserved
+        assert "First context stays" in result
+        assert "However, this continues" in result  # Preserved because it follows context
+        assert report["sentences_dropped"] == 1
 
 
 class TestDanglingAttributionGate:
@@ -2881,7 +3001,13 @@ class TestChapterNarrativeFallback:
 
         # Should have inserted fallback
         assert report["chapters_fixed"] == 1
-        assert "This chapter explores" in result or "The discussion in this chapter" in result
+        # Fallback should be one of the three variants
+        has_variant = (
+            "This chapter develops" in result or  # Variant A
+            "The core tension" in result or  # Variant B
+            "This chapter threads" in result  # Variant C
+        )
+        assert has_variant, f"Expected fallback variant, got: {result}"
         # Structure preserved
         assert "Key Excerpts" in result
         assert "Core Claims" in result
@@ -2954,6 +3080,81 @@ This chapter also has prose.
         assert report["chapters_fixed"] == 1
         # The fallback should mention the title (lowercased)
         assert "human potential" in result.lower()
+
+    def test_fallback_variants_differ_across_chapters(self):
+        """REGRESSION Draft 18: Fallback text must differ across chapters.
+
+        Draft 18 had identical boilerplate for Ch1/Ch3 and Ch2/Ch4.
+        The hash-based variant selection ensures diversity.
+        """
+        # Four chapters with no prose - all need fallback
+        text = """## Chapter 1: The Impact of the Enlightenment
+
+### Key Excerpts
+
+> "Quote 1"
+> — Speaker
+
+## Chapter 2: Human Potential and the Universe
+
+### Key Excerpts
+
+> "Quote 2"
+> — Speaker
+
+## Chapter 3: The Role of Knowledge
+
+### Key Excerpts
+
+> "Quote 3"
+> — Speaker
+
+## Chapter 4: Scientific Inquiry
+
+### Key Excerpts
+
+> "Quote 4"
+> — Speaker"""
+
+        result, report = draft_service.ensure_chapter_narrative_minimum(text)
+
+        # All 4 chapters should get fallback
+        assert report["chapters_fixed"] == 4
+
+        # Extract the fallback narratives (text between chapter header and ### Key Excerpts)
+        import re
+        fallbacks = re.findall(
+            r'## Chapter \d+[^\n]*\n\n([^#]+?)### Key Excerpts',
+            result,
+            re.DOTALL
+        )
+
+        # Should have 4 fallbacks
+        assert len(fallbacks) == 4
+
+        # Strip and get unique fallbacks
+        unique_fallbacks = set(f.strip() for f in fallbacks)
+
+        # At least 2 different variants should be used (not all identical)
+        assert len(unique_fallbacks) >= 2, (
+            f"Expected at least 2 different fallback variants, got {len(unique_fallbacks)}. "
+            f"Fallbacks were: {unique_fallbacks}"
+        )
+
+    def test_fallback_is_deterministic(self):
+        """Same chapter always gets same fallback variant."""
+        text = """## Chapter 1: Human Potential
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker"""
+
+        result1, _ = draft_service.ensure_chapter_narrative_minimum(text)
+        result2, _ = draft_service.ensure_chapter_narrative_minimum(text)
+
+        # Same input should produce identical output
+        assert result1 == result2
 
 
 class TestCleanupDanglingConnectives:

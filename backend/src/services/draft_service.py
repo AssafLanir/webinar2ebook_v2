@@ -1687,12 +1687,151 @@ def enforce_attributed_speech_hard(
     return result.strip(), report
 
 
+def _split_into_sentences(text: str) -> list[str]:
+    """Split text into sentences conservatively.
+
+    Uses a simple approach that splits on sentence-ending punctuation followed
+    by whitespace, while avoiding common abbreviations.
+
+    Args:
+        text: The text to split.
+
+    Returns:
+        List of sentences (preserving original punctuation).
+    """
+    # Conservative sentence splitter - split on .!? followed by space and capital
+    # This avoids splitting on abbreviations like "Dr.", "Mr.", "etc."
+    sentences = []
+    current = []
+
+    # Common abbreviations to avoid splitting on
+    abbrevs = {'mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'vs', 'etc', 'e.g', 'i.e'}
+
+    words = text.split()
+    for i, word in enumerate(words):
+        current.append(word)
+
+        # Check if this word ends a sentence
+        if word and word[-1] in '.!?':
+            # Check if it's an abbreviation
+            word_lower = word.rstrip('.!?,;:').lower()
+            is_abbrev = word_lower in abbrevs
+
+            # Check if next word starts with capital (if exists)
+            next_starts_capital = (
+                i + 1 < len(words) and
+                words[i + 1] and
+                words[i + 1][0].isupper()
+            )
+
+            # Split if not abbreviation and (end of text or next word is capitalized)
+            if not is_abbrev and (i + 1 >= len(words) or next_starts_capital):
+                sentences.append(' '.join(current))
+                current = []
+
+    # Add any remaining words
+    if current:
+        sentences.append(' '.join(current))
+
+    return sentences
+
+
+def _check_sentence_for_leak(
+    sentence: str,
+    normalized_quotes: list[tuple[str, str]],
+    min_match_len: int,
+    normalize_fn,
+) -> tuple[bool, dict | None]:
+    """Check if a single sentence contains a verbatim leak.
+
+    Args:
+        sentence: The sentence to check.
+        normalized_quotes: List of (normalized_quote, original_quote) tuples.
+        min_match_len: Minimum substring length to consider a match.
+        normalize_fn: Function to normalize text for comparison.
+
+    Returns:
+        Tuple of (has_leak, detail_dict_or_none).
+    """
+    normalized_sent = normalize_fn(sentence)
+
+    for norm_quote, original_quote in normalized_quotes:
+        # Check for full quote match
+        if norm_quote in normalized_sent:
+            return True, {
+                "sentence": sentence[:60] + '...' if len(sentence) > 60 else sentence,
+                "matched_quote": original_quote[:60] + '...' if len(original_quote) > 60 else original_quote,
+                "match_type": "full",
+            }
+
+        # Check for significant substring match (sliding window)
+        if len(norm_quote) >= min_match_len:
+            for i in range(0, len(norm_quote) - min_match_len + 1, 5):  # Step by 5 for efficiency
+                substring = norm_quote[i:i + min_match_len]
+                if substring in normalized_sent:
+                    return True, {
+                        "sentence": sentence[:60] + '...' if len(sentence) > 60 else sentence,
+                        "matched_quote": original_quote[:60] + '...' if len(original_quote) > 60 else original_quote,
+                        "match_type": "substring",
+                    }
+
+    return False, None
+
+
+def _stitch_sentences(sentences: list[str]) -> str:
+    """Rejoin sentences with grammar cleanup.
+
+    Handles:
+    - Orphan connectives at start (However, Therefore, etc.)
+    - Proper spacing
+    - Capitalization of first letter
+
+    Args:
+        sentences: List of sentences to join.
+
+    Returns:
+        Cleaned, rejoined paragraph.
+    """
+    if not sentences:
+        return ""
+
+    # Orphan connectives that shouldn't start a paragraph after drops
+    orphan_starters = [
+        'however,', 'therefore,', 'thus,', 'hence,', 'moreover,',
+        'furthermore,', 'nevertheless,', 'nonetheless,', 'consequently,',
+        'accordingly,', 'similarly,', 'likewise,', 'instead,', 'meanwhile,',
+        'otherwise,', 'still,', 'yet,', 'also,', 'besides,'
+    ]
+
+    result = []
+    for i, sent in enumerate(sentences):
+        sent = sent.strip()
+        if not sent:
+            continue
+
+        # If first sentence starts with orphan connective, strip it
+        if i == 0 or (result and not result[-1]):
+            lower_sent = sent.lower()
+            for orphan in orphan_starters:
+                if lower_sent.startswith(orphan):
+                    sent = sent[len(orphan):].strip()
+                    # Capitalize first letter of remaining text
+                    if sent:
+                        sent = sent[0].upper() + sent[1:]
+                    break
+
+        if sent:
+            result.append(sent)
+
+    return ' '.join(result)
+
+
 def enforce_verbatim_leak_gate(
     text: str,
     whitelist_quotes: list[str],
     min_match_len: int = 20,
 ) -> tuple[str, dict]:
-    """Drop paragraphs containing verbatim whitelist quote text in prose.
+    """Drop sentences (not whole paragraphs) containing verbatim whitelist quote text.
 
     This is the "Verbatim Leak Gate" - a deterministic post-processing pass
     that catches transcript quotes appearing unquoted in narrative prose.
@@ -1701,8 +1840,8 @@ def enforce_verbatim_leak_gate(
     - Key Excerpts (blockquotes)
     - Core Claims (bullet points with supporting quotes)
 
-    If whitelist text appears anywhere else (narrative prose), the paragraph
-    is dropped entirely.
+    If whitelist text appears in narrative prose, only the offending sentence
+    is dropped (not the entire paragraph), preserving surrounding context.
 
     Args:
         text: The draft markdown text.
@@ -1713,7 +1852,7 @@ def enforce_verbatim_leak_gate(
         Tuple of (cleaned_text, report_dict).
     """
     if not whitelist_quotes:
-        return text, {"paragraphs_dropped": 0, "dropped_details": []}
+        return text, {"sentences_dropped": 0, "paragraphs_dropped": 0, "dropped_details": []}
 
     # Normalize quotes for comparison
     def normalize(s: str) -> str:
@@ -1727,6 +1866,8 @@ def enforce_verbatim_leak_gate(
     paragraphs = text.split('\n\n')
     kept_paragraphs = []
     dropped_details = []
+    sentences_dropped = 0
+    paragraphs_dropped = 0
 
     in_key_excerpts = False
     in_core_claims = False
@@ -1766,45 +1907,41 @@ def enforce_verbatim_leak_gate(
             kept_paragraphs.append(para)
             continue
 
-        # Check for verbatim leaks in narrative prose
-        normalized_para = normalize(stripped)
-        found_leak = False
+        # SENTENCE-LEVEL DROPPING: Split paragraph into sentences
+        sentences = _split_into_sentences(stripped)
+        kept_sentences = []
+        para_had_leaks = False
 
-        for norm_quote, original_quote in normalized_quotes:
-            # Check for full quote match
-            if norm_quote in normalized_para:
-                found_leak = True
-                dropped_details.append({
-                    "paragraph": stripped[:80] + '...' if len(stripped) > 80 else stripped,
-                    "matched_quote": original_quote[:60] + '...' if len(original_quote) > 60 else original_quote,
-                    "match_type": "full",
-                })
-                break
+        for sentence in sentences:
+            has_leak, detail = _check_sentence_for_leak(
+                sentence, normalized_quotes, min_match_len, normalize
+            )
 
-            # Check for significant substring match (sliding window)
-            if len(norm_quote) >= min_match_len:
-                for i in range(0, len(norm_quote) - min_match_len + 1, 5):  # Step by 5 for efficiency
-                    substring = norm_quote[i:i + min_match_len]
-                    if substring in normalized_para:
-                        found_leak = True
-                        dropped_details.append({
-                            "paragraph": stripped[:80] + '...' if len(stripped) > 80 else stripped,
-                            "matched_quote": original_quote[:60] + '...' if len(original_quote) > 60 else original_quote,
-                            "match_type": "substring",
-                        })
-                        break
-                if found_leak:
-                    break
+            if has_leak:
+                para_had_leaks = True
+                sentences_dropped += 1
+                dropped_details.append(detail)
+                logger.info(f"Verbatim leak gate: dropping sentence: {sentence[:60]}...")
+            else:
+                kept_sentences.append(sentence)
 
-        if found_leak:
-            logger.info(f"Verbatim leak gate: dropping paragraph with whitelist leak: {stripped[:60]}...")
+        # Rejoin remaining sentences with grammar cleanup
+        if kept_sentences:
+            cleaned_para = _stitch_sentences(kept_sentences)
+            if cleaned_para.strip():
+                kept_paragraphs.append(cleaned_para)
+            else:
+                # All sentences dropped or stitching produced empty result
+                paragraphs_dropped += 1
         else:
-            kept_paragraphs.append(para)
+            # All sentences had leaks
+            paragraphs_dropped += 1
 
     result = '\n\n'.join(kept_paragraphs)
 
     return result, {
-        "paragraphs_dropped": len(dropped_details),
+        "sentences_dropped": sentences_dropped,
+        "paragraphs_dropped": paragraphs_dropped,
         "dropped_details": dropped_details,
     }
 
@@ -2880,35 +3017,53 @@ def _generate_fallback_narrative(chapter_num: int, chapter_title: str) -> str:
     The fallback is purely rhetorical and structural - it never quotes or
     paraphrases any content, only points to the excerpts below.
 
+    Uses 3 distinct variants selected by stable hash to ensure:
+    - Different chapters get different fallback text
+    - Same chapter always gets same variant (deterministic)
+    - No repetitive boilerplate across chapters
+
     Args:
         chapter_num: The chapter number.
         chapter_title: The chapter title (may be empty).
 
     Returns:
-        A safe fallback narrative paragraph.
+        A safe fallback narrative paragraph (2-3 sentences).
     """
+    from hashlib import sha1
+
     # Clean up title for use in narrative
-    title_text = chapter_title.strip() if chapter_title else f"themes in this section"
+    title_text = chapter_title.strip() if chapter_title else ""
+    theme_phrase = title_text.lower() if title_text else "the central ideas"
 
-    # Fallback narratives that are purely structural
-    # These never quote or paraphrase - they only reference the excerpts
-    fallback_templates = [
-        (
-            f"This chapter explores {title_text.lower() if chapter_title else 'key ideas'} "
-            f"through the lens of the conversation's most illuminating moments. "
-            f"The excerpts below capture the essential insights, while the claims "
-            f"synthesize the core arguments that emerge from this discussion."
-        ),
-        (
-            f"The discussion in this chapter centers on {title_text.lower() if chapter_title else 'significant concepts'}. "
-            f"Rather than paraphrase, the key excerpts below preserve the speaker's voice, "
-            f"and the core claims distill the central arguments."
-        ),
-    ]
+    # Create stable hash from chapter_num + title for variant selection
+    hash_input = f"ch{chapter_num}:{chapter_title or 'untitled'}"
+    variant = int(sha1(hash_input.encode()).hexdigest()[0], 16) % 3
 
-    # Use chapter number to deterministically select template (for consistency)
-    template_idx = (chapter_num - 1) % len(fallback_templates)
-    return fallback_templates[template_idx]
+    # Three distinct variants with different structure and vocabulary
+    # All are purely structural - they never quote or paraphrase content
+    if variant == 0:
+        # Variant A: Theme + evidence structure
+        return (
+            f"This chapter develops the theme of {theme_phrase} by linking "
+            f"concrete moments from the conversation to a set of grounded claims. "
+            f"The excerpts preserve the original voice; the claims synthesize "
+            f"the argument in compact form."
+        )
+    elif variant == 1:
+        # Variant B: Tension + resolution framing
+        return (
+            f"The core tension in this chapter concerns {theme_phrase}. "
+            f"The excerpts below provide the anchoring evidence, while the claims "
+            f"distill how that tension resolves into a coherent position."
+        )
+    else:
+        # Variant C: Threading + navigation
+        return (
+            f"This chapter threads from specific evidence to broader implications "
+            f"regarding {theme_phrase}. "
+            f"Read the excerpts first for context, then use the claims to see "
+            f"how the argument assembles without direct quotation."
+        )
 
 
 def _extract_verb(full_match: str, speaker: str) -> str:
