@@ -2454,19 +2454,17 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
 
 
 def sanitize_speaker_framing(text: str) -> tuple[str, dict]:
-    """Remove speaker-framing patterns from narrative prose via deterministic rewrite.
+    """Drop sentences with attribution-wrapper patterns from narrative prose.
 
-    This sanitizer runs on narrative prose only (never Key Excerpts/Core Claims)
-    and rewrites away attribution wrappers instead of dropping whole sentences.
+    VERB-AGNOSTIC approach: instead of matching specific verbs, match the
+    structural pattern that indicates attributed speech leaked into prose.
 
-    Rewrite rules (deterministic):
-    1. X argues/notes/says/captures … that <CLAUSE> → <CLAUSE>
-    2. X captures this by saying that <CLAUSE> → <CLAUSE>
-    3. According to X, <CLAUSE> → <CLAUSE>
-    4. X, <appositive bio>, argues that <CLAUSE> → <CLAUSE> (strip appositive too)
+    Drop patterns (sentence-level):
+    1. (Name|He|She|They) <any words>, <Capital> - "He elaborates, In every..."
+    2. Name's <noun> <verb> - "Deutsch's book suggests..."
+    3. According to Name, ... - "According to Deutsch, ..."
 
-    After rewrite, applies grammar cleanup: trim spaces/commas, capitalize first
-    letter, ensure sentence flows properly.
+    This catches ALL attribution wrappers without needing a verb list.
 
     Args:
         text: The draft markdown text.
@@ -2474,112 +2472,58 @@ def sanitize_speaker_framing(text: str) -> tuple[str, dict]:
     Returns:
         Tuple of (sanitized_text, report_dict).
     """
-    rewrite_count = 0
-    rewrite_details = []
+    sentences_dropped = 0
+    drop_details = []
 
-    # Name patterns for speakers
-    SPEAKER_NAMES = r'(?:Deutsch|David\s+Deutsch|Hawking|Stephen\s+Hawking|He|She|They|The\s+(?:guest|host|speaker))'
+    # Person names (not pronouns - those are handled separately)
+    PERSON_NAMES = r'(?:Deutsch|David\s+Deutsch|Hawking|Stephen\s+Hawking)'
 
-    # Attribution verbs
-    ATTR_VERBS = (
-        r'(?:argues?|notes?|says?|captures?|observes?|suggests?|claims?|states?|'
-        r'explains?|warns?|points?\s+out|remarks?|contends?|believes?|maintains?|'
-        r'asserts?|describes?|emphasizes?|highlights?|stresses?|insists?)'
-    )
+    # Pronouns that can introduce attributed speech
+    PRONOUNS = r'(?:He|She|They)'
 
-    # Pattern 1: "X argues/notes/says that <CLAUSE>" → "<CLAUSE>"
-    # Also handles "X captures this by saying that <CLAUSE>"
-    simple_framing_pattern = re.compile(
-        r'\b' + SPEAKER_NAMES + r'\s+'
-        r'(?:captures?\s+this\s+by\s+saying\s+that|'  # "captures this by saying that"
-        r'' + ATTR_VERBS + r'\s+that)\s+'             # "argues that", "notes that", etc.
-        r'([a-z])',                                    # First letter of clause (lowercase after "that")
+    # Pattern 1: (Name|Pronoun) <any words>, <Capital letter>
+    # Catches: "He elaborates, In every...", "Deutsch acknowledges, We have..."
+    # The comma followed by capital letter indicates quoted speech
+    attribution_comma_capital = re.compile(
+        r'\b(?:' + PERSON_NAMES + r'|' + PRONOUNS + r')\s+'  # Name or pronoun
+        r'[^.!?]*'                                            # Any words (not sentence-ending)
+        r',\s*'                                               # Comma
+        r'[A-Z]',                                             # Capital letter (start of quote)
         re.IGNORECASE
     )
 
-    # Pattern 2: "X, <appositive bio>, argues that <CLAUSE>" → "<CLAUSE>"
-    # The appositive is anything between commas: "David Deutsch, a notable figure, argues that"
-    appositive_framing_pattern = re.compile(
-        r'\b' + SPEAKER_NAMES + r',\s*'     # "Deutsch, "
-        r'[^,]+,\s*'                         # appositive: "a notable figure, "
-        r'' + ATTR_VERBS + r'\s+that\s+'    # "argues that "
-        r'([a-z])',                          # First letter of clause
+    # Pattern 2: Name's <word> <word> - possessive attribution
+    # Catches: "Deutsch's book suggests...", "Hawking's view implies..."
+    possessive_attribution = re.compile(
+        r"\b(?:Deutsch|Hawking|David\s+Deutsch|Stephen\s+Hawking)'s\s+\w+",
         re.IGNORECASE
     )
 
-    # Pattern 3: "According to X, <CLAUSE>" → "<CLAUSE>"
+    # Pattern 3: According to Name
+    # Catches: "According to Deutsch, ..."
     according_to_pattern = re.compile(
-        r'\bAccording\s+to\s+' + SPEAKER_NAMES + r',?\s*'
-        r'([A-Za-z])',  # First letter of clause (may be capitalized)
+        r'\bAccording\s+to\s+' + PERSON_NAMES + r'\b',
         re.IGNORECASE
     )
 
-    # Pattern 4: Sentence-start "X argues that <CLAUSE>" (capital first letter)
-    # This handles cases where clause starts with capital letter
-    sentence_start_framing_pattern = re.compile(
-        r'^(' + SPEAKER_NAMES + r')\s+'
-        r'(?:captures?\s+this\s+by\s+saying\s+that|'
-        r'' + ATTR_VERBS + r'\s+that)\s+'
-        r'([A-Za-z])',
-        re.IGNORECASE | re.MULTILINE
+    # Pattern 4: As Name <adverb?> verb that - broken grammar leak
+    # Catches: "As Deutsch aptly suggests that..."
+    as_name_verb_that = re.compile(
+        r'\bAs\s+' + PERSON_NAMES + r'\s+(?:\w+ly\s+)?(?:\w+)\s+that\b',
+        re.IGNORECASE
     )
 
-    def rewrite_simple_framing(match):
-        """Rewrite 'X argues that clause' → 'Clause'."""
-        nonlocal rewrite_count
-        first_letter = match.group(1)
-
-        rewrite_count += 1
-        rewrite_details.append({
-            "type": "simple_framing",
-            "original": match.group(0)[:60] + ("..." if len(match.group(0)) > 60 else ""),
-            "replacement_start": first_letter.upper(),
-        })
-
-        # Return just the clause, with first letter capitalized
-        return first_letter.upper()
-
-    def rewrite_appositive_framing(match):
-        """Rewrite 'X, appositive, argues that clause' → 'Clause'."""
-        nonlocal rewrite_count
-        first_letter = match.group(1)
-
-        rewrite_count += 1
-        rewrite_details.append({
-            "type": "appositive_framing",
-            "original": match.group(0)[:80] + ("..." if len(match.group(0)) > 80 else ""),
-            "replacement_start": first_letter.upper(),
-        })
-
-        return first_letter.upper()
-
-    def rewrite_according_to(match):
-        """Rewrite 'According to X, clause' → 'Clause'."""
-        nonlocal rewrite_count
-        first_letter = match.group(1)
-
-        rewrite_count += 1
-        rewrite_details.append({
-            "type": "according_to",
-            "original": match.group(0)[:60] + ("..." if len(match.group(0)) > 60 else ""),
-            "replacement_start": first_letter.upper(),
-        })
-
-        return first_letter.upper()
-
-    def rewrite_sentence_start(match):
-        """Rewrite sentence-start 'X argues that Clause' → 'Clause'."""
-        nonlocal rewrite_count
-        first_letter = match.group(2)
-
-        rewrite_count += 1
-        rewrite_details.append({
-            "type": "sentence_start_framing",
-            "original": match.group(0)[:60] + ("..." if len(match.group(0)) > 60 else ""),
-            "replacement_start": first_letter.upper(),
-        })
-
-        return first_letter.upper()
+    def is_attribution_sentence(sentence: str) -> tuple[bool, str]:
+        """Check if sentence contains attribution wrapper. Returns (is_bad, pattern_type)."""
+        if attribution_comma_capital.search(sentence):
+            return True, "attribution_comma_capital"
+        if possessive_attribution.search(sentence):
+            return True, "possessive_attribution"
+        if according_to_pattern.search(sentence):
+            return True, "according_to"
+        if as_name_verb_that.search(sentence):
+            return True, "as_name_verb_that"
+        return False, ""
 
     # Process paragraph by paragraph
     paragraphs = text.split('\n\n')
@@ -2623,45 +2567,50 @@ def sanitize_speaker_framing(text: str) -> tuple[str, dict]:
             result_paragraphs.append(para)
             continue
 
-        # Apply rewrites to narrative prose
-        modified = para
+        # Split into sentences and filter out bad ones
+        sentence_pattern = re.compile(r'(?<=[.!?])\s+(?=[A-Z])')
+        sentences = sentence_pattern.split(para)
+        kept_sentences = []
 
-        # Apply patterns in order of specificity (most specific first)
-        modified = appositive_framing_pattern.sub(rewrite_appositive_framing, modified)
-        modified = simple_framing_pattern.sub(rewrite_simple_framing, modified)
-        modified = according_to_pattern.sub(rewrite_according_to, modified)
-        modified = sentence_start_framing_pattern.sub(rewrite_sentence_start, modified)
+        for sentence in sentences:
+            is_bad, pattern_type = is_attribution_sentence(sentence)
+            if is_bad:
+                sentences_dropped += 1
+                drop_details.append({
+                    "type": pattern_type,
+                    "dropped_sentence": sentence[:100] + ("..." if len(sentence) > 100 else ""),
+                })
+            else:
+                kept_sentences.append(sentence)
 
-        # Grammar cleanup: fix double spaces, leading commas, etc.
-        modified = re.sub(r'\s+', ' ', modified)  # Collapse multiple spaces
-        modified = re.sub(r'^\s*,\s*', '', modified)  # Remove leading commas
-        modified = modified.strip()
-
-        result_paragraphs.append(modified)
+        # Rejoin remaining sentences
+        if kept_sentences:
+            result_paragraphs.append(' '.join(kept_sentences))
+        # If all sentences dropped, skip this paragraph entirely
 
     result = '\n\n'.join(result_paragraphs)
 
-    if rewrite_count > 0:
-        logger.info(f"Speaker-framing sanitizer: rewrote {rewrite_count} patterns")
+    if sentences_dropped > 0:
+        logger.info(f"Speaker-framing sanitizer: dropped {sentences_dropped} sentences")
 
     return result, {
-        "rewrites_applied": rewrite_count,
-        "rewrite_details": rewrite_details,
+        "sentences_dropped": sentences_dropped,
+        "drop_details": drop_details,
     }
 
 
-def enforce_speaker_framing_invariant(text: str) -> tuple[str, dict]:
-    """Enforce the 'no speaker framing in prose' invariant by dropping violating sentences.
+def enforce_no_names_in_prose(text: str) -> tuple[str, dict]:
+    """Enforce 'no person names in narrative prose' as a hard invariant.
 
-    This runs AFTER sanitize_speaker_framing() to catch any remaining speaker-framing
-    patterns that the sanitizer couldn't rewrite. Any sentence containing speaker
-    framing in narrative prose is dropped and logged.
+    Simple rule: any sentence in narrative prose containing a person name
+    (Deutsch, David, Hawking, etc.) is dropped. Names only belong in
+    Key Excerpts attribution lines.
 
-    This converts the "no speaker framing in prose" rule from a soft guideline to a
-    hard invariant that makes it impossible to ship a draft that violates it.
+    This is the definitive fix for speaker framing - instead of matching
+    verb patterns, we simply forbid names in prose entirely.
 
     Args:
-        text: The draft markdown text (already sanitized).
+        text: The draft markdown text.
 
     Returns:
         Tuple of (enforced_text, report_dict).
@@ -2669,24 +2618,16 @@ def enforce_speaker_framing_invariant(text: str) -> tuple[str, dict]:
     sentences_dropped = 0
     drop_details = []
 
-    # Detection pattern for any remaining speaker framing
-    # Matches: Deutsch/David Deutsch + attribution verb
-    SPEAKER_NAMES = r'(?:Deutsch|David\s+Deutsch|Hawking|Stephen\s+Hawking)'
-    ATTR_VERBS = (
-        r'(?:argues?|notes?|says?|captures?|observes?|suggests?|claims?|states?|'
-        r'explains?|warns?|points?\s+out|remarks?|contends?|believes?|maintains?|'
-        r'asserts?|describes?|emphasizes?|highlights?|stresses?|insists?)'
-    )
-
-    # Pattern: <Name> <verb> - any speaker framing
-    speaker_framing_detector = re.compile(
-        r'\b' + SPEAKER_NAMES + r'\s+' + ATTR_VERBS + r'\b',
-        re.IGNORECASE
-    )
-
-    # Also detect "According to <Name>"
-    according_to_detector = re.compile(
-        r'\bAccording\s+to\s+' + SPEAKER_NAMES + r'\b',
+    # Person names that should never appear in narrative prose
+    # Note: These are case-sensitive to avoid false positives
+    FORBIDDEN_NAMES = re.compile(
+        r'\b(?:'
+        r'Deutsch|David\s+Deutsch|'
+        r'Hawking|Stephen\s+Hawking|'
+        r'Einstein|Albert\s+Einstein|'
+        r'Bohr|Niels\s+Bohr|'
+        r'Popper|Karl\s+Popper'
+        r')\b',
         re.IGNORECASE
     )
 
@@ -2732,24 +2673,18 @@ def enforce_speaker_framing_invariant(text: str) -> tuple[str, dict]:
             result_paragraphs.append(para)
             continue
 
-        # Check for any remaining speaker framing - if found, drop offending sentences
-        has_speaker_framing = (
-            speaker_framing_detector.search(para) or
-            according_to_detector.search(para)
-        )
-
-        if has_speaker_framing:
+        # Check if paragraph contains any forbidden names
+        if FORBIDDEN_NAMES.search(para):
             # Split into sentences and filter out bad ones
             sentence_pattern = re.compile(r'(?<=[.!?])\s+(?=[A-Z])')
             sentences = sentence_pattern.split(para)
             kept_sentences = []
 
             for sentence in sentences:
-                if speaker_framing_detector.search(sentence) or according_to_detector.search(sentence):
-                    # Drop this sentence
+                if FORBIDDEN_NAMES.search(sentence):
                     sentences_dropped += 1
                     drop_details.append({
-                        "type": "speaker_framing_invariant",
+                        "type": "name_in_prose",
                         "dropped_sentence": sentence[:100] + ("..." if len(sentence) > 100 else ""),
                     })
                 else:
@@ -2765,11 +2700,22 @@ def enforce_speaker_framing_invariant(text: str) -> tuple[str, dict]:
     result = '\n\n'.join(result_paragraphs)
 
     if sentences_dropped > 0:
-        logger.info(f"Speaker-framing invariant: dropped {sentences_dropped} sentences")
+        logger.info(f"No-names-in-prose invariant: dropped {sentences_dropped} sentences")
 
     return result, {
-        "speaker_framing_sentences_dropped": sentences_dropped,
+        "sentences_dropped": sentences_dropped,
         "drop_details": drop_details,
+    }
+
+
+# Keep old function name as alias for backward compatibility in pipeline
+def enforce_speaker_framing_invariant(text: str) -> tuple[str, dict]:
+    """Alias for enforce_no_names_in_prose for backward compatibility."""
+    result, report = enforce_no_names_in_prose(text)
+    # Remap report keys for compatibility
+    return result, {
+        "speaker_framing_sentences_dropped": report["sentences_dropped"],
+        "drop_details": report["drop_details"],
     }
 
 
@@ -7396,20 +7342,6 @@ async def _generate_draft_task(
             except Exception as e:
                 logger.warning(f"Job {job_id}: Core Claims structure validation failed (non-fatal): {e}")
 
-        # Ensure required sections exist (Ideas Edition structural fix)
-        # If a chapter is missing Key Excerpts or Core Claims, insert placeholders
-        # This must run BEFORE strip_empty_section_headers to ensure headers exist
-        if content_mode == ContentMode.essay:
-            try:
-                final_markdown, sections_report = ensure_required_sections_exist(final_markdown)
-                if sections_report["sections_inserted"] > 0:
-                    logger.warning(
-                        f"Job {job_id}: Inserted {sections_report['sections_inserted']} missing section(s): "
-                        f"{sections_report['inserted']}"
-                    )
-            except Exception as e:
-                logger.warning(f"Job {job_id}: Section existence check failed (non-fatal): {e}")
-
         # Strip empty section headers (Ideas Edition render guard)
         # This is the render guard - empty Key Excerpts/Core Claims sections are removed
         if content_mode == ContentMode.essay:
@@ -7530,9 +7462,24 @@ async def _generate_draft_task(
             except Exception as e:
                 logger.warning(f"Job {job_id}: Prose metrics computation failed (non-fatal): {e}")
 
+        # FINAL SECTION REPAIR (Ideas Edition) - runs AFTER all transforms/render guards
+        # This ensures sections can never disappear. Must run AFTER strip_empty_section_headers
+        # so any sections removed by render guards are re-inserted with placeholders.
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, sections_report = ensure_required_sections_exist(final_markdown)
+                if sections_report["sections_inserted"] > 0:
+                    logger.warning(
+                        f"Job {job_id}: FINAL SECTION REPAIR - Inserted {sections_report['sections_inserted']} "
+                        f"missing section(s): {sections_report['inserted']}"
+                    )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Final section repair failed (non-fatal): {e}")
+
         # STRUCTURAL INTEGRITY HARD GATE (Ideas Edition)
         # P0 invariant: unclosed quotes, headings inside quotes, quote absorption
         # These indicate fundamental corruption that cannot be safely patched.
+        # Runs immediately after section repair to validate the final structure.
         if content_mode == ContentMode.essay:
             try:
                 is_valid, struct_report = validate_structural_integrity(final_markdown)

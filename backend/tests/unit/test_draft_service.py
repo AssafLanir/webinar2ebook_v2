@@ -4371,65 +4371,82 @@ Unable to extract any grounded claims from this section.'''
 
 
 class TestSpeakerFramingSanitizer:
-    """Tests for sanitize_speaker_framing - rewrite attribution patterns in prose."""
+    """Tests for sanitize_speaker_framing - verb-agnostic attribution drop."""
 
-    def test_rewrites_simple_argues_that_draft23(self):
-        """REGRESSION Draft 23: 'Deutsch argues that...' must be sanitized.
+    def test_drops_attribution_comma_capital_draft24(self):
+        """REGRESSION Draft 24: 'He elaborates, In every...' must be dropped.
 
-        Input: 'David Deutsch, a notable figure, argues that wisdom isn't...'
-        Output: 'Wisdom isn't...' (speaker framing removed)
-        """
-        text = """## Chapter 2: Human Potential
-
-David Deutsch, a notable figure in science and philosophy, argues that wisdom isn't something you can possess beforehand.
-
-### Key Excerpts"""
-
-        result, report = draft_service.sanitize_speaker_framing(text)
-
-        # Speaker framing should be removed
-        assert "David Deutsch" not in result
-        assert "argues that" not in result
-        # Clause should be preserved with capitalization
-        assert "Wisdom isn't something you can possess beforehand" in result
-        assert report["rewrites_applied"] >= 1
-
-    def test_rewrites_captures_by_saying_draft23(self):
-        """REGRESSION Draft 23: 'X captures this by saying that...' must be sanitized.
-
-        Input: 'David Deutsch captures this by saying that societies were trapped...'
-        Output: 'Societies were trapped...'
+        Verb-agnostic pattern: (Name|He|She|They) <words>, <Capital>
+        This catches ALL attribution wrappers without needing a verb list.
         """
         text = """## Chapter 1: The Enlightenment
 
-David Deutsch captures this by saying that societies were trapped in a cycle.
+The Enlightenment changed everything. He elaborates, In every chapter there was a beginning. This was transformative.
 
 ### Key Excerpts"""
 
         result, report = draft_service.sanitize_speaker_framing(text)
 
-        # Speaker framing should be removed
-        assert "David Deutsch captures" not in result
-        assert "by saying that" not in result
-        # Clause should be preserved with capitalization
-        assert "Societies were trapped" in result
-        assert report["rewrites_applied"] >= 1
+        # Sentence with attribution wrapper should be dropped
+        assert "He elaborates, In" not in result
+        # Other sentences preserved
+        assert "The Enlightenment changed everything" in result
+        assert "This was transformative" in result
+        assert report["sentences_dropped"] >= 1
 
-    def test_rewrites_according_to(self):
-        """'According to X, clause' → 'Clause'."""
+    def test_drops_possessive_attribution_draft24(self):
+        """REGRESSION Draft 24: 'Deutsch's book suggests...' must be dropped.
+
+        Pattern: Name's <noun> <verb>
+        """
         text = """## Chapter 1: First
 
-According to Deutsch, progress is unlimited.
+Progress is key. Deutsch's book suggests this shift was pivotal. Understanding grew.
 
 ### Key Excerpts"""
 
         result, report = draft_service.sanitize_speaker_framing(text)
 
-        # According to removed
-        assert "According to" not in result
-        # Clause preserved
-        assert "Progress is unlimited" in result
-        assert report["rewrites_applied"] >= 1
+        # Sentence with possessive attribution should be dropped
+        assert "Deutsch's book" not in result
+        # Other sentences preserved
+        assert "Progress is key" in result
+        assert "Understanding grew" in result
+        assert report["sentences_dropped"] >= 1
+
+    def test_drops_according_to(self):
+        """'According to Deutsch, ...' must be dropped."""
+        text = """## Chapter 1: First
+
+Science evolves. According to Deutsch, progress is unlimited. This view prevails.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_speaker_framing(text)
+
+        # According to sentence should be dropped
+        assert "According to Deutsch" not in result
+        # Other sentences preserved
+        assert "Science evolves" in result
+        assert "This view prevails" in result
+        assert report["sentences_dropped"] >= 1
+
+    def test_drops_as_name_verb_that(self):
+        """'As Deutsch aptly suggests that...' must be dropped."""
+        text = """## Chapter 1: First
+
+Progress matters. As Deutsch aptly suggests that we are at the beginning. This is key.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_speaker_framing(text)
+
+        # As X verb that sentence should be dropped
+        assert "As Deutsch aptly suggests that" not in result
+        # Other sentences preserved
+        assert "Progress matters" in result
+        assert "This is key" in result
+        assert report["sentences_dropped"] >= 1
 
     def test_preserves_key_excerpts(self):
         """Key Excerpts must never be modified."""
@@ -4449,8 +4466,8 @@ Some prose here.
         # Key Excerpts preserved verbatim
         assert "Deutsch argues that this is important" in result
         assert "David Deutsch (GUEST)" in result
-        # No rewrites in excerpts
-        assert report["rewrites_applied"] == 0
+        # No drops in excerpts
+        assert report["sentences_dropped"] == 0
 
     def test_preserves_core_claims(self):
         """Core Claims must never be modified."""
