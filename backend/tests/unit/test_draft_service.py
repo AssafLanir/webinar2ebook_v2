@@ -3441,6 +3441,11 @@ More content here.
 
 Some prose here.
 
+### Key Excerpts
+
+> "Quote here."
+> — Speaker
+
 ### Core Claims
 
 - **The Enlightenment marked a significant change**: "This line is the most important thing that's ever happened."
@@ -3449,7 +3454,16 @@ Some prose here.
 
 ## Chapter 2
 
-More prose.'''
+More prose.
+
+### Key Excerpts
+
+> "Another quote."
+> — Speaker
+
+### Core Claims
+
+- **Claim here**: "Support text."'''
 
         is_valid, report = draft_service.validate_structural_integrity(text)
 
@@ -3460,11 +3474,29 @@ More prose.'''
         """Core Claims without quotes (placeholder text) should pass."""
         text = '''## Chapter 1
 
+Some prose.
+
+### Key Excerpts
+
+> "Quote here."
+> — Speaker
+
 ### Core Claims
 
 *No fully grounded claims available for this chapter.*
 
-## Chapter 2'''
+## Chapter 2
+
+More prose.
+
+### Key Excerpts
+
+> "Quote."
+> — Speaker
+
+### Core Claims
+
+*No claims for this chapter.*'''
 
         is_valid, report = draft_service.validate_structural_integrity(text)
 
@@ -3492,3 +3524,107 @@ The Enlightenment marked a turning point.
         # Should detect unclosed quote in the Core Claim bullet
         violations = report["violations"]
         assert any(v["type"] == "unclosed_quote_in_core_claim" for v in violations)
+
+    def test_detects_orphan_fragment_between_sections_draft19(self):
+        """REGRESSION Draft 19: 'ethos of inquiry.' orphan fragment must be detected.
+
+        Draft 19 had this exact pattern - a short fragment appearing between
+        Core Claims section and next chapter header.
+        """
+        text = '''## Chapter 1: The Impact of the Enlightenment
+
+Some prose here.
+
+### Core Claims
+
+- **After the Enlightenment**: "We have learned to live with the fact that everything improves."
+
+ethos of inquiry.
+
+## Chapter 2: Human Potential
+
+More prose here.
+
+### Key Excerpts
+
+> "Quote here"
+> — Speaker'''
+
+        is_valid, report = draft_service.validate_structural_integrity(text)
+
+        assert not is_valid
+        violations = report["violations"]
+        orphan_violations = [v for v in violations if v["type"] == "orphan_fragment_between_sections"]
+        assert len(orphan_violations) >= 1
+        assert any("ethos of inquiry" in v.get("fragment", "") for v in orphan_violations)
+
+    def test_detects_missing_core_claims_section_draft19(self):
+        """REGRESSION Draft 19: Chapter 2 missing Core Claims section must be detected.
+
+        Draft 19 had Chapter 2 jump from Key Excerpts straight to Chapter 3
+        without any Core Claims section.
+        """
+        text = '''## Chapter 1: The Impact
+
+Some prose.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support text."
+
+## Chapter 2: Human Potential
+
+More prose.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+## Chapter 3: Knowledge'''
+
+        is_valid, report = draft_service.validate_structural_integrity(text)
+
+        assert not is_valid
+        violations = report["violations"]
+        missing_violations = [v for v in violations if v["type"] == "missing_core_claims_section"]
+        assert len(missing_violations) >= 1
+        assert any(v.get("chapter") == 2 for v in missing_violations)
+
+    def test_passes_complete_chapter_structure(self):
+        """All chapters with both Key Excerpts and Core Claims should pass."""
+        text = '''## Chapter 1: First
+
+Prose here.
+
+### Key Excerpts
+
+> "Quote 1"
+> — Speaker
+
+### Core Claims
+
+- **Claim 1**: "Support."
+
+## Chapter 2: Second
+
+More prose.
+
+### Key Excerpts
+
+> "Quote 2"
+> — Speaker
+
+### Core Claims
+
+- **Claim 2**: "Support."'''
+
+        is_valid, report = draft_service.validate_structural_integrity(text)
+
+        assert is_valid
+        assert report["violation_count"] == 0

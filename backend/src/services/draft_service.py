@@ -2754,6 +2754,108 @@ def validate_structural_integrity(text: str) -> tuple[bool, dict]:
                     'context': bullet[:150] + ('...' if len(bullet) > 150 else ''),
                 })
 
+    # Check 4: Orphan fragment lines between sections
+    # Detects short fragments like "ethos of inquiry." or "so choose." appearing
+    # between Core Claims and next Chapter header (or between any sections).
+    # These indicate truncation artifacts from a buggy transform.
+    #
+    # Criteria for orphan fragment:
+    # - Not a heading (##, ###)
+    # - Not a bullet (- **)
+    # - Not a blockquote (>)
+    # - Not an attribution (— Name)
+    # - <= 8 words
+    # - Ends with sentence punctuation (.!?)
+    # - Appears between section end and next chapter
+    chapter_pattern = re.compile(r'^## Chapter \d+', re.MULTILINE)
+    chapters = list(chapter_pattern.finditer(text))
+
+    for i, chapter_match in enumerate(chapters):
+        chapter_start = chapter_match.start()
+        chapter_end = chapters[i + 1].start() if i + 1 < len(chapters) else len(text)
+        chapter_text = text[chapter_start:chapter_end]
+
+        # Find the last section (Key Excerpts or Core Claims) in this chapter
+        last_section_match = None
+        for section_match in re.finditer(r'^### (Key Excerpts|Core Claims)', chapter_text, re.MULTILINE):
+            last_section_match = section_match
+
+        if last_section_match:
+            # Get content after the last section's content ends
+            # Find where Core Claims content ends (before next chapter or EOF)
+            section_content_end = len(chapter_text)  # Default to chapter end
+
+            # Check for orphan lines in the gap between sections
+            # Look for lines that aren't part of proper structure
+            after_section_pos = last_section_match.end()
+            after_section_text = chapter_text[after_section_pos:]
+
+            # Split into lines and check each
+            for line in after_section_text.split('\n'):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+
+                # Skip valid content
+                if stripped.startswith('## '):  # Next chapter
+                    break
+                if stripped.startswith('### '):  # Section header
+                    continue
+                if stripped.startswith('- **'):  # Core Claims bullet
+                    continue
+                if stripped.startswith('>'):  # Blockquote
+                    continue
+                if stripped.startswith('— ') or stripped.startswith('- '):  # Attribution
+                    continue
+
+                # Check for orphan fragment criteria
+                words = stripped.split()
+                is_short = len(words) <= 8
+                ends_with_punct = stripped and stripped[-1] in '.!?'
+                starts_lowercase = stripped and stripped[0].islower()
+
+                # Additional heuristic: no subject (doesn't start with capital or article)
+                no_obvious_subject = not re.match(r'^(The|A|An|This|That|It|He|She|They|We|I)\b', stripped)
+
+                if is_short and ends_with_punct and (starts_lowercase or no_obvious_subject):
+                    # This is likely an orphan fragment
+                    # Find approximate line number
+                    line_pos = text.find(stripped)
+                    approx_line = text[:line_pos].count('\n') + 1 if line_pos >= 0 else 0
+
+                    violations.append({
+                        'type': 'orphan_fragment_between_sections',
+                        'line_num': approx_line,
+                        'fragment': stripped,
+                        'word_count': len(words),
+                        'context': f"Found after {last_section_match.group()} in Chapter {i + 1}",
+                    })
+
+    # Check 5: Every chapter must have both Key Excerpts and Core Claims sections
+    # Missing sections indicate compilation failure or incorrect stripping.
+    for i, chapter_match in enumerate(chapters):
+        chapter_num = i + 1
+        chapter_start = chapter_match.start()
+        chapter_end = chapters[i + 1].start() if i + 1 < len(chapters) else len(text)
+        chapter_text = text[chapter_start:chapter_end]
+
+        has_key_excerpts = '### Key Excerpts' in chapter_text
+        has_core_claims = '### Core Claims' in chapter_text
+
+        if not has_key_excerpts:
+            violations.append({
+                'type': 'missing_key_excerpts_section',
+                'chapter': chapter_num,
+                'context': f"Chapter {chapter_num} has no ### Key Excerpts section",
+            })
+
+        if not has_core_claims:
+            violations.append({
+                'type': 'missing_core_claims_section',
+                'chapter': chapter_num,
+                'context': f"Chapter {chapter_num} has no ### Core Claims section",
+            })
+
     is_valid = len(violations) == 0
 
     if violations:
@@ -2776,6 +2878,10 @@ _DEBUG_CORRUPTION_PATTERNS = [
     (re.compile(r',\s*he\s+power\s*,', re.IGNORECASE), 'he_power_truncation'),
     (re.compile(r'^so\s+choose\.$', re.IGNORECASE | re.MULTILINE), 'so_choose_orphan'),
     (re.compile(r',\s+[a-z]\s*,'), 'single_letter_truncation'),
+    # Draft 19 orphan fragment pattern
+    (re.compile(r'\nethos of inquiry\.\n', re.IGNORECASE), 'ethos_of_inquiry_orphan'),
+    # Generic short orphan between sections (lowercase start, short, ends with .)
+    (re.compile(r'\n\n([a-z][^.!?\n]{5,50}[.!?])\n\n## Chapter', re.MULTILINE), 'generic_orphan_fragment'),
 ]
 
 
