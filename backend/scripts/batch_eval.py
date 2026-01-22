@@ -93,17 +93,21 @@ class ChapterMetrics:
 @dataclass
 class EntityMetrics:
     """Entity retention metrics."""
-    # Allowlisted entities found in prose
-    allowed_entity_mentions: int = 0
-    unique_entities_used: int = 0
-    entity_names_found: list = field(default_factory=list)
+    # Brand entities (org_names + product_names) - what we care about preserving
+    brand_mentions: int = 0
+    brand_names_found: list = field(default_factory=list)
+
+    # Acronym entities (ALLCAPS tokens like API, SDK, HIPAA) - diagnostic only
+    acronym_mentions: int = 0
+    acronym_names_found: list = field(default_factory=list)
 
     # Person names blocked
     person_mentions_blocked: int = 0
     person_names_blocked: list = field(default_factory=list)
 
-    # Retention ratio (higher is better)
-    retention_ratio: float = 0.0
+    # Retention ratios (higher is better) - diagnostic, not gating
+    brand_retention_ratio: float = 0.0
+    total_retention_ratio: float = 0.0
 
 
 @dataclass
@@ -130,6 +134,11 @@ class TranscriptResult:
     total_word_count: int = 0
     prose_word_count: int = 0
     avg_prose_words_per_chapter: float = 0.0
+
+    # Prose distribution (for future threshold tuning)
+    prose_words_per_chapter: list = field(default_factory=list)
+    p10_prose_words: float = 0.0
+    median_prose_words: float = 0.0
 
     # Chapter metrics
     chapter_count: int = 0
@@ -171,8 +180,13 @@ class BatchReport:
     avg_fallback_ratio: float = 0.0
     avg_prose_words_per_chapter: float = 0.0
 
-    # Entity retention aggregate
-    total_entity_mentions: int = 0
+    # Prose distribution aggregate (for threshold tuning)
+    p10_prose_words: float = 0.0
+    median_prose_words: float = 0.0
+
+    # Entity retention aggregate (diagnostic, not gating)
+    total_brand_mentions: int = 0
+    total_acronym_mentions: int = 0
     total_person_blocked: int = 0
 
     # Top drop reasons across corpus
@@ -209,7 +223,12 @@ def count_entity_mentions(
     entity_allowlist: Optional[EntityAllowlist],
     person_blacklist: Optional[PersonBlacklist],
 ) -> EntityMetrics:
-    """Count entity mentions in prose text."""
+    """Count entity mentions in prose text.
+
+    Splits entities into:
+    - brand: org_names + product_names (what we care about preserving)
+    - acronym: ALLCAPS tokens like API, SDK (diagnostic only)
+    """
     metrics = EntityMetrics()
 
     if not entity_allowlist and not person_blacklist:
@@ -218,30 +237,46 @@ def count_entity_mentions(
     # Find capitalized words/phrases that might be entities
     entity_pattern = re.compile(r'\b([A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)*)\b')
 
-    found_entities = set()
+    found_brands = set()
+    found_acronyms = set()
     found_persons = set()
 
     for match in entity_pattern.finditer(prose):
         candidate = match.group(1)
 
-        # Check if it's an allowlisted entity
-        if entity_allowlist and entity_allowlist.contains(candidate):
-            metrics.allowed_entity_mentions += 1
-            found_entities.add(candidate)
+        # Check if it's an allowlisted entity - split by type
+        if entity_allowlist:
+            # Check brand entities (org_names + product_names)
+            is_org = candidate.lower() in {n.lower() for n in entity_allowlist.org_names}
+            is_product = candidate.lower() in {n.lower() for n in entity_allowlist.product_names}
+            is_acronym = candidate.upper() in entity_allowlist.acronyms or candidate in entity_allowlist.acronyms
+
+            if is_org or is_product:
+                metrics.brand_mentions += 1
+                found_brands.add(candidate)
+            elif is_acronym:
+                metrics.acronym_mentions += 1
+                found_acronyms.add(candidate)
 
         # Check if it would have been blocked as person
         if person_blacklist and person_blacklist.matches(candidate):
             metrics.person_mentions_blocked += 1
             found_persons.add(candidate)
 
-    metrics.unique_entities_used = len(found_entities)
-    metrics.entity_names_found = list(found_entities)[:10]  # Top 10
+    metrics.brand_names_found = list(found_brands)[:10]
+    metrics.acronym_names_found = list(found_acronyms)[:10]
     metrics.person_names_blocked = list(found_persons)[:10]
 
-    # Retention ratio: entities kept / (entities kept + persons blocked)
-    total = metrics.allowed_entity_mentions + metrics.person_mentions_blocked
+    # Retention ratios (diagnostic, not gating)
+    # Brand retention: brands / (brands + persons)
+    brand_total = metrics.brand_mentions + metrics.person_mentions_blocked
+    if brand_total > 0:
+        metrics.brand_retention_ratio = metrics.brand_mentions / brand_total
+
+    # Total retention: (brands + acronyms) / (brands + acronyms + persons)
+    total = metrics.brand_mentions + metrics.acronym_mentions + metrics.person_mentions_blocked
     if total > 0:
-        metrics.retention_ratio = metrics.allowed_entity_mentions / total
+        metrics.total_retention_ratio = (metrics.brand_mentions + metrics.acronym_mentions) / total
 
     return metrics
 
@@ -476,12 +511,14 @@ def evaluate_transcript(
         total_prose_sentences = 0
         fallback_chapters = 0
         all_prose = []
+        chapter_prose_counts = []
 
         for chapter in chapters:
             chapter_metrics = analyze_chapter(chapter, entity_allowlist, person_blacklist)
             result.chapter_metrics.append(asdict(chapter_metrics))
             total_prose_words += chapter_metrics.prose_word_count
             total_prose_sentences += chapter_metrics.prose_sentence_count
+            chapter_prose_counts.append(chapter_metrics.prose_word_count)
             if chapter_metrics.used_fallback:
                 fallback_chapters += 1
 
@@ -498,13 +535,26 @@ def evaluate_transcript(
         result.total_prose_sentences = total_prose_sentences
         result.sentences_kept = total_prose_sentences
         result.chapters_with_fallback = fallback_chapters
+        result.prose_words_per_chapter = chapter_prose_counts
 
-        # Calculate ratios
+        # Calculate ratios and percentiles
         if result.total_prose_sentences > 0:
             result.drop_ratio = result.sentences_dropped / (result.total_prose_sentences + result.sentences_dropped)
         if result.chapter_count > 0:
             result.fallback_ratio = result.chapters_with_fallback / result.chapter_count
             result.avg_prose_words_per_chapter = result.prose_word_count / result.chapter_count
+
+            # Compute P10 and median for threshold tuning
+            sorted_counts = sorted(chapter_prose_counts)
+            n = len(sorted_counts)
+            # P10: 10th percentile (the weak chapters)
+            p10_idx = max(0, int(n * 0.1))
+            result.p10_prose_words = float(sorted_counts[p10_idx])
+            # Median
+            if n % 2 == 0:
+                result.median_prose_words = (sorted_counts[n//2 - 1] + sorted_counts[n//2]) / 2.0
+            else:
+                result.median_prose_words = float(sorted_counts[n//2])
 
         result.total_word_count = len(markdown.split())
 
@@ -584,9 +634,10 @@ def run_batch_evaluation(
         for cause in result.failure_causes:
             all_failure_causes[cause.split(":")[0]] += 1
 
-        # Aggregate entity metrics
+        # Aggregate entity metrics (split by type)
         if result.entity_metrics:
-            report.total_entity_mentions += result.entity_metrics.get("allowed_entity_mentions", 0)
+            report.total_brand_mentions += result.entity_metrics.get("brand_mentions", 0)
+            report.total_acronym_mentions += result.entity_metrics.get("acronym_mentions", 0)
             report.total_person_blocked += result.entity_metrics.get("person_mentions_blocked", 0)
 
     # Sort results: FAIL first, then WARN, then PASS
@@ -602,6 +653,20 @@ def run_batch_evaluation(
         report.avg_prose_words_per_chapter = sum(
             r.avg_prose_words_per_chapter for r in valid_results
         ) / len(valid_results)
+
+        # Aggregate prose percentiles across all chapters
+        all_chapter_prose = []
+        for r in valid_results:
+            all_chapter_prose.extend(r.prose_words_per_chapter)
+        if all_chapter_prose:
+            sorted_prose = sorted(all_chapter_prose)
+            n = len(sorted_prose)
+            p10_idx = max(0, int(n * 0.1))
+            report.p10_prose_words = float(sorted_prose[p10_idx])
+            if n % 2 == 0:
+                report.median_prose_words = (sorted_prose[n//2 - 1] + sorted_prose[n//2]) / 2.0
+            else:
+                report.median_prose_words = float(sorted_prose[n//2])
 
     report.top_drop_reasons = dict(all_drop_reasons.most_common(10))
     report.top_failure_causes = dict(all_failure_causes.most_common(5))
@@ -671,13 +736,19 @@ def print_summary(report: BatchReport) -> None:
     print(f"  Avg fallback ratio: {report.avg_fallback_ratio:.1%}")
     print(f"  Avg prose words/chapter: {report.avg_prose_words_per_chapter:.0f}")
 
+    print(f"\n--- Prose Distribution (for threshold tuning) ---")
+    print(f"  P10 prose words/chapter: {report.p10_prose_words:.0f}")
+    print(f"  Median prose words/chapter: {report.median_prose_words:.0f}")
+
     if report.dynamic_name_policy_enabled:
-        print(f"\n--- Entity Retention ---")
-        print(f"  Org/product mentions kept: {report.total_entity_mentions}")
+        print(f"\n--- Entity Retention (diagnostic, not gating) ---")
+        print(f"  Brand mentions kept: {report.total_brand_mentions}")
+        print(f"  Acronym mentions kept: {report.total_acronym_mentions}")
         print(f"  Person mentions blocked: {report.total_person_blocked}")
-        if report.total_entity_mentions + report.total_person_blocked > 0:
-            retention = report.total_entity_mentions / (report.total_entity_mentions + report.total_person_blocked)
-            print(f"  Retention ratio: {retention:.1%}")
+        total_kept = report.total_brand_mentions + report.total_acronym_mentions
+        total = total_kept + report.total_person_blocked
+        if total > 0:
+            print(f"  Total retention: {total_kept / total:.1%}")
 
     if report.top_failure_causes:
         print(f"\n--- Top Failure Causes ---")
