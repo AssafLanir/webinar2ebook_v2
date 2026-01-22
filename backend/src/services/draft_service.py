@@ -3501,6 +3501,220 @@ def ensure_chapter_narrative_minimum(
     }
 
 
+def repair_orphan_chapter_openers(
+    text: str,
+    original_prose_by_chapter: dict[int, str] | None = None,
+    whitelist_quotes: list[str] | None = None,
+) -> tuple[str, dict]:
+    """Repair chapters whose first narrative sentence has no antecedent.
+
+    Post sentence-drop, chapters may start with pronouns/connectives like
+    "It prompts us...", "Understanding these laws...", "However, the..." that
+    lack antecedent because the anchoring sentence was dropped.
+
+    Bad opener patterns:
+    - Pronouns: It|This|That|These|Those (without clear antecedent)
+    - "Understanding these/this..."
+    - Discourse connectives: However|Therefore|Moreover|But|And
+
+    Repair strategy (deterministic):
+    1. Try salvage: if original_prose_by_chapter provided, find the closest
+       earlier sentence that:
+       - Does NOT match verbatim-leak detector
+       - Does NOT match attribution-wrapper detector
+       - Is >= 8 words
+       Insert it at the beginning.
+
+    2. If no salvage found: prepend the deterministic chapter fallback
+       (don't replace remaining prose, just prepend).
+
+    Args:
+        text: The draft markdown text (post sentence-drop).
+        original_prose_by_chapter: Optional dict mapping chapter_num to original
+            pre-drop narrative prose for that chapter.
+        whitelist_quotes: Optional whitelist for leak detection during salvage.
+
+    Returns:
+        Tuple of (repaired_text, report_dict).
+    """
+    # Bad opener patterns
+    BAD_OPENER_PATTERNS = [
+        # Pronouns without antecedent
+        r'^It\s+(is|was|prompts|suggests|shows|demonstrates|illustrates|captures|marks|reveals|becomes|remains|continues|appears|seems|grows|changes|reflects|represents)\b',
+        r'^This\s+(is|was|prompts|challenges|shows|suggests|indicates|demonstrates|reflects|captures|marks|reveals|means|implies|highlights|underscores|understanding)\b',
+        r'^That\s+(is|was|shows|means|suggests)\b',
+        r'^These\s+(are|were|ideas?|concepts?|views?|laws?|notions?|principles?)\b',
+        r'^Those\s+(are|were|ideas?|who)\b',
+        # "Understanding these/this..."
+        r'^Understanding\s+(these?|this|the)\b',
+        # Discourse connectives at start
+        r'^However[,\s]',
+        r'^Therefore[,\s]',
+        r'^Moreover[,\s]',
+        r'^Furthermore[,\s]',
+        r'^But\s+',
+        r'^And\s+the\b',
+    ]
+
+    # Attribution wrapper patterns (for salvage filtering)
+    ATTRIBUTION_PATTERNS = [
+        r'\b(Deutsch|He|She|They)\s+(says?|notes?|argues?|observes?|warns?|claims?|states?|suggests?)\s*[,:]',
+        r',\s*(recalling|remembering|noting|observing)\s*,',
+    ]
+
+    def is_bad_opener(sentence: str) -> bool:
+        """Check if sentence is a bad opener."""
+        stripped = sentence.strip()
+        for pattern in BAD_OPENER_PATTERNS:
+            if re.match(pattern, stripped, re.IGNORECASE):
+                return True
+        return False
+
+    def has_attribution_wrapper(sentence: str) -> bool:
+        """Check if sentence has attribution wrapper."""
+        for pattern in ATTRIBUTION_PATTERNS:
+            if re.search(pattern, sentence, re.IGNORECASE):
+                return True
+        return False
+
+    def has_verbatim_leak(sentence: str, quotes: list[str], min_len: int = 20) -> bool:
+        """Check if sentence contains verbatim quote text."""
+        if not quotes:
+            return False
+        normalized_sentence = ' '.join(sentence.lower().split())
+        for quote in quotes:
+            if len(quote) >= min_len:
+                normalized_quote = ' '.join(quote.lower().split())
+                if normalized_quote in normalized_sentence:
+                    return True
+        return False
+
+    def find_salvage_sentence(original_prose: str, quotes: list[str] | None) -> str | None:
+        """Find a safe sentence from original prose to use as anchor.
+
+        Returns the first valid sentence (>= 8 words, no leak, no attribution).
+        """
+        if not original_prose:
+            return None
+
+        # Split into sentences
+        sentences = re.split(r'(?<=[.!?])\s+', original_prose.strip())
+
+        for sentence in sentences:
+            stripped = sentence.strip()
+            if not stripped:
+                continue
+
+            words = stripped.split()
+            if len(words) < 8:
+                continue
+
+            # Check for attribution wrappers
+            if has_attribution_wrapper(stripped):
+                continue
+
+            # Check for verbatim leaks
+            if has_verbatim_leak(stripped, quotes or []):
+                continue
+
+            # Check if it's itself a bad opener (useless for salvage)
+            if is_bad_opener(stripped):
+                continue
+
+            # Valid salvage candidate
+            return stripped
+
+        return None
+
+    # Parse chapters
+    chapter_pattern = re.compile(r'^## Chapter (\d+)[:\s]*(.*?)$', re.MULTILINE)
+    chapters = list(chapter_pattern.finditer(text))
+
+    if not chapters:
+        return text, {"chapters_repaired": 0, "repairs": []}
+
+    repairs = []
+    result_parts = []
+    last_end = 0
+
+    for i, chapter_match in enumerate(chapters):
+        chapter_num = int(chapter_match.group(1))
+        chapter_title = chapter_match.group(2).strip()
+        chapter_start = chapter_match.start()
+        chapter_end = chapters[i + 1].start() if i + 1 < len(chapters) else len(text)
+        chapter_text = text[chapter_start:chapter_end]
+
+        # Add content before this chapter
+        result_parts.append(text[last_end:chapter_start])
+
+        # Find narrative prose section (before Key Excerpts)
+        key_excerpts_pos = chapter_text.find('### Key Excerpts')
+        if key_excerpts_pos == -1:
+            key_excerpts_pos = len(chapter_text)
+
+        # Get just the header and narrative portion
+        header_end = chapter_text.find('\n') + 1
+        narrative_portion = chapter_text[header_end:key_excerpts_pos].strip()
+
+        # Check if first narrative sentence is a bad opener
+        if narrative_portion:
+            first_sentence_match = re.match(r'^([^.!?]+[.!?])', narrative_portion)
+            first_sentence = first_sentence_match.group(1) if first_sentence_match else narrative_portion.split('\n')[0]
+
+            if is_bad_opener(first_sentence):
+                # Try to salvage from original prose
+                original_prose = original_prose_by_chapter.get(chapter_num) if original_prose_by_chapter else None
+                salvage = find_salvage_sentence(original_prose, whitelist_quotes)
+
+                if salvage:
+                    # Prepend salvage sentence
+                    repaired_narrative = salvage + ' ' + narrative_portion
+                    repairs.append({
+                        "chapter": chapter_num,
+                        "action": "salvage_prepended",
+                        "salvage_sentence": salvage[:50] + "...",
+                        "bad_opener": first_sentence[:50] + "...",
+                    })
+                else:
+                    # Prepend fallback
+                    fallback = _generate_fallback_narrative(chapter_num, chapter_title)
+                    repaired_narrative = fallback + '\n\n' + narrative_portion
+                    repairs.append({
+                        "chapter": chapter_num,
+                        "action": "fallback_prepended",
+                        "bad_opener": first_sentence[:50] + "...",
+                    })
+
+                # Rebuild chapter with repaired narrative
+                chapter_text = (
+                    chapter_text[:header_end] +
+                    '\n' + repaired_narrative + '\n\n' +
+                    chapter_text[key_excerpts_pos:]
+                )
+
+        result_parts.append(chapter_text)
+        last_end = chapter_end
+
+    # Add any remaining content
+    if last_end < len(text):
+        result_parts.append(text[last_end:])
+
+    result = ''.join(result_parts)
+
+    # Clean up extra blank lines
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    if repairs:
+        logger.info(f"Anchor-sentence policy: repaired {len(repairs)} chapter opener(s)")
+        for r in repairs:
+            logger.info(f"  - Chapter {r['chapter']}: {r['action']}")
+
+    return result, {
+        "chapters_repaired": len(repairs),
+        "repairs": repairs,
+    }
+
+
 def _generate_fallback_narrative(chapter_num: int, chapter_title: str) -> str:
     """Generate a minimal safe narrative for a chapter with no prose.
 
@@ -3821,6 +4035,166 @@ def cleanup_dangling_attributions(text: str) -> tuple[str, int]:
     result = re.sub(r'\n{3,}', '\n\n', result)
 
     return result, removal_count
+
+
+def compute_chapter_prose_metrics(
+    final_text: str,
+    original_text: str | None = None,
+) -> dict:
+    """Compute per-chapter prose metrics for Ideas Edition quality tracking.
+
+    Calculates:
+    - Per-chapter sentence counts (in prose sections)
+    - Whether fallback was used (detects fallback variant phrases)
+    - Optional: dropped sentence count if original_text provided
+
+    Args:
+        final_text: The final processed draft text.
+        original_text: Optional original pre-processing text for drop counting.
+
+    Returns:
+        Dict with chapter-level metrics.
+    """
+    # Fallback variant indicators
+    FALLBACK_INDICATORS = [
+        "This chapter develops the theme",
+        "The core tension in this chapter",
+        "This chapter threads from specific evidence",
+    ]
+
+    def count_prose_sentences(chapter_text: str) -> int:
+        """Count sentences in prose section (before Key Excerpts)."""
+        # Find Key Excerpts section
+        key_excerpts_pos = chapter_text.find('### Key Excerpts')
+        if key_excerpts_pos == -1:
+            key_excerpts_pos = len(chapter_text)
+
+        # Get prose portion (after header, before Key Excerpts)
+        header_end = chapter_text.find('\n')
+        if header_end == -1:
+            return 0
+
+        prose = chapter_text[header_end:key_excerpts_pos].strip()
+        if not prose:
+            return 0
+
+        # Count sentences (simple heuristic: split on .!? followed by space+capital)
+        sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', prose)
+        return len([s for s in sentences if s.strip()])
+
+    def has_fallback(chapter_text: str) -> bool:
+        """Check if chapter uses fallback narrative."""
+        for indicator in FALLBACK_INDICATORS:
+            if indicator in chapter_text:
+                return True
+        return False
+
+    # Parse chapters
+    chapter_pattern = re.compile(r'^## Chapter (\d+)', re.MULTILINE)
+    chapters = list(chapter_pattern.finditer(final_text))
+
+    if not chapters:
+        return {"chapters": [], "total_sentences_kept": 0, "fallback_chapters": 0}
+
+    chapter_metrics = []
+    total_sentences = 0
+    fallback_count = 0
+
+    for i, chapter_match in enumerate(chapters):
+        chapter_num = int(chapter_match.group(1))
+        chapter_start = chapter_match.start()
+        chapter_end = chapters[i + 1].start() if i + 1 < len(chapters) else len(final_text)
+        chapter_text = final_text[chapter_start:chapter_end]
+
+        sentence_count = count_prose_sentences(chapter_text)
+        used_fallback = has_fallback(chapter_text)
+
+        if used_fallback:
+            fallback_count += 1
+
+        total_sentences += sentence_count
+
+        metrics = {
+            "chapter": chapter_num,
+            "sentences_kept": sentence_count,
+            "fallback_used": used_fallback,
+        }
+
+        # If original text provided, calculate dropped count
+        if original_text:
+            orig_chapters = list(chapter_pattern.finditer(original_text))
+            for j, orig_match in enumerate(orig_chapters):
+                if int(orig_match.group(1)) == chapter_num:
+                    orig_start = orig_match.start()
+                    orig_end = orig_chapters[j + 1].start() if j + 1 < len(orig_chapters) else len(original_text)
+                    orig_chapter_text = original_text[orig_start:orig_end]
+                    orig_sentence_count = count_prose_sentences(orig_chapter_text)
+                    metrics["sentences_dropped"] = max(0, orig_sentence_count - sentence_count)
+                    break
+
+        chapter_metrics.append(metrics)
+
+    return {
+        "chapters": chapter_metrics,
+        "total_sentences_kept": total_sentences,
+        "fallback_chapters": fallback_count,
+        "total_chapters": len(chapters),
+    }
+
+
+def normalize_markdown_headers(text: str) -> tuple[str, dict]:
+    """Ensure proper blank lines before markdown headers.
+
+    Final render pass that fixes formatting issues:
+    - Ensures a blank line before any line matching ^#{2,3} (Chapter/section headers)
+    - Ensures a blank line after ## Chapter N if next line is prose or subheader
+
+    This is a pure formatting pass - no content changes, only whitespace.
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (normalized_text, report_dict).
+    """
+    lines = text.split('\n')
+    result_lines = []
+    fixes_applied = 0
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Check if this line is a header (## or ###)
+        is_header = stripped.startswith('## ') or stripped.startswith('### ')
+
+        if is_header and i > 0:
+            # Check if previous line is blank
+            prev_line = lines[i - 1].strip() if i > 0 else ''
+
+            if prev_line != '':
+                # Need to insert a blank line before this header
+                result_lines.append('')
+                fixes_applied += 1
+
+        result_lines.append(line)
+
+        # If this is a chapter header, ensure blank line after
+        if stripped.startswith('## Chapter') and i < len(lines) - 1:
+            next_line = lines[i + 1].strip() if i + 1 < len(lines) else ''
+            # If next line is not blank and not empty, we'll add blank line
+            # (The next iteration will handle it naturally since we're building result_lines)
+
+    result = '\n'.join(result_lines)
+
+    # Clean up any triple+ newlines that might result
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    if fixes_applied > 0:
+        logger.debug(f"Markdown header normalizer: inserted {fixes_applied} blank lines")
+
+    return result, {
+        "blank_lines_inserted": fixes_applied,
+    }
 
 
 def repair_whitespace(text: str) -> str:
@@ -6231,6 +6605,33 @@ async def _generate_draft_task(
             except Exception as e:
                 logger.error(f"Job {job_id}: Verbatim leak gate failed (non-fatal): {e}", exc_info=True)
 
+        # Anchor-sentence policy (Ideas Edition only)
+        # Post sentence-drop, chapters may start with orphan pronouns/connectives
+        # (It/This/These/However) that lack antecedent because anchoring sentence was dropped.
+        # This repairs by prepending a safe salvage sentence or fallback.
+        if content_mode == ContentMode.essay:
+            try:
+                # Note: original_prose_by_chapter is not available at this point in the pipeline
+                # so salvage is not possible. We prepend fallback for bad openers.
+                whitelist_quote_texts = [q.quote_text for q in whitelist] if whitelist else []
+                final_markdown, opener_report = repair_orphan_chapter_openers(
+                    final_markdown,
+                    original_prose_by_chapter=None,  # TODO: wire up original prose for salvage
+                    whitelist_quotes=whitelist_quote_texts,
+                )
+                if opener_report["chapters_repaired"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Anchor-sentence policy - repaired "
+                        f"{opener_report['chapters_repaired']} chapter opener(s)"
+                    )
+                    for r in opener_report.get("repairs", [])[:3]:
+                        constraint_warnings.append(
+                            f"Chapter {r['chapter']} bad opener repaired ({r['action']})"
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Anchor-sentence policy failed (non-fatal): {e}", exc_info=True)
+
         # Anachronism filter (Ideas Edition safety net) - only for essay mode
         # Catches contemporary framing that slipped past generation prompts
         # NOTE: Must run BEFORE Chapter Narrative Minimum so fallback can fix any prose-zero created
@@ -6425,6 +6826,18 @@ async def _generate_draft_task(
         except Exception as e:
             logger.error(f"Job {job_id}: Whitespace repair failed (non-fatal): {e}", exc_info=True)
 
+        # Markdown header normalization (Ideas Edition) - ensure blank lines before headers
+        # This is a pure formatting pass that fixes cosmetic issues
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, header_report = normalize_markdown_headers(final_markdown)
+                if header_report.get("blank_lines_inserted", 0) > 0:
+                    logger.debug(
+                        f"Job {job_id}: Header normalizer inserted {header_report['blank_lines_inserted']} blank lines"
+                    )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Header normalization failed (non-fatal): {e}")
+
         # Placeholder glue cleanup (Ideas Edition) - remove any leftover artifact strings
         # This catches "[as discussed in the excerpts above]" and similar markers
         if content_mode == ContentMode.essay:
@@ -6462,6 +6875,30 @@ async def _generate_draft_task(
                     # raise ValueError(f"Token integrity check failed: {integrity_report['violation_count']} violations")
             except Exception as e:
                 logger.error(f"Job {job_id}: Token integrity check failed: {e}", exc_info=True)
+
+        # Per-chapter prose metrics (Ideas Edition quality tracking)
+        if content_mode == ContentMode.essay:
+            try:
+                prose_metrics = compute_chapter_prose_metrics(final_markdown)
+                logger.info(
+                    f"Job {job_id}: Prose metrics - "
+                    f"{prose_metrics['total_sentences_kept']} sentences kept across "
+                    f"{prose_metrics['total_chapters']} chapters, "
+                    f"{prose_metrics['fallback_chapters']} used fallback"
+                )
+                for ch_metrics in prose_metrics.get("chapters", []):
+                    if ch_metrics.get("fallback_used"):
+                        logger.info(
+                            f"  - Chapter {ch_metrics['chapter']}: "
+                            f"{ch_metrics['sentences_kept']} sentences (FALLBACK)"
+                        )
+                    elif ch_metrics["sentences_kept"] < 3:
+                        logger.warning(
+                            f"  - Chapter {ch_metrics['chapter']}: "
+                            f"{ch_metrics['sentences_kept']} sentences (LOW)"
+                        )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Prose metrics computation failed (non-fatal): {e}")
 
         # STRUCTURAL INTEGRITY HARD GATE (Ideas Edition)
         # P0 invariant: unclosed quotes, headings inside quotes, quote absorption

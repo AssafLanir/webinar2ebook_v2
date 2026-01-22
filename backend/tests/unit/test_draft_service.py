@@ -1566,6 +1566,94 @@ class TestWhitespaceRepair:
         assert result == text
 
 
+class TestMarkdownHeaderNormalizer:
+    """Tests for normalize_markdown_headers - blank line before headers."""
+
+    def test_inserts_blank_line_before_key_excerpts_draft21(self):
+        """REGRESSION Draft 21: Missing blank line before ### Key Excerpts."""
+        text = '''## Chapter 1: The Impact
+
+Some prose here.
+### Key Excerpts
+
+> "Quote"
+> — Speaker'''
+
+        result, report = draft_service.normalize_markdown_headers(text)
+
+        # Should have blank line before ### Key Excerpts
+        assert "\n\n### Key Excerpts" in result
+        assert report["blank_lines_inserted"] >= 1
+
+    def test_inserts_blank_line_before_core_claims_draft21(self):
+        """REGRESSION Draft 21: Missing blank line before ### Core Claims."""
+        text = '''### Key Excerpts
+
+> "Quote"
+> — Speaker
+### Core Claims
+
+- **Claim**: "Support."'''
+
+        result, report = draft_service.normalize_markdown_headers(text)
+
+        # Should have blank line before ### Core Claims
+        assert "\n\n### Core Claims" in result
+        assert report["blank_lines_inserted"] >= 1
+
+    def test_inserts_blank_line_before_chapter_header(self):
+        """Missing blank line before ## Chapter should be fixed."""
+        text = '''### Core Claims
+
+- **Claim**: "Support."
+## Chapter 2: Human Potential
+
+More prose here.'''
+
+        result, report = draft_service.normalize_markdown_headers(text)
+
+        # Should have blank line before ## Chapter 2
+        assert "\n\n## Chapter 2" in result
+        assert report["blank_lines_inserted"] >= 1
+
+    def test_preserves_already_correct_formatting(self):
+        """Already correct formatting should not be changed."""
+        text = '''## Chapter 1: The Impact
+
+Some prose here.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support."
+
+## Chapter 2: Human Potential
+
+More prose here.'''
+
+        result, report = draft_service.normalize_markdown_headers(text)
+
+        # No changes needed
+        assert report["blank_lines_inserted"] == 0
+        # Content should be unchanged (after triple newline normalization)
+        assert "Some prose here.\n\n### Key Excerpts" in result
+
+    def test_does_not_create_triple_newlines(self):
+        """Should not create triple newlines when fixing."""
+        text = '''Some prose.
+
+### Key Excerpts'''
+
+        result, report = draft_service.normalize_markdown_headers(text)
+
+        # Should not have triple newlines
+        assert "\n\n\n" not in result
+
+
 class TestHeShePronounOrphan:
     """Tests for He/She pronoun orphan detection."""
 
@@ -3038,6 +3126,261 @@ Okay, first point here. Well, second point here. Actually, third point.
         assert "Well," not in result
         assert "Actually," not in result
         assert report["markers_removed"] == 3
+
+
+class TestAnchorSentencePolicy:
+    """Tests for repair_orphan_chapter_openers - fixes bad chapter openers."""
+
+    def test_detects_and_repairs_understanding_these_opener_draft21(self):
+        """REGRESSION Draft 21: 'Understanding these laws...' opener should be repaired.
+
+        Chapter 3 in Draft 21 starts with 'Understanding these laws helps us...'
+        which has no antecedent for 'these'. Should prepend fallback.
+        """
+        text = '''## Chapter 1: The Impact
+
+The Enlightenment changed everything.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support."
+
+## Chapter 2: Human Potential
+
+Human wisdom knows no bounds.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support."
+
+## Chapter 3: The Role of Knowledge
+
+Understanding these laws helps us grasp our place in the cosmos.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support."'''
+
+        result, report = draft_service.repair_orphan_chapter_openers(text)
+
+        # Chapter 3 should be repaired
+        assert report["chapters_repaired"] >= 1
+        repairs = report["repairs"]
+        ch3_repairs = [r for r in repairs if r["chapter"] == 3]
+        assert len(ch3_repairs) == 1
+        assert ch3_repairs[0]["action"] == "fallback_prepended"
+        # Fallback should be prepended, not replace
+        assert "Understanding these laws" in result  # Original preserved
+        # Should have a fallback variant before it
+        has_fallback = (
+            "This chapter develops" in result or
+            "The core tension" in result or
+            "This chapter threads" in result
+        )
+        assert has_fallback
+
+    def test_detects_it_prompts_opener(self):
+        """'It prompts us...' opener should be repaired."""
+        text = '''## Chapter 1: First
+
+It prompts us to rethink our relationship with the universe.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support."'''
+
+        result, report = draft_service.repair_orphan_chapter_openers(text)
+
+        assert report["chapters_repaired"] == 1
+        assert "fallback_prepended" in report["repairs"][0]["action"]
+        # Original preserved
+        assert "It prompts us" in result
+
+    def test_detects_however_opener(self):
+        """'However, ...' opener should be repaired."""
+        text = '''## Chapter 1: First
+
+However, a counter-narrative suggests humans are insignificant.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support."'''
+
+        result, report = draft_service.repair_orphan_chapter_openers(text)
+
+        assert report["chapters_repaired"] == 1
+        assert "However, a counter-narrative" in result  # Preserved
+
+    def test_preserves_good_opener(self):
+        """Chapter with good opener (proper subject) should not be modified."""
+        text = '''## Chapter 1: The Impact
+
+The Enlightenment marked a turning point in human history.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support."
+
+## Chapter 2: Human Potential
+
+David Deutsch envisions a future where human wisdom knows no bounds.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support."'''
+
+        result, report = draft_service.repair_orphan_chapter_openers(text)
+
+        # No repairs needed
+        assert report["chapters_repaired"] == 0
+        # Content unchanged
+        assert "The Enlightenment marked" in result
+        assert "David Deutsch envisions" in result
+
+    def test_salvage_from_original_prose(self):
+        """If original prose provided, should salvage safe sentence."""
+        current_text = '''## Chapter 1: The Impact
+
+This shows the significance of the change.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker'''
+
+        # Original prose had a good anchor sentence
+        original_prose = {
+            1: "The Enlightenment was a pivotal moment in human intellectual development. This shows the significance of the change."
+        }
+
+        result, report = draft_service.repair_orphan_chapter_openers(
+            current_text,
+            original_prose_by_chapter=original_prose,
+        )
+
+        assert report["chapters_repaired"] == 1
+        repairs = report["repairs"]
+        assert repairs[0]["action"] == "salvage_prepended"
+        # Salvage sentence should be prepended
+        assert "The Enlightenment was a pivotal moment" in result
+        # Original content preserved
+        assert "This shows the significance" in result
+
+
+class TestChapterProseMetrics:
+    """Tests for compute_chapter_prose_metrics - quality tracking."""
+
+    def test_counts_sentences_per_chapter(self):
+        """Should count sentences in prose sections correctly."""
+        text = '''## Chapter 1: First
+
+The Enlightenment changed everything. It marked a turning point in history. Progress became possible.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support."
+
+## Chapter 2: Second
+
+Human wisdom knows no bounds. We can shape our future.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker'''
+
+        metrics = draft_service.compute_chapter_prose_metrics(text)
+
+        assert metrics["total_chapters"] == 2
+        assert metrics["chapters"][0]["chapter"] == 1
+        assert metrics["chapters"][0]["sentences_kept"] == 3
+        assert metrics["chapters"][1]["chapter"] == 2
+        assert metrics["chapters"][1]["sentences_kept"] == 2
+        assert metrics["total_sentences_kept"] == 5
+
+    def test_detects_fallback_usage(self):
+        """Should detect when fallback narrative was used."""
+        text = '''## Chapter 1: First
+
+This chapter develops the theme of progress by linking concrete moments to claims.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+## Chapter 2: Second
+
+Human wisdom knows no bounds. This is real prose.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker'''
+
+        metrics = draft_service.compute_chapter_prose_metrics(text)
+
+        assert metrics["fallback_chapters"] == 1
+        assert metrics["chapters"][0]["fallback_used"] is True
+        assert metrics["chapters"][1]["fallback_used"] is False
+
+    def test_handles_prose_zero_chapters(self):
+        """Should handle chapters with no prose."""
+        text = '''## Chapter 1: First
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support."'''
+
+        metrics = draft_service.compute_chapter_prose_metrics(text)
+
+        assert metrics["total_chapters"] == 1
+        assert metrics["chapters"][0]["sentences_kept"] == 0
 
 
 class TestChapterNarrativeFallback:
