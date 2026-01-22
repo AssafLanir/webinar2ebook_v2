@@ -2196,6 +2196,22 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         re.IGNORECASE
     )
 
+    # Pattern: "As <Name> <verb> that" - broken grammar, speaker framing leak
+    # Example: "As Deutsch notes that what we call wisdom..."
+    # This is grammatically broken. Valid forms:
+    #   - "As Deutsch notes, what we call..." (interpolation with comma)
+    #   - "Deutsch notes that what we call..." (indirect speech)
+    # The "As X verb that" form is speaker framing that leaked through.
+    # Action: DROP the entire sentence (no speaker framing in prose).
+    as_verb_that_pattern = re.compile(
+        r'\bAs\s+'                          # "As " (word boundary)
+        r'(?:Deutsch|David\s+Deutsch|He|She|They|The\s+(?:guest|host|speaker))\s+'  # Subject
+        r'(?:notes?|argues?|says?|observes?|suggests?|claims?|states?|explains?|'
+        r'warns?|points?\s+out|remarks?|contends?|believes?|maintains?|asserts?)\s+'  # Verb
+        r'that\b',                          # "that" (the broken part)
+        re.IGNORECASE
+    )
+
     rewrite_count = 0
     sentences_dropped = 0
     rewrite_details = []
@@ -2370,11 +2386,16 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
             result_paragraphs.append(para)
             continue
 
-        # STEP 1: Drop sentences containing recall verb patterns (unrewritable leaks)
-        # These are P0 drops - the pattern indicates a quote-introducer leak
-        # Example: "Deutsch mentions the exchange, recalling, It's funny..."
+        # STEP 1: Drop sentences containing problematic patterns (unrewritable leaks)
+        # These are P0 drops - patterns that indicate quote-introducer or speaker framing leaks
+        # Examples:
+        #   - "Deutsch mentions the exchange, recalling, It's funny..." (recall verb leak)
+        #   - "As Deutsch notes that what we call wisdom..." (broken "As X verb that" grammar)
         modified = para
-        if recall_verb_pattern.search(modified):
+        has_recall_verb = recall_verb_pattern.search(modified)
+        has_as_verb_that = as_verb_that_pattern.search(modified)
+
+        if has_recall_verb or has_as_verb_that:
             # Split into sentences and filter out bad ones
             # Use conservative sentence splitting
             sentence_pattern = re.compile(r'(?<=[.!?])\s+(?=[A-Z])')
@@ -2383,10 +2404,17 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
 
             for sentence in sentences:
                 if recall_verb_pattern.search(sentence):
-                    # Drop this sentence
+                    # Drop this sentence - recall verb leak
                     sentences_dropped += 1
                     drop_details.append({
                         "type": "recall_verb_leak",
+                        "dropped_sentence": sentence[:100] + ("..." if len(sentence) > 100 else ""),
+                    })
+                elif as_verb_that_pattern.search(sentence):
+                    # Drop this sentence - "As X verb that" broken grammar / speaker framing
+                    sentences_dropped += 1
+                    drop_details.append({
+                        "type": "as_verb_that_leak",
                         "dropped_sentence": sentence[:100] + ("..." if len(sentence) > 100 else ""),
                     })
                 else:
@@ -3538,16 +3566,24 @@ def repair_orphan_chapter_openers(
         Tuple of (repaired_text, report_dict).
     """
     # Bad opener patterns
+    # At chapter start, these indicate missing antecedent/context
     BAD_OPENER_PATTERNS = [
-        # Pronouns without antecedent
-        r'^It\s+(is|was|prompts|suggests|shows|demonstrates|illustrates|captures|marks|reveals|becomes|remains|continues|appears|seems|grows|changes|reflects|represents)\b',
-        r'^This\s+(is|was|prompts|challenges|shows|suggests|indicates|demonstrates|reflects|captures|marks|reveals|means|implies|highlights|underscores|understanding)\b',
-        r'^That\s+(is|was|shows|means|suggests)\b',
-        r'^These\s+(are|were|ideas?|concepts?|views?|laws?|notions?|principles?)\b',
-        r'^Those\s+(are|were|ideas?|who)\b',
-        # "Understanding these/this..."
+        # Subject pronouns + any verb (Draft 22 fix: don't enumerate verb forms)
+        # At chapter start, He/She/They/We/I always lack antecedent
+        r'^He\s+[a-z]+',      # "He warned...", "He argues...", etc.
+        r'^She\s+[a-z]+',     # "She noted...", "She believes...", etc.
+        r'^They\s+[a-z]+',    # "They suggested...", etc.
+        r'^We\s+[a-z]+',      # "We see...", etc. (rare but possible)
+        r'^I\s+[a-z]+',       # "I think..." (rare in essay)
+        # Object/demonstrative pronouns without antecedent
+        r'^It\s+[a-z]+',      # "It moved us...", "It shows...", etc.
+        r'^This\s+[a-z]+',    # "This challenges...", etc.
+        r'^That\s+[a-z]+',    # "That shows...", etc.
+        r'^These\s+[a-z]+',   # "These ideas...", etc.
+        r'^Those\s+[a-z]+',   # "Those who...", etc.
+        # "Understanding these/this..." - dangling participial
         r'^Understanding\s+(these?|this|the)\b',
-        # Discourse connectives at start
+        # Discourse connectives at start - indicate continuation without prior context
         r'^However[,\s]',
         r'^Therefore[,\s]',
         r'^Moreover[,\s]',

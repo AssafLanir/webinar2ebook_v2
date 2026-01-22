@@ -2956,6 +2956,72 @@ Deutsch notes, This is important. He argues, The evidence supports this.
         assert report["sentences_dropped"] == 0
         assert report["rewrites_applied"] >= 2
 
+    def test_drops_sentence_with_as_verb_that_draft22(self):
+        """REGRESSION Draft 22: 'As Deutsch notes that ...' must DROP the sentence.
+
+        Input: 'As Deutsch notes that what we call wisdom...'
+        This is grammatically broken speaker framing. Valid forms are:
+          - 'As Deutsch notes, what we call...' (interpolation with comma)
+          - 'Deutsch notes that what we call...' (indirect speech)
+        The 'As X verb that' form is broken and indicates leaked speaker framing.
+        """
+        text = """## Chapter 2
+
+Reflecting on these themes, we see a broader narrative. As Deutsch notes that what we call wisdom today is going to be laughable silliness in centuries to come. This forward-looking view invites exploration.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # The sentence with "As Deutsch notes that" should be dropped
+        assert "As Deutsch notes that" not in result
+        assert "what we call wisdom" not in result
+        # Other sentences should be preserved
+        assert "Reflecting on these themes" in result
+        assert "This forward-looking view invites exploration" in result
+        # Report should track the drop
+        assert report["sentences_dropped"] >= 1
+        # Check drop details
+        as_verb_that_drops = [d for d in report["drop_details"] if d["type"] == "as_verb_that_leak"]
+        assert len(as_verb_that_drops) >= 1
+
+    def test_drops_sentence_with_as_he_argues_that(self):
+        """'As He argues that ...' triggers sentence drop."""
+        text = """## Chapter 1
+
+Science evolves. As He argues that knowledge is limitless. This view challenges limits.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Sentence with "As He argues that" should be dropped
+        assert "As He argues that" not in result
+        assert "knowledge is limitless" not in result
+        # Other sentences preserved
+        assert "Science evolves" in result
+        assert "This view challenges limits" in result
+        assert report["sentences_dropped"] >= 1
+
+    def test_preserves_valid_as_notes_interpolation(self):
+        """Valid 'as X notes,' interpolation should NOT be dropped.
+
+        This ensures we don't over-drop. The pattern targets 'As X verb that'
+        not ', as X verb,' interpolations.
+        """
+        text = """## Chapter 1
+
+Science, as Deutsch notes, is about finding testable regularities.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Valid interpolation must be preserved
+        assert "as Deutsch notes, is" in result
+        # No sentences dropped
+        assert report["sentences_dropped"] == 0
+
 
 class TestFixTruncatedAttributions:
     """Tests for fix_truncated_attributions - joins split attribution lines."""
@@ -3235,6 +3301,50 @@ However, a counter-narrative suggests humans are insignificant.
 
         assert report["chapters_repaired"] == 1
         assert "However, a counter-narrative" in result  # Preserved
+
+    def test_detects_he_warned_opener_draft22(self):
+        """REGRESSION Draft 22: 'He warned...' opener should be repaired.
+
+        Chapter 2 in Draft 22 starts with 'He warned that these traits...'
+        which has no antecedent for 'He'. Pronoun subject at chapter start
+        always lacks antecedent.
+        """
+        text = '''## Chapter 1: First
+
+The Enlightenment changed everything.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support."
+
+## Chapter 2: Human Potential
+
+He warned that these traits, once crucial, now pose dangers.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support."'''
+
+        result, report = draft_service.repair_orphan_chapter_openers(text)
+
+        # Chapter 2 should be repaired
+        assert report["chapters_repaired"] >= 1
+        repairs = report["repairs"]
+        ch2_repairs = [r for r in repairs if r["chapter"] == 2]
+        assert len(ch2_repairs) == 1
+        assert ch2_repairs[0]["action"] == "fallback_prepended"
+        # Original preserved after fallback
+        assert "He warned" in result
 
     def test_preserves_good_opener(self):
         """Chapter with good opener (proper subject) should not be modified."""
