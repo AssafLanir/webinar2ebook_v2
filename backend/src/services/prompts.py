@@ -1169,10 +1169,11 @@ SYNTHESIS GUIDELINES:
 - Write in a clear, neutral style
 
 PROSE STYLE RULES (Critical - prevents verbatim leak):
-- AVOID speaker framing: do NOT write "Deutsch says...", "he notes...", "she argues...", or similar attribution phrases in prose. Attribution belongs only in Key Excerpts.
+- NO PERSON NAMES IN PROSE: Narrative prose must not include any person names (e.g., David Deutsch, Hawking, Einstein). Names appear only in Key Excerpts attribution lines.
+- NO SPEAKER FRAMING: Do NOT write "X says...", "he notes...", "she argues...", or any attribution phrases in prose. Attribution belongs only in Key Excerpts.
 - Do NOT reproduce distinctive phrases from the conversation in prose. Paraphrase abstractly using general terms.
 - Prefer general nouns over concrete phrasing. Write "progress" not the speaker's specific phrase, "knowledge" not their exact words, "constraints" not their particular formulation.
-- If you find yourself wanting to quote the speaker in prose, STOP. Move that quote to Key Excerpts instead.
+- If you find yourself wanting to quote or attribute to the speaker in prose, STOP. Move that quote to Key Excerpts instead.
 
 Your job is to organize and present the speaker's ideas with maximum fidelity to the source, not to add your own commentary or modern framing."""
 

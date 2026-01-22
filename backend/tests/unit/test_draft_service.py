@@ -4368,3 +4368,256 @@ Unable to extract any grounded claims from this section.'''
         assert not is_valid
         violations = report["violations"]
         assert any(v["type"] == "llm_generated_core_claims_placeholder" for v in violations)
+
+
+class TestSpeakerFramingSanitizer:
+    """Tests for sanitize_speaker_framing - rewrite attribution patterns in prose."""
+
+    def test_rewrites_simple_argues_that_draft23(self):
+        """REGRESSION Draft 23: 'Deutsch argues that...' must be sanitized.
+
+        Input: 'David Deutsch, a notable figure, argues that wisdom isn't...'
+        Output: 'Wisdom isn't...' (speaker framing removed)
+        """
+        text = """## Chapter 2: Human Potential
+
+David Deutsch, a notable figure in science and philosophy, argues that wisdom isn't something you can possess beforehand.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_speaker_framing(text)
+
+        # Speaker framing should be removed
+        assert "David Deutsch" not in result
+        assert "argues that" not in result
+        # Clause should be preserved with capitalization
+        assert "Wisdom isn't something you can possess beforehand" in result
+        assert report["rewrites_applied"] >= 1
+
+    def test_rewrites_captures_by_saying_draft23(self):
+        """REGRESSION Draft 23: 'X captures this by saying that...' must be sanitized.
+
+        Input: 'David Deutsch captures this by saying that societies were trapped...'
+        Output: 'Societies were trapped...'
+        """
+        text = """## Chapter 1: The Enlightenment
+
+David Deutsch captures this by saying that societies were trapped in a cycle.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_speaker_framing(text)
+
+        # Speaker framing should be removed
+        assert "David Deutsch captures" not in result
+        assert "by saying that" not in result
+        # Clause should be preserved with capitalization
+        assert "Societies were trapped" in result
+        assert report["rewrites_applied"] >= 1
+
+    def test_rewrites_according_to(self):
+        """'According to X, clause' → 'Clause'."""
+        text = """## Chapter 1: First
+
+According to Deutsch, progress is unlimited.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_speaker_framing(text)
+
+        # According to removed
+        assert "According to" not in result
+        # Clause preserved
+        assert "Progress is unlimited" in result
+        assert report["rewrites_applied"] >= 1
+
+    def test_preserves_key_excerpts(self):
+        """Key Excerpts must never be modified."""
+        text = """## Chapter 1: First
+
+Some prose here.
+
+### Key Excerpts
+
+> "Deutsch argues that this is important."
+> — David Deutsch (GUEST)
+
+### Core Claims"""
+
+        result, report = draft_service.sanitize_speaker_framing(text)
+
+        # Key Excerpts preserved verbatim
+        assert "Deutsch argues that this is important" in result
+        assert "David Deutsch (GUEST)" in result
+        # No rewrites in excerpts
+        assert report["rewrites_applied"] == 0
+
+    def test_preserves_core_claims(self):
+        """Core Claims must never be modified."""
+        text = """## Chapter 1: First
+
+Some prose here.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Deutsch argues that progress matters**: "Quote text here."
+"""
+
+        result, report = draft_service.sanitize_speaker_framing(text)
+
+        # Core Claims preserved verbatim
+        assert "Deutsch argues that progress matters" in result
+
+
+class TestSpeakerFramingInvariant:
+    """Tests for enforce_speaker_framing_invariant - drop remaining speaker framing."""
+
+    def test_drops_remaining_framing_after_sanitizer(self):
+        """Any speaker framing that survives sanitizer must be dropped."""
+        text = """## Chapter 1: First
+
+The Enlightenment changed everything. Deutsch notes the importance of this shift. Progress became possible.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_speaker_framing_invariant(text)
+
+        # Sentence with remaining framing should be dropped
+        assert "Deutsch notes" not in result
+        # Other sentences preserved
+        assert "The Enlightenment changed everything" in result
+        assert "Progress became possible" in result
+        assert report["speaker_framing_sentences_dropped"] >= 1
+
+    def test_drops_according_to_remaining(self):
+        """'According to X' remaining sentences are dropped."""
+        text = """## Chapter 2: Second
+
+Knowledge grows. According to Hawking, the universe is vast. We must explore.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_speaker_framing_invariant(text)
+
+        # Sentence dropped
+        assert "According to Hawking" not in result
+        # Others preserved
+        assert "Knowledge grows" in result
+        assert "We must explore" in result
+        assert report["speaker_framing_sentences_dropped"] >= 1
+
+    def test_preserves_key_excerpts(self):
+        """Key Excerpts are never touched by invariant enforcement."""
+        text = """## Chapter 1: First
+
+Clean prose here.
+
+### Key Excerpts
+
+> "Deutsch argues that this matters."
+> — David Deutsch (GUEST)"""
+
+        result, report = draft_service.enforce_speaker_framing_invariant(text)
+
+        # Key Excerpts preserved
+        assert "Deutsch argues that this matters" in result
+        assert "David Deutsch (GUEST)" in result
+        # No drops
+        assert report["speaker_framing_sentences_dropped"] == 0
+
+
+class TestFirstParagraphPronounRepair:
+    """Tests for repair_first_paragraph_pronouns - fix pronouns in first paragraph."""
+
+    def test_replaces_it_with_enlightenment_draft23(self):
+        """REGRESSION Draft 23: 'It introduced...' → 'The Enlightenment introduced...'.
+
+        Input: 'Before these eras... It introduced testable laws...'
+        The 'It' has no antecedent and should be replaced with chapter title noun.
+        """
+        text = """## Chapter 1: The Impact of the Enlightenment
+
+Before these eras, ideas stagnated. It introduced testable laws of nature.
+
+### Key Excerpts"""
+
+        result, report = draft_service.repair_first_paragraph_pronouns(text)
+
+        # "It" should be replaced with "The Enlightenment"
+        assert "It introduced" not in result
+        assert "The Enlightenment introduced" in result
+        assert report["sentences_repaired"] >= 1
+
+    def test_replaces_this_with_chapter_noun(self):
+        """'This shows...' in first paragraph gets replaced with title noun."""
+        text = """## Chapter 2: Human Potential and the Universe
+
+The speaker shared insights. This shows our capacity.
+
+### Key Excerpts"""
+
+        result, report = draft_service.repair_first_paragraph_pronouns(text)
+
+        # "This" should be replaced with "Human Potential" (preserves title casing)
+        assert "This shows" not in result
+        assert "Human Potential shows" in result
+        assert report["sentences_repaired"] >= 1
+
+    def test_preserves_pronouns_in_later_paragraphs(self):
+        """Pronouns in non-first paragraphs are not modified."""
+        text = """## Chapter 1: The Impact of the Enlightenment
+
+The first paragraph has good prose here.
+
+It is in the second paragraph. This is also fine here.
+
+### Key Excerpts"""
+
+        result, report = draft_service.repair_first_paragraph_pronouns(text)
+
+        # Second paragraph pronouns preserved
+        assert "It is in the second paragraph" in result
+        assert "This is also fine here" in result
+        # No repairs needed
+        assert report["sentences_repaired"] == 0
+
+    def test_handles_empty_title_gracefully(self):
+        """Empty title should not cause errors - sentence may be dropped or left."""
+        text = """## Chapter 1:
+
+It shows something.
+
+### Key Excerpts"""
+
+        result, report = draft_service.repair_first_paragraph_pronouns(text)
+
+        # Function should not crash and produce valid output
+        assert "### Key Excerpts" in result
+        # Either dropped or repaired (depending on title extraction)
+        assert report["sentences_dropped"] >= 0
+        assert report["sentences_repaired"] >= 0
+
+    def test_handles_multiple_pronoun_sentences(self):
+        """Multiple pronoun-start sentences in first paragraph all get fixed."""
+        text = """## Chapter 3: The Role of Knowledge in Human Progress
+
+It began with observation. This led to experiments. They confirmed theories.
+
+### Key Excerpts"""
+
+        result, report = draft_service.repair_first_paragraph_pronouns(text)
+
+        # All three pronouns should be replaced with "Knowledge"
+        assert "It began" not in result
+        assert "This led" not in result
+        assert "They confirmed" not in result
+        # Replaced with knowledge
+        assert "Knowledge began" in result
+        assert "Knowledge led" in result
+        assert "Knowledge confirmed" in result
+        assert report["sentences_repaired"] >= 3

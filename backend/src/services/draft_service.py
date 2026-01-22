@@ -2453,6 +2453,326 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
     }
 
 
+def sanitize_speaker_framing(text: str) -> tuple[str, dict]:
+    """Remove speaker-framing patterns from narrative prose via deterministic rewrite.
+
+    This sanitizer runs on narrative prose only (never Key Excerpts/Core Claims)
+    and rewrites away attribution wrappers instead of dropping whole sentences.
+
+    Rewrite rules (deterministic):
+    1. X argues/notes/says/captures … that <CLAUSE> → <CLAUSE>
+    2. X captures this by saying that <CLAUSE> → <CLAUSE>
+    3. According to X, <CLAUSE> → <CLAUSE>
+    4. X, <appositive bio>, argues that <CLAUSE> → <CLAUSE> (strip appositive too)
+
+    After rewrite, applies grammar cleanup: trim spaces/commas, capitalize first
+    letter, ensure sentence flows properly.
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (sanitized_text, report_dict).
+    """
+    rewrite_count = 0
+    rewrite_details = []
+
+    # Name patterns for speakers
+    SPEAKER_NAMES = r'(?:Deutsch|David\s+Deutsch|Hawking|Stephen\s+Hawking|He|She|They|The\s+(?:guest|host|speaker))'
+
+    # Attribution verbs
+    ATTR_VERBS = (
+        r'(?:argues?|notes?|says?|captures?|observes?|suggests?|claims?|states?|'
+        r'explains?|warns?|points?\s+out|remarks?|contends?|believes?|maintains?|'
+        r'asserts?|describes?|emphasizes?|highlights?|stresses?|insists?)'
+    )
+
+    # Pattern 1: "X argues/notes/says that <CLAUSE>" → "<CLAUSE>"
+    # Also handles "X captures this by saying that <CLAUSE>"
+    simple_framing_pattern = re.compile(
+        r'\b' + SPEAKER_NAMES + r'\s+'
+        r'(?:captures?\s+this\s+by\s+saying\s+that|'  # "captures this by saying that"
+        r'' + ATTR_VERBS + r'\s+that)\s+'             # "argues that", "notes that", etc.
+        r'([a-z])',                                    # First letter of clause (lowercase after "that")
+        re.IGNORECASE
+    )
+
+    # Pattern 2: "X, <appositive bio>, argues that <CLAUSE>" → "<CLAUSE>"
+    # The appositive is anything between commas: "David Deutsch, a notable figure, argues that"
+    appositive_framing_pattern = re.compile(
+        r'\b' + SPEAKER_NAMES + r',\s*'     # "Deutsch, "
+        r'[^,]+,\s*'                         # appositive: "a notable figure, "
+        r'' + ATTR_VERBS + r'\s+that\s+'    # "argues that "
+        r'([a-z])',                          # First letter of clause
+        re.IGNORECASE
+    )
+
+    # Pattern 3: "According to X, <CLAUSE>" → "<CLAUSE>"
+    according_to_pattern = re.compile(
+        r'\bAccording\s+to\s+' + SPEAKER_NAMES + r',?\s*'
+        r'([A-Za-z])',  # First letter of clause (may be capitalized)
+        re.IGNORECASE
+    )
+
+    # Pattern 4: Sentence-start "X argues that <CLAUSE>" (capital first letter)
+    # This handles cases where clause starts with capital letter
+    sentence_start_framing_pattern = re.compile(
+        r'^(' + SPEAKER_NAMES + r')\s+'
+        r'(?:captures?\s+this\s+by\s+saying\s+that|'
+        r'' + ATTR_VERBS + r'\s+that)\s+'
+        r'([A-Za-z])',
+        re.IGNORECASE | re.MULTILINE
+    )
+
+    def rewrite_simple_framing(match):
+        """Rewrite 'X argues that clause' → 'Clause'."""
+        nonlocal rewrite_count
+        first_letter = match.group(1)
+
+        rewrite_count += 1
+        rewrite_details.append({
+            "type": "simple_framing",
+            "original": match.group(0)[:60] + ("..." if len(match.group(0)) > 60 else ""),
+            "replacement_start": first_letter.upper(),
+        })
+
+        # Return just the clause, with first letter capitalized
+        return first_letter.upper()
+
+    def rewrite_appositive_framing(match):
+        """Rewrite 'X, appositive, argues that clause' → 'Clause'."""
+        nonlocal rewrite_count
+        first_letter = match.group(1)
+
+        rewrite_count += 1
+        rewrite_details.append({
+            "type": "appositive_framing",
+            "original": match.group(0)[:80] + ("..." if len(match.group(0)) > 80 else ""),
+            "replacement_start": first_letter.upper(),
+        })
+
+        return first_letter.upper()
+
+    def rewrite_according_to(match):
+        """Rewrite 'According to X, clause' → 'Clause'."""
+        nonlocal rewrite_count
+        first_letter = match.group(1)
+
+        rewrite_count += 1
+        rewrite_details.append({
+            "type": "according_to",
+            "original": match.group(0)[:60] + ("..." if len(match.group(0)) > 60 else ""),
+            "replacement_start": first_letter.upper(),
+        })
+
+        return first_letter.upper()
+
+    def rewrite_sentence_start(match):
+        """Rewrite sentence-start 'X argues that Clause' → 'Clause'."""
+        nonlocal rewrite_count
+        first_letter = match.group(2)
+
+        rewrite_count += 1
+        rewrite_details.append({
+            "type": "sentence_start_framing",
+            "original": match.group(0)[:60] + ("..." if len(match.group(0)) > 60 else ""),
+            "replacement_start": first_letter.upper(),
+        })
+
+        return first_letter.upper()
+
+    # Process paragraph by paragraph
+    paragraphs = text.split('\n\n')
+    result_paragraphs = []
+
+    in_key_excerpts = False
+    in_core_claims = False
+
+    for para in paragraphs:
+        stripped = para.strip()
+
+        # Track section boundaries
+        if '### Key Excerpts' in stripped:
+            in_key_excerpts = True
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+        elif '### Core Claims' in stripped:
+            in_key_excerpts = False
+            in_core_claims = True
+            result_paragraphs.append(para)
+            continue
+        elif stripped.startswith('## '):
+            in_key_excerpts = False
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+        elif stripped.startswith('### '):
+            in_key_excerpts = False
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+
+        # Don't modify Key Excerpts or Core Claims content
+        if in_key_excerpts or in_core_claims:
+            result_paragraphs.append(para)
+            continue
+
+        # Skip blockquotes
+        if stripped.startswith('>'):
+            result_paragraphs.append(para)
+            continue
+
+        # Apply rewrites to narrative prose
+        modified = para
+
+        # Apply patterns in order of specificity (most specific first)
+        modified = appositive_framing_pattern.sub(rewrite_appositive_framing, modified)
+        modified = simple_framing_pattern.sub(rewrite_simple_framing, modified)
+        modified = according_to_pattern.sub(rewrite_according_to, modified)
+        modified = sentence_start_framing_pattern.sub(rewrite_sentence_start, modified)
+
+        # Grammar cleanup: fix double spaces, leading commas, etc.
+        modified = re.sub(r'\s+', ' ', modified)  # Collapse multiple spaces
+        modified = re.sub(r'^\s*,\s*', '', modified)  # Remove leading commas
+        modified = modified.strip()
+
+        result_paragraphs.append(modified)
+
+    result = '\n\n'.join(result_paragraphs)
+
+    if rewrite_count > 0:
+        logger.info(f"Speaker-framing sanitizer: rewrote {rewrite_count} patterns")
+
+    return result, {
+        "rewrites_applied": rewrite_count,
+        "rewrite_details": rewrite_details,
+    }
+
+
+def enforce_speaker_framing_invariant(text: str) -> tuple[str, dict]:
+    """Enforce the 'no speaker framing in prose' invariant by dropping violating sentences.
+
+    This runs AFTER sanitize_speaker_framing() to catch any remaining speaker-framing
+    patterns that the sanitizer couldn't rewrite. Any sentence containing speaker
+    framing in narrative prose is dropped and logged.
+
+    This converts the "no speaker framing in prose" rule from a soft guideline to a
+    hard invariant that makes it impossible to ship a draft that violates it.
+
+    Args:
+        text: The draft markdown text (already sanitized).
+
+    Returns:
+        Tuple of (enforced_text, report_dict).
+    """
+    sentences_dropped = 0
+    drop_details = []
+
+    # Detection pattern for any remaining speaker framing
+    # Matches: Deutsch/David Deutsch + attribution verb
+    SPEAKER_NAMES = r'(?:Deutsch|David\s+Deutsch|Hawking|Stephen\s+Hawking)'
+    ATTR_VERBS = (
+        r'(?:argues?|notes?|says?|captures?|observes?|suggests?|claims?|states?|'
+        r'explains?|warns?|points?\s+out|remarks?|contends?|believes?|maintains?|'
+        r'asserts?|describes?|emphasizes?|highlights?|stresses?|insists?)'
+    )
+
+    # Pattern: <Name> <verb> - any speaker framing
+    speaker_framing_detector = re.compile(
+        r'\b' + SPEAKER_NAMES + r'\s+' + ATTR_VERBS + r'\b',
+        re.IGNORECASE
+    )
+
+    # Also detect "According to <Name>"
+    according_to_detector = re.compile(
+        r'\bAccording\s+to\s+' + SPEAKER_NAMES + r'\b',
+        re.IGNORECASE
+    )
+
+    # Process paragraph by paragraph
+    paragraphs = text.split('\n\n')
+    result_paragraphs = []
+
+    in_key_excerpts = False
+    in_core_claims = False
+
+    for para in paragraphs:
+        stripped = para.strip()
+
+        # Track section boundaries
+        if '### Key Excerpts' in stripped:
+            in_key_excerpts = True
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+        elif '### Core Claims' in stripped:
+            in_key_excerpts = False
+            in_core_claims = True
+            result_paragraphs.append(para)
+            continue
+        elif stripped.startswith('## '):
+            in_key_excerpts = False
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+        elif stripped.startswith('### '):
+            in_key_excerpts = False
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+
+        # Don't modify Key Excerpts or Core Claims content
+        if in_key_excerpts or in_core_claims:
+            result_paragraphs.append(para)
+            continue
+
+        # Skip blockquotes
+        if stripped.startswith('>'):
+            result_paragraphs.append(para)
+            continue
+
+        # Check for any remaining speaker framing - if found, drop offending sentences
+        has_speaker_framing = (
+            speaker_framing_detector.search(para) or
+            according_to_detector.search(para)
+        )
+
+        if has_speaker_framing:
+            # Split into sentences and filter out bad ones
+            sentence_pattern = re.compile(r'(?<=[.!?])\s+(?=[A-Z])')
+            sentences = sentence_pattern.split(para)
+            kept_sentences = []
+
+            for sentence in sentences:
+                if speaker_framing_detector.search(sentence) or according_to_detector.search(sentence):
+                    # Drop this sentence
+                    sentences_dropped += 1
+                    drop_details.append({
+                        "type": "speaker_framing_invariant",
+                        "dropped_sentence": sentence[:100] + ("..." if len(sentence) > 100 else ""),
+                    })
+                else:
+                    kept_sentences.append(sentence)
+
+            # Rejoin remaining sentences
+            if kept_sentences:
+                result_paragraphs.append(' '.join(kept_sentences))
+            # If all sentences dropped, skip this paragraph entirely
+        else:
+            result_paragraphs.append(para)
+
+    result = '\n\n'.join(result_paragraphs)
+
+    if sentences_dropped > 0:
+        logger.info(f"Speaker-framing invariant: dropped {sentences_dropped} sentences")
+
+    return result, {
+        "speaker_framing_sentences_dropped": sentences_dropped,
+        "drop_details": drop_details,
+    }
+
+
 def cleanup_dangling_connectives(text: str) -> tuple[str, dict]:
     """Clean up dangling articles/connectives left when payload was dropped.
 
@@ -3747,6 +4067,192 @@ def repair_orphan_chapter_openers(
 
     return result, {
         "chapters_repaired": len(repairs),
+        "repairs": repairs,
+    }
+
+
+def repair_first_paragraph_pronouns(text: str) -> tuple[str, dict]:
+    """Repair pronoun-start sentences within the first prose paragraph of each chapter.
+
+    Within the first prose paragraph of a chapter, if a sentence starts with
+    It/This/These/They, these pronouns lack antecedent and should be replaced
+    with the chapter title noun (e.g., "The Enlightenment").
+
+    This extends the anchor policy beyond just the chapter opener (first sentence)
+    to cover all sentences in the first paragraph.
+
+    Replacement strategy:
+    1. Extract subject noun from chapter title (e.g., "The Impact of the Enlightenment" → "The Enlightenment")
+    2. For each sentence in first paragraph starting with It/This/These/They:
+       - Replace pronoun with chapter title noun
+       - If no clear noun, drop the sentence
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (repaired_text, report_dict).
+    """
+    repairs = []
+    sentences_dropped = 0
+
+    # Pronouns that should be replaced with chapter title noun
+    PRONOUN_STARTERS = ['It', 'This', 'These', 'They', 'That', 'Those']
+
+    def extract_title_noun(chapter_title: str) -> str | None:
+        """Extract the main noun phrase from chapter title for pronoun replacement.
+
+        Examples:
+        - "The Impact of the Enlightenment" → "The Enlightenment"
+        - "Human Potential and the Universe" → "Human potential"
+        - "The Role of Knowledge in Human Progress" → "Knowledge"
+        - "The Boundaries of Scientific Inquiry" → "Scientific inquiry"
+        """
+        title = chapter_title.strip()
+        if not title:
+            return None
+
+        # Pattern: "The Impact/Role/Boundaries of X" → extract X (including optional "the")
+        # Group captures everything after "of " up to optional " in ..."
+        match = re.match(r'^The\s+(?:Impact|Role|Boundaries|Nature|Power|Limits)\s+of\s+(.+?)(?:\s+in\s+.+)?$', title, re.IGNORECASE)
+        if match:
+            noun = match.group(1).strip()
+            # Handle "the X" → "The X" (capitalize article)
+            if noun.lower().startswith('the '):
+                rest = noun[4:]  # After "the "
+                return 'The ' + rest
+            # Single word or phrase without article
+            return noun[0].upper() + noun[1:] if noun else None
+
+        # Pattern: "X and Y" → use X (lowercased except first letter)
+        if ' and ' in title.lower():
+            noun = title.split(' and ')[0].strip()
+            return noun[0].upper() + noun[1:] if noun else None
+
+        # Default: use the whole title
+        return title[0].upper() + title[1:] if title else None
+
+    def replace_pronoun_start(sentence: str, replacement_noun: str) -> str:
+        """Replace pronoun at start of sentence with the replacement noun."""
+        for pronoun in PRONOUN_STARTERS:
+            if sentence.startswith(pronoun + ' '):
+                # Replace pronoun, preserving the rest
+                return replacement_noun + sentence[len(pronoun):]
+            # Handle "It's" → "X is"
+            if sentence.startswith(pronoun + "'s ") or sentence.startswith(pronoun + "'s "):
+                return replacement_noun + ' is' + sentence[len(pronoun) + 2:]
+        return sentence
+
+    # Parse chapters
+    chapter_pattern = re.compile(r'^## Chapter (\d+)[:\s]*(.*?)$', re.MULTILINE)
+    chapters = list(chapter_pattern.finditer(text))
+
+    if not chapters:
+        return text, {"sentences_repaired": 0, "sentences_dropped": 0, "repairs": []}
+
+    result_parts = []
+    last_end = 0
+
+    for i, chapter_match in enumerate(chapters):
+        chapter_num = int(chapter_match.group(1))
+        chapter_title = chapter_match.group(2).strip()
+        chapter_start = chapter_match.start()
+        chapter_end = chapters[i + 1].start() if i + 1 < len(chapters) else len(text)
+        chapter_text = text[chapter_start:chapter_end]
+
+        # Add content before this chapter
+        result_parts.append(text[last_end:chapter_start])
+
+        # Find narrative prose section (before Key Excerpts)
+        key_excerpts_pos = chapter_text.find('### Key Excerpts')
+        if key_excerpts_pos == -1:
+            key_excerpts_pos = len(chapter_text)
+
+        # Get just the header and narrative portion
+        header_end = chapter_text.find('\n') + 1
+        narrative_portion = chapter_text[header_end:key_excerpts_pos].strip()
+
+        if narrative_portion:
+            # Split narrative into paragraphs
+            paragraphs = narrative_portion.split('\n\n')
+
+            if paragraphs:
+                # Only process the FIRST paragraph
+                first_para = paragraphs[0].strip()
+
+                # Split first paragraph into sentences
+                sentences = re.split(r'(?<=[.!?])\s+', first_para)
+                repaired_sentences = []
+                title_noun = extract_title_noun(chapter_title)
+
+                for sentence in sentences:
+                    stripped = sentence.strip()
+                    if not stripped:
+                        continue
+
+                    # Check if sentence starts with a pronoun
+                    starts_with_pronoun = any(
+                        stripped.startswith(p + ' ') or stripped.startswith(p + "'")
+                        for p in PRONOUN_STARTERS
+                    )
+
+                    if starts_with_pronoun:
+                        if title_noun:
+                            # Replace pronoun with title noun
+                            repaired = replace_pronoun_start(stripped, title_noun)
+                            repaired_sentences.append(repaired)
+                            repairs.append({
+                                "chapter": chapter_num,
+                                "action": "pronoun_replaced",
+                                "original": stripped[:50] + ("..." if len(stripped) > 50 else ""),
+                                "replacement_noun": title_noun,
+                            })
+                        else:
+                            # No title noun available, drop the sentence
+                            sentences_dropped += 1
+                            repairs.append({
+                                "chapter": chapter_num,
+                                "action": "pronoun_sentence_dropped",
+                                "original": stripped[:50] + ("..." if len(stripped) > 50 else ""),
+                            })
+                    else:
+                        repaired_sentences.append(stripped)
+
+                # Rebuild first paragraph
+                if repaired_sentences:
+                    paragraphs[0] = ' '.join(repaired_sentences)
+                else:
+                    # All sentences dropped - remove first paragraph
+                    paragraphs = paragraphs[1:] if len(paragraphs) > 1 else []
+
+                # Rebuild narrative
+                narrative_portion = '\n\n'.join(paragraphs)
+
+        # Rebuild chapter
+        chapter_text = (
+            chapter_text[:header_end] +
+            '\n' + narrative_portion + '\n\n' +
+            chapter_text[key_excerpts_pos:]
+        )
+
+        result_parts.append(chapter_text)
+        last_end = chapter_end
+
+    # Add any remaining content
+    if last_end < len(text):
+        result_parts.append(text[last_end:])
+
+    result = ''.join(result_parts)
+
+    # Clean up extra blank lines
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    if repairs:
+        logger.info(f"First-paragraph pronoun repair: {len(repairs)} repairs, {sentences_dropped} dropped")
+
+    return result, {
+        "sentences_repaired": len([r for r in repairs if r["action"] == "pronoun_replaced"]),
+        "sentences_dropped": sentences_dropped,
         "repairs": repairs,
     }
 
