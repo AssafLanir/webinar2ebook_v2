@@ -2643,28 +2643,41 @@ def sanitize_speaker_framing(text: str) -> tuple[str, dict]:
     }
 
 
-def enforce_no_names_in_prose(text: str) -> tuple[str, dict]:
+def enforce_no_names_in_prose(
+    text: str,
+    person_blacklist: "PersonBlacklist | None" = None,
+    entity_allowlist: "EntityAllowlist | None" = None,
+) -> tuple[str, dict]:
     """Enforce 'no person names in narrative prose' as a hard invariant.
 
-    Simple rule: any sentence in narrative prose containing a person name
-    (Deutsch, David, Hawking, etc.) is dropped. Names only belong in
-    Key Excerpts attribution lines.
+    Policy: Narrative prose must not contain PERSON names (speakers or third-party),
+    but MAY contain org/product names if they appear in the transcript.
 
-    This is the definitive fix for speaker framing - instead of matching
-    verb patterns, we simply forbid names in prose entirely.
+    When person_blacklist is provided (dynamic mode):
+    - Uses speaker names from whitelist as the blacklist
+    - Checks entity_allowlist before dropping (allows transcript-attested orgs)
+
+    When person_blacklist is None (legacy mode):
+    - Falls back to hardcoded physicist names for backwards compatibility
 
     Args:
         text: The draft markdown text.
+        person_blacklist: Optional dynamic blacklist from speakers.
+        entity_allowlist: Optional allowlist for org/product names.
 
     Returns:
         Tuple of (enforced_text, report_dict).
     """
     sentences_dropped = 0
+    sentences_kept_due_to_allowlist = 0
     drop_details = []
+    kept_details = []
 
-    # Person names that should never appear in narrative prose
-    # Note: These are case-sensitive to avoid false positives
-    FORBIDDEN_NAMES = re.compile(
+    # Import here to avoid circular imports
+    from .entity_allowlist import PersonBlacklist, EntityAllowlist
+
+    # Legacy fallback: hardcoded names for backwards compatibility
+    LEGACY_FORBIDDEN_NAMES = re.compile(
         r'\b(?:'
         r'Deutsch|David\s+Deutsch|'
         r'Hawking|Stephen\s+Hawking|'
@@ -2673,6 +2686,12 @@ def enforce_no_names_in_prose(text: str) -> tuple[str, dict]:
         r'Popper|Karl\s+Popper'
         r')\b',
         re.IGNORECASE
+    )
+
+    # Pattern to extract potential name spans for checking
+    # Matches: Capitalized words, multi-word Capitalized sequences
+    NAME_SPAN_PATTERN = re.compile(
+        r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b'
     )
 
     # Process paragraph by paragraph
@@ -2717,18 +2736,58 @@ def enforce_no_names_in_prose(text: str) -> tuple[str, dict]:
             result_paragraphs.append(para)
             continue
 
-        # Check if paragraph contains any forbidden names
-        if FORBIDDEN_NAMES.search(para):
+        # Helper function to check if sentence should be dropped
+        def should_drop_sentence(sentence: str) -> tuple[bool, str, str | None]:
+            """Check if sentence contains forbidden person name.
+
+            Returns: (should_drop, reason, matched_name)
+            """
+            if person_blacklist is not None:
+                # Dynamic mode: use provided blacklist + allowlist
+                # Find all name-like spans in sentence
+                name_spans = NAME_SPAN_PATTERN.findall(sentence)
+
+                for span in name_spans:
+                    # Check if it's a person name
+                    if person_blacklist.matches(span):
+                        # Check if it's allowlisted as org/product
+                        if entity_allowlist and entity_allowlist.contains(span):
+                            # It's an allowlisted entity, don't drop for this
+                            continue
+                        # It's a person name, drop
+                        return True, "person_name_in_prose", span
+
+                return False, "", None
+            else:
+                # Legacy mode: use hardcoded names
+                if LEGACY_FORBIDDEN_NAMES.search(sentence):
+                    match = LEGACY_FORBIDDEN_NAMES.search(sentence)
+                    return True, "name_in_prose_legacy", match.group(0) if match else None
+                return False, "", None
+
+        # Check if paragraph might contain names (quick check)
+        might_have_names = False
+        if person_blacklist is not None:
+            # Check against dynamic blacklist
+            might_have_names = person_blacklist.matches(para)
+        else:
+            # Check against legacy pattern
+            might_have_names = bool(LEGACY_FORBIDDEN_NAMES.search(para))
+
+        if might_have_names:
             # Split into sentences and filter out bad ones
             sentence_pattern = re.compile(r'(?<=[.!?])\s+(?=[A-Z])')
             sentences = sentence_pattern.split(para)
             kept_sentences = []
 
             for sentence in sentences:
-                if FORBIDDEN_NAMES.search(sentence):
+                should_drop, reason, matched_name = should_drop_sentence(sentence)
+
+                if should_drop:
                     sentences_dropped += 1
                     drop_details.append({
-                        "type": "name_in_prose",
+                        "type": reason,
+                        "matched_name": matched_name,
                         "dropped_sentence": sentence[:100] + ("..." if len(sentence) > 100 else ""),
                     })
                 else:
@@ -2745,10 +2804,14 @@ def enforce_no_names_in_prose(text: str) -> tuple[str, dict]:
 
     if sentences_dropped > 0:
         logger.info(f"No-names-in-prose invariant: dropped {sentences_dropped} sentences")
+    if sentences_kept_due_to_allowlist > 0:
+        logger.info(f"No-names-in-prose: kept {sentences_kept_due_to_allowlist} sentences due to entity allowlist")
 
     return result, {
         "sentences_dropped": sentences_dropped,
+        "sentences_kept_due_to_allowlist": sentences_kept_due_to_allowlist,
         "drop_details": drop_details,
+        "kept_details": kept_details,
     }
 
 
