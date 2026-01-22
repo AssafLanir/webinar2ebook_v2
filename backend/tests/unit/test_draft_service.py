@@ -4640,6 +4640,125 @@ Clean prose here.
         assert report["speaker_framing_sentences_dropped"] == 0
 
 
+class TestMetaDiscourseGate:
+    """Tests for sanitize_meta_discourse - drop sentences describing document structure."""
+
+    def test_drops_this_chapter_develops_draft26(self):
+        """REGRESSION Draft 26: 'Human Potential chapter develops the theme...' must be dropped.
+
+        This is template/prompt text that leaked into the output.
+        """
+        text = """## Chapter 2: Human Potential and the Universe
+
+Human Potential chapter develops the theme of human potential and the universe by linking concrete moments from the conversation to a set of grounded claims. The excerpts preserve the original voice; the claims synthesize the argument in compact form.
+
+Instead of being limited by these conditions, we've used our knowledge.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_meta_discourse(text)
+
+        # Meta-discourse sentences dropped
+        assert "chapter develops the theme" not in result
+        assert "excerpts preserve" not in result
+        assert "claims synthesize" not in result
+        # Clean sentences preserved
+        assert "Instead of being limited" in result
+        assert report["sentences_dropped"] >= 2
+
+    def test_drops_this_section_explores(self):
+        """Sentences with 'this section' references should be dropped."""
+        text = """## Chapter 1: First
+
+This section explores the impact of scientific progress. The ideas transformed society.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_meta_discourse(text)
+
+        assert "This section explores" not in result
+        assert "The ideas transformed society" in result
+        assert report["sentences_dropped"] >= 1
+
+    def test_drops_as_well_see_forward_reference(self):
+        """Forward references like 'as we'll see' should be dropped."""
+        text = """## Chapter 3: Knowledge
+
+Knowledge grows over time. As we'll see in the following sections, this leads to progress.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_meta_discourse(text)
+
+        assert "As we'll see" not in result
+        assert "Knowledge grows over time" in result
+        assert report["sentences_dropped"] >= 1
+
+    def test_drops_in_summary_meta(self):
+        """Meta-commentary like 'In summary' should be dropped."""
+        text = """## Chapter 4: Conclusions
+
+The evidence supports the thesis. In summary, progress depends on knowledge.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_meta_discourse(text)
+
+        assert "In summary" not in result
+        assert "The evidence supports the thesis" in result
+        assert report["sentences_dropped"] >= 1
+
+    def test_preserves_key_excerpts(self):
+        """Key Excerpts are never touched by meta-discourse gate."""
+        text = """## Chapter 1: First
+
+Clean prose here.
+
+### Key Excerpts
+
+> "This section of the book explores the meaning."
+> — Author (GUEST)"""
+
+        result, report = draft_service.sanitize_meta_discourse(text)
+
+        # Key Excerpts preserved
+        assert "This section of the book explores" in result
+        assert report["sentences_dropped"] == 0
+
+    def test_preserves_core_claims(self):
+        """Core Claims are never touched by meta-discourse gate."""
+        text = """## Chapter 1: First
+
+Clean prose here.
+
+### Core Claims
+
+- **The claim**: "As we'll see, this is important."
+"""
+
+        result, report = draft_service.sanitize_meta_discourse(text)
+
+        # Core Claims preserved
+        assert "As we'll see" in result
+        assert report["sentences_dropped"] == 0
+
+    def test_preserves_legitimate_prose(self):
+        """Normal prose without meta-discourse is untouched."""
+        text = """## Chapter 1: The Enlightenment
+
+Before this era, progress was slow. The scientific method changed everything. Ideas could now be tested and improved.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_meta_discourse(text)
+
+        # All prose preserved
+        assert "Before this era, progress was slow" in result
+        assert "The scientific method changed everything" in result
+        assert "Ideas could now be tested and improved" in result
+        assert report["sentences_dropped"] == 0
+
+
 class TestFirstParagraphPronounRepair:
     """Tests for repair_first_paragraph_pronouns - fix pronouns in first paragraph."""
 

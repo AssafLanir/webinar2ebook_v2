@@ -2763,6 +2763,137 @@ def enforce_speaker_framing_invariant(text: str) -> tuple[str, dict]:
     }
 
 
+def sanitize_meta_discourse(text: str) -> tuple[str, dict]:
+    """Drop sentences that describe the document itself from narrative prose.
+
+    Meta-discourse is template/prompt text that leaked into the output.
+    Instead of matching specific leaked phrases, we ban the structural pattern:
+    sentences that reference document structure.
+
+    Drop sentences containing:
+    - "this chapter/section" - referencing the current document part
+    - "the excerpts" / "the claims" - referencing document sections
+    - "this edition/draft" - referencing the document
+    - "in the following" / "as we'll see" - forward references
+    - "below/above" - document navigation
+    - "in summary" - meta-commentary
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (sanitized_text, report_dict).
+    """
+    sentences_dropped = 0
+    drop_details = []
+
+    # Meta-discourse patterns - references to document structure
+    # These indicate template/prompt text that leaked through
+    META_DISCOURSE_PATTERNS = re.compile(
+        r'\b(?:'
+        # Document part references
+        r'this\s+(?:chapter|section|part|segment)|'
+        r'(?:the\s+)?(?:chapter|section)\s+(?:develops?|explores?|examines?|discusses?|threads?)|'
+        # Section references - "the excerpts preserve", "excerpts preserve"
+        r'(?:the\s+)?excerpts?\s+(?:preserve|show|demonstrate|illustrate)|'
+        r'(?:the\s+)?claims?\s+(?:synthesize|summarize|capture)|'
+        r'key\s+excerpts?\s+(?:section|below)|'
+        r'core\s+claims?\s+(?:section|below)|'
+        # Document references
+        r'this\s+(?:edition|draft|document)|'
+        # Forward/backward references
+        r'in\s+the\s+following|'
+        r'as\s+we\'ll\s+see|'
+        r'as\s+we\s+will\s+see|'
+        r'see\s+below|'
+        r'(?:above|below)\s+(?:we|you|the)|'
+        r'mentioned\s+(?:above|below)|'
+        r'discussed\s+(?:above|below)|'
+        # Meta-commentary
+        r'in\s+summary|'
+        r'to\s+summarize|'
+        r'in\s+conclusion'
+        r')\b',
+        re.IGNORECASE
+    )
+
+    # Process paragraph by paragraph
+    paragraphs = text.split('\n\n')
+    result_paragraphs = []
+
+    in_key_excerpts = False
+    in_core_claims = False
+
+    for para in paragraphs:
+        stripped = para.strip()
+
+        # Track section boundaries
+        if '### Key Excerpts' in stripped:
+            in_key_excerpts = True
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+        elif '### Core Claims' in stripped:
+            in_key_excerpts = False
+            in_core_claims = True
+            result_paragraphs.append(para)
+            continue
+        elif stripped.startswith('## '):
+            in_key_excerpts = False
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+        elif stripped.startswith('### '):
+            in_key_excerpts = False
+            in_core_claims = False
+            result_paragraphs.append(para)
+            continue
+
+        # Don't modify Key Excerpts or Core Claims content
+        if in_key_excerpts or in_core_claims:
+            result_paragraphs.append(para)
+            continue
+
+        # Skip blockquotes
+        if stripped.startswith('>'):
+            result_paragraphs.append(para)
+            continue
+
+        # Check if paragraph contains any meta-discourse patterns
+        if META_DISCOURSE_PATTERNS.search(para):
+            # Split into sentences and filter out bad ones
+            sentence_pattern = re.compile(r'(?<=[.!?])\s+(?=[A-Z])')
+            sentences = sentence_pattern.split(para)
+            kept_sentences = []
+
+            for sentence in sentences:
+                if META_DISCOURSE_PATTERNS.search(sentence):
+                    sentences_dropped += 1
+                    drop_details.append({
+                        "type": "meta_discourse",
+                        "dropped_sentence": sentence[:100] + ("..." if len(sentence) > 100 else ""),
+                    })
+                else:
+                    kept_sentences.append(sentence)
+
+            # Rejoin remaining sentences
+            if kept_sentences:
+                result_paragraphs.append(' '.join(kept_sentences))
+            # If all sentences dropped, skip this paragraph entirely
+        else:
+            result_paragraphs.append(para)
+
+    result = '\n\n'.join(result_paragraphs)
+
+    if sentences_dropped > 0:
+        logger.info(f"Meta-discourse gate: dropped {sentences_dropped} sentences")
+
+    return result, {
+        "sentences_dropped": sentences_dropped,
+        "drop_details": drop_details,
+    }
+
+
 def cleanup_dangling_connectives(text: str) -> tuple[str, dict]:
     """Clean up dangling articles/connectives left when payload was dropped.
 
@@ -7113,6 +7244,26 @@ async def _generate_draft_task(
                     await update_job(job_id, constraint_warnings=constraint_warnings)
             except Exception as e:
                 logger.error(f"Job {job_id}: Speaker-framing invariant failed (non-fatal): {e}", exc_info=True)
+
+        # Meta-Discourse Gate (Ideas Edition only)
+        # Drops sentences that describe the document itself (template/prompt leakage)
+        # E.g., "This chapter develops the theme...", "The excerpts preserve..."
+        # Must run BEFORE orphan-pronoun repair so we can fix any new orphans created
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, meta_report = sanitize_meta_discourse(final_markdown)
+                if meta_report["sentences_dropped"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Meta-discourse gate - dropped "
+                        f"{meta_report['sentences_dropped']} sentences"
+                    )
+                    for detail in meta_report.get("drop_details", [])[:3]:
+                        constraint_warnings.append(
+                            f"Meta-discourse dropped: \"{detail['dropped_sentence'][:40]}...\""
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Meta-discourse gate failed (non-fatal): {e}", exc_info=True)
 
         # Dangling Connective Cleanup (Ideas Edition only)
         # Fixes orphaned articles/connectives: "offers a ." → next sentence, ", suggesting that ." → "."
