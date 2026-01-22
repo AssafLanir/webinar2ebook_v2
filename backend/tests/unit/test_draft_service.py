@@ -3390,6 +3390,85 @@ Valid prose here.
         assert is_valid
 
 
+class TestOrphanFragmentCleanup:
+    """Tests for cleanup_orphan_fragments_between_sections - removes debris between sections."""
+
+    def test_removes_orphan_after_core_claims_draft19(self):
+        """REGRESSION Draft 19: 'ethos of inquiry.' orphan after Core Claims must be removed."""
+        text = '''## Chapter 1: The Impact
+
+Some prose here.
+
+### Key Excerpts
+
+> "Quote here."
+> — Speaker
+
+### Core Claims
+
+- **After the Enlightenment**: "We have learned to live with improvement."
+
+ethos of inquiry.
+
+## Chapter 2: Human Potential
+
+More prose.'''
+
+        result, report = draft_service.cleanup_orphan_fragments_between_sections(text)
+
+        # Orphan should be removed
+        assert "ethos of inquiry" not in result
+        # Chapter structure preserved
+        assert "## Chapter 1" in result
+        assert "## Chapter 2" in result
+        assert "### Core Claims" in result
+        assert report["fragments_removed"] == 1
+        assert "ethos of inquiry." in report["removed_fragments"]
+
+    def test_preserves_valid_core_claims_content(self):
+        """Valid Core Claims bullets and placeholders should not be removed."""
+        text = '''## Chapter 1
+
+### Core Claims
+
+- **Claim one**: "Support text one."
+- **Claim two**: "Support text two."
+
+## Chapter 2
+
+### Core Claims
+
+*No claims available for this chapter.*'''
+
+        result, report = draft_service.cleanup_orphan_fragments_between_sections(text)
+
+        # All content preserved
+        assert "Claim one" in result
+        assert "Claim two" in result
+        assert "*No claims available" in result
+        assert report["fragments_removed"] == 0
+
+    def test_removes_multiple_orphan_lines(self):
+        """Multiple orphan lines after Core Claims should all be removed."""
+        text = '''## Chapter 1
+
+### Core Claims
+
+- **Claim**: "Support."
+
+orphan line one.
+orphan line two.
+third orphan.
+
+## Chapter 2'''
+
+        result, report = draft_service.cleanup_orphan_fragments_between_sections(text)
+
+        assert "orphan line" not in result
+        assert "third orphan" not in result
+        assert report["fragments_removed"] == 3
+
+
 class TestStructuralIntegrityValidator:
     """Tests for validate_structural_integrity function - P0 hard gate."""
 

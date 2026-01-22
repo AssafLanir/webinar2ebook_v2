@@ -2872,6 +2872,138 @@ def validate_structural_integrity(text: str) -> tuple[bool, dict]:
     }
 
 
+def cleanup_orphan_fragments_between_sections(text: str) -> tuple[str, dict]:
+    """Remove orphan content fragments appearing between sections and chapters.
+
+    In the Ideas Edition structure, nothing should appear between:
+    - Core Claims section content and the next Chapter header
+
+    Orphan fragments like "ethos of inquiry." (Draft 19) can appear when:
+    - A transform drops part of a sentence, leaving a tail
+    - LLM generates malformed content after a section
+
+    This cleanup removes non-structural content in these gaps.
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (cleaned_text, report_dict).
+    """
+    cleaned_fragments = []
+
+    # Split into lines for processing
+    lines = text.split('\n')
+    result_lines = []
+
+    in_core_claims = False
+    last_was_bullet_or_attribution = False
+    pending_gap_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Track section boundaries
+        if stripped.startswith('## Chapter'):
+            # Flush any pending gap lines - these are orphans, discard them
+            if pending_gap_lines:
+                for gap_line in pending_gap_lines:
+                    if gap_line.strip():
+                        cleaned_fragments.append(gap_line.strip())
+                pending_gap_lines = []
+            in_core_claims = False
+            last_was_bullet_or_attribution = False
+            result_lines.append(line)
+            continue
+
+        if stripped.startswith('### Core Claims'):
+            # Flush any pending gap lines before new section
+            if pending_gap_lines:
+                for gap_line in pending_gap_lines:
+                    if gap_line.strip():
+                        cleaned_fragments.append(gap_line.strip())
+                pending_gap_lines = []
+            in_core_claims = True
+            last_was_bullet_or_attribution = False
+            result_lines.append(line)
+            continue
+
+        if stripped.startswith('### '):
+            # Any other ### section ends Core Claims
+            if pending_gap_lines:
+                for gap_line in pending_gap_lines:
+                    if gap_line.strip():
+                        cleaned_fragments.append(gap_line.strip())
+                pending_gap_lines = []
+            in_core_claims = False
+            last_was_bullet_or_attribution = False
+            result_lines.append(line)
+            continue
+
+        if in_core_claims:
+            # Inside Core Claims section
+            if stripped.startswith('- **'):
+                # Valid bullet
+                # First, flush any pending gaps - they were between bullets, keep them
+                result_lines.extend(pending_gap_lines)
+                pending_gap_lines = []
+                result_lines.append(line)
+                last_was_bullet_or_attribution = True
+                continue
+
+            if stripped.startswith('*'):
+                # Placeholder text like "*No claims available*"
+                result_lines.extend(pending_gap_lines)
+                pending_gap_lines = []
+                result_lines.append(line)
+                last_was_bullet_or_attribution = True
+                continue
+
+            if not stripped:
+                # Empty line - could be before or after content
+                if last_was_bullet_or_attribution:
+                    # After a bullet/attribution - accumulate as potential gap
+                    pending_gap_lines.append(line)
+                else:
+                    result_lines.append(line)
+                continue
+
+            # Non-empty, non-structural line in Core Claims
+            # This could be orphan content
+            if last_was_bullet_or_attribution:
+                # Orphan after bullet content - accumulate
+                pending_gap_lines.append(line)
+            else:
+                # Before any bullets - keep it (might be legitimate)
+                result_lines.append(line)
+        else:
+            # Not in Core Claims - keep everything
+            result_lines.append(line)
+
+    # Flush remaining pending gap lines (orphans at end)
+    # These are discarded since we're at the end of text
+    if pending_gap_lines:
+        for gap_line in pending_gap_lines:
+            if gap_line.strip():
+                cleaned_fragments.append(gap_line.strip())
+
+    result = '\n'.join(result_lines)
+
+    # Clean up any triple+ blank lines
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    if cleaned_fragments:
+        logger.info(
+            f"Removed {len(cleaned_fragments)} orphan fragment(s) between sections: "
+            f"{cleaned_fragments[:3]}..."
+        )
+
+    return result, {
+        "fragments_removed": len(cleaned_fragments),
+        "removed_fragments": cleaned_fragments[:10],
+    }
+
+
 # Debug patterns for snapshot detection
 _DEBUG_CORRUPTION_PATTERNS = [
     (re.compile(r',\s*he\s+n\s*,', re.IGNORECASE), 'he_n_truncation'),
@@ -5994,6 +6126,20 @@ async def _generate_draft_task(
                     logger.debug(f"Job {job_id}: Applied render guard - no empty sections found")
             except Exception as e:
                 logger.warning(f"Job {job_id}: Render guard failed (non-fatal): {e}")
+
+        # Clean up orphan fragments between sections (Ideas Edition structural cleanup)
+        # Removes debris like "ethos of inquiry." that can appear after Core Claims
+        # when a transform drops part of a sentence, leaving a tail
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, orphan_report = cleanup_orphan_fragments_between_sections(final_markdown)
+                if orphan_report["fragments_removed"] > 0:
+                    logger.warning(
+                        f"Job {job_id}: Removed {orphan_report['fragments_removed']} orphan fragment(s): "
+                        f"{orphan_report['removed_fragments'][:3]}"
+                    )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Orphan fragment cleanup failed (non-fatal): {e}")
 
         # Quote artifact cleanup (final pass) - must run LAST after all other processing
         # Cleans up orphan quotes, stray punctuation, and mangled attributions
