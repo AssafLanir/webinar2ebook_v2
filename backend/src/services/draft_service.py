@@ -63,6 +63,12 @@ from .whitelist_service import (
     normalize_speaker_names,
     clean_placeholder_glue,
 )
+from .entity_allowlist import (
+    build_person_blacklist_from_whitelist,
+    build_entity_allowlist,
+    PersonBlacklist,
+    EntityAllowlist,
+)
 from .prompts import (
     DRAFT_PLAN_SYSTEM_PROMPT,
     build_draft_plan_user_prompt,
@@ -110,6 +116,11 @@ POLISH_MODEL = "gpt-4o"         # Stronger model for prose polish pass
 # When enabled, generates multiple candidates and picks the best based on scoring
 # Env var sets the MAX allowed; request param sets actual count (capped by env var)
 INTERVIEW_CANDIDATE_COUNT_MAX = int(os.environ.get("INTERVIEW_CANDIDATE_COUNT_MAX", "5"))  # Server-side cap
+
+# Dynamic name policy feature flag (Ideas Edition)
+# When enabled, uses dynamic person blacklist from speakers + entity allowlist from transcript
+# When disabled, falls back to hardcoded physicist names (legacy behavior)
+DYNAMIC_NAME_POLICY_ENABLED = os.environ.get("DYNAMIC_NAME_POLICY_ENABLED", "false").lower() == "true"
 
 # Generic titles that should be replaced
 GENERIC_TITLES = {
@@ -7389,23 +7400,68 @@ async def _generate_draft_task(
             except Exception as e:
                 logger.error(f"Job {job_id}: Speaker-framing sanitizer failed (non-fatal): {e}", exc_info=True)
 
-        # Speaker-Framing Invariant (Ideas Edition only)
-        # Hard invariant: any remaining speaker framing after sanitizer is dropped
+        # Speaker-Framing Invariant / No-Names-In-Prose (Ideas Edition only)
+        # Hard invariant: person names in prose are dropped (org/product names may be allowed)
+        # With DYNAMIC_NAME_POLICY_ENABLED: uses speaker blacklist + transcript entity allowlist
+        # Without flag: uses legacy hardcoded physicist names
         if content_mode == ContentMode.essay:
             try:
-                final_markdown, invariant_report = enforce_speaker_framing_invariant(final_markdown)
-                if invariant_report["speaker_framing_sentences_dropped"] > 0:
+                # Build dynamic blacklist/allowlist if flag enabled and data available
+                person_blacklist = None
+                entity_allowlist_obj = None
+
+                if DYNAMIC_NAME_POLICY_ENABLED:
+                    # Build person blacklist from whitelist speakers
+                    if whitelist:
+                        person_blacklist = build_person_blacklist_from_whitelist(whitelist)
+                        logger.info(
+                            f"Job {job_id}: Dynamic name policy - built person blacklist with "
+                            f"{len(person_blacklist.full_names)} names"
+                        )
+
+                    # Build entity allowlist from transcript
+                    if hasattr(request, 'transcript') and request.transcript:
+                        entity_allowlist_obj = build_entity_allowlist(
+                            request.transcript,
+                            person_blacklist or PersonBlacklist(),
+                        )
+                        logger.info(
+                            f"Job {job_id}: Dynamic name policy - built entity allowlist with "
+                            f"{len(entity_allowlist_obj.org_names)} orgs, "
+                            f"{len(entity_allowlist_obj.product_names)} products, "
+                            f"{len(entity_allowlist_obj.acronyms)} acronyms"
+                        )
+
+                # Call the enforcement function with dynamic params (or None for legacy mode)
+                final_markdown, invariant_report = enforce_no_names_in_prose(
+                    final_markdown,
+                    person_blacklist=person_blacklist,
+                    entity_allowlist=entity_allowlist_obj,
+                )
+
+                # Log results
+                if invariant_report["sentences_dropped"] > 0:
                     logger.info(
-                        f"Job {job_id}: Speaker-framing invariant - dropped "
-                        f"{invariant_report['speaker_framing_sentences_dropped']} sentences"
+                        f"Job {job_id}: No-names-in-prose invariant - dropped "
+                        f"{invariant_report['sentences_dropped']} sentences"
                     )
                     for detail in invariant_report.get("drop_details", [])[:3]:
+                        matched = detail.get("matched_name", "unknown")
                         constraint_warnings.append(
-                            f"Speaker framing dropped: \"{detail['dropped_sentence'][:40]}...\""
+                            f"Person name dropped ({matched}): \"{detail['dropped_sentence'][:40]}...\""
                         )
                     await update_job(job_id, constraint_warnings=constraint_warnings)
+
+                # Log kept-due-to-allowlist metric
+                kept_count = invariant_report.get("sentences_kept_due_to_allowlist", 0)
+                if kept_count > 0:
+                    logger.info(
+                        f"Job {job_id}: No-names-in-prose - kept {kept_count} sentences "
+                        f"due to entity allowlist"
+                    )
+
             except Exception as e:
-                logger.error(f"Job {job_id}: Speaker-framing invariant failed (non-fatal): {e}", exc_info=True)
+                logger.error(f"Job {job_id}: No-names-in-prose invariant failed (non-fatal): {e}", exc_info=True)
 
         # Meta-Discourse Gate (Ideas Edition only)
         # Drops sentences that describe the document itself (template/prompt leakage)
@@ -7654,18 +7710,35 @@ async def _generate_draft_task(
             except Exception as e:
                 logger.warning(f"Job {job_id}: Final speaker-framing sanitizer failed (non-fatal): {e}")
 
-        # Final speaker-framing invariant pass (Ideas Edition only)
+        # Final no-names-in-prose invariant pass (Ideas Edition only)
         # Re-run to enforce hard invariant after all modifications
         if content_mode == ContentMode.essay:
             try:
-                final_markdown, final_invariant_report = enforce_speaker_framing_invariant(final_markdown)
-                if final_invariant_report["speaker_framing_sentences_dropped"] > 0:
+                # Rebuild blacklist/allowlist if flag enabled (same as earlier pass)
+                final_person_blacklist = None
+                final_entity_allowlist = None
+
+                if DYNAMIC_NAME_POLICY_ENABLED:
+                    if whitelist:
+                        final_person_blacklist = build_person_blacklist_from_whitelist(whitelist)
+                    if hasattr(request, 'transcript') and request.transcript:
+                        final_entity_allowlist = build_entity_allowlist(
+                            request.transcript,
+                            final_person_blacklist or PersonBlacklist(),
+                        )
+
+                final_markdown, final_invariant_report = enforce_no_names_in_prose(
+                    final_markdown,
+                    person_blacklist=final_person_blacklist,
+                    entity_allowlist=final_entity_allowlist,
+                )
+                if final_invariant_report["sentences_dropped"] > 0:
                     logger.info(
-                        f"Job {job_id}: Final speaker-framing invariant - dropped "
-                        f"{final_invariant_report['speaker_framing_sentences_dropped']} sentences"
+                        f"Job {job_id}: Final no-names-in-prose - dropped "
+                        f"{final_invariant_report['sentences_dropped']} sentences"
                     )
             except Exception as e:
-                logger.warning(f"Job {job_id}: Final speaker-framing invariant failed (non-fatal): {e}")
+                logger.warning(f"Job {job_id}: Final no-names-in-prose invariant failed (non-fatal): {e}")
 
         # Final dangling connective cleanup (Ideas Edition only)
         # Re-run after all modifications to catch any orphaned articles/connectives
