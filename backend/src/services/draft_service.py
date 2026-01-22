@@ -7088,6 +7088,42 @@ async def _generate_draft_task(
             except Exception as e:
                 logger.error(f"Job {job_id}: Dangling attribution gate failed (non-fatal): {e}", exc_info=True)
 
+        # Speaker-Framing Sanitizer (Ideas Edition only)
+        # Rewrites "Deutsch argues that..." → clause content, strips attribution wrappers
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, sanitizer_report = sanitize_speaker_framing(final_markdown)
+                if sanitizer_report["rewrites_applied"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Speaker-framing sanitizer - rewrote "
+                        f"{sanitizer_report['rewrites_applied']} patterns"
+                    )
+                    for detail in sanitizer_report.get("rewrite_details", [])[:3]:
+                        constraint_warnings.append(
+                            f"Speaker framing sanitized ({detail['type']}): starts with '{detail['replacement_start']}'"
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Speaker-framing sanitizer failed (non-fatal): {e}", exc_info=True)
+
+        # Speaker-Framing Invariant (Ideas Edition only)
+        # Hard invariant: any remaining speaker framing after sanitizer is dropped
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, invariant_report = enforce_speaker_framing_invariant(final_markdown)
+                if invariant_report["speaker_framing_sentences_dropped"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Speaker-framing invariant - dropped "
+                        f"{invariant_report['speaker_framing_sentences_dropped']} sentences"
+                    )
+                    for detail in invariant_report.get("drop_details", [])[:3]:
+                        constraint_warnings.append(
+                            f"Speaker framing dropped: \"{detail['dropped_sentence'][:40]}...\""
+                        )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: Speaker-framing invariant failed (non-fatal): {e}", exc_info=True)
+
         # Dangling Connective Cleanup (Ideas Edition only)
         # Fixes orphaned articles/connectives: "offers a ." → next sentence, ", suggesting that ." → "."
         if content_mode == ContentMode.essay:
@@ -7173,6 +7209,32 @@ async def _generate_draft_task(
                     await update_job(job_id, constraint_warnings=constraint_warnings)
             except Exception as e:
                 logger.error(f"Job {job_id}: Anchor-sentence policy failed (non-fatal): {e}", exc_info=True)
+
+        # First-Paragraph Pronoun Repair (Ideas Edition only)
+        # Fixes pronoun-start sentences (It/This/These/They) in first paragraph
+        # Replaces with chapter title noun (e.g., "It introduced..." → "The Enlightenment introduced...")
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, pronoun_report = repair_first_paragraph_pronouns(final_markdown)
+                total_repairs = pronoun_report["sentences_repaired"] + pronoun_report["sentences_dropped"]
+                if total_repairs > 0:
+                    logger.info(
+                        f"Job {job_id}: First-paragraph pronoun repair - "
+                        f"{pronoun_report['sentences_repaired']} replaced, "
+                        f"{pronoun_report['sentences_dropped']} dropped"
+                    )
+                    for r in pronoun_report.get("repairs", [])[:3]:
+                        if r["action"] == "pronoun_replaced":
+                            constraint_warnings.append(
+                                f"Chapter {r['chapter']} pronoun replaced with '{r['replacement_noun']}'"
+                            )
+                        else:
+                            constraint_warnings.append(
+                                f"Chapter {r['chapter']} pronoun sentence dropped"
+                            )
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+            except Exception as e:
+                logger.error(f"Job {job_id}: First-paragraph pronoun repair failed (non-fatal): {e}", exc_info=True)
 
         # Anachronism filter (Ideas Edition safety net) - only for essay mode
         # Catches contemporary framing that slipped past generation prompts
@@ -7275,6 +7337,32 @@ async def _generate_draft_task(
                     )
             except Exception as e:
                 logger.warning(f"Job {job_id}: Final dangling attribution pass failed (non-fatal): {e}")
+
+        # Final speaker-framing sanitizer pass (Ideas Edition only)
+        # Re-run after all modifications to catch any patterns introduced by injection/fallback
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, final_sanitizer_report = sanitize_speaker_framing(final_markdown)
+                if final_sanitizer_report["rewrites_applied"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Final speaker-framing sanitizer - rewrote "
+                        f"{final_sanitizer_report['rewrites_applied']} patterns"
+                    )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Final speaker-framing sanitizer failed (non-fatal): {e}")
+
+        # Final speaker-framing invariant pass (Ideas Edition only)
+        # Re-run to enforce hard invariant after all modifications
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, final_invariant_report = enforce_speaker_framing_invariant(final_markdown)
+                if final_invariant_report["speaker_framing_sentences_dropped"] > 0:
+                    logger.info(
+                        f"Job {job_id}: Final speaker-framing invariant - dropped "
+                        f"{final_invariant_report['speaker_framing_sentences_dropped']} sentences"
+                    )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Final speaker-framing invariant failed (non-fatal): {e}")
 
         # Final dangling connective cleanup (Ideas Edition only)
         # Re-run after all modifications to catch any orphaned articles/connectives
