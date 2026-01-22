@@ -2463,8 +2463,13 @@ def sanitize_speaker_framing(text: str) -> tuple[str, dict]:
     1. (Name|He|She|They) <any words>, <Capital> - "He elaborates, In every..."
     2. Name's <noun> <verb> - "Deutsch's book suggests..."
     3. According to Name, ... - "According to Deutsch, ..."
+    4. As Name <adverb?> verb that - "As Deutsch aptly suggests that..."
+    5. Generic speaker attribution - "One scholar noted...", "An influential thinker remarked..."
+    6. As/According to generic speaker - "As one scholar noted,", "According to some researchers,"
+    7. Orphan pronouns with no antecedent - If no sentences kept yet and this starts with It/This/They/These
 
-    This catches ALL attribution wrappers without needing a verb list.
+    This catches ALL attribution wrappers (named and generic) without needing a verb list.
+    The final style invariant: no attribution framing at all in timeless prose.
 
     Args:
         text: The draft markdown text.
@@ -2513,6 +2518,30 @@ def sanitize_speaker_framing(text: str) -> tuple[str, dict]:
         re.IGNORECASE
     )
 
+    # Pattern 5: Generic speaker attribution - "one scholar noted", "an influential thinker remarked"
+    # Catches: "One scholar noted, The scientific...", "An influential thinker once remarked,"
+    # This is the final style invariant - no attribution framing at all in timeless prose
+    GENERIC_SPEAKERS = r'(?:scholar|thinker|philosopher|researcher|historian|figure|commentator|observer|writer|author)'
+    ATTRIBUTION_VERBS = r'(?:noted|remarked|observed|argued|said|suggested|pointed\s+out|stated|claimed|wrote|explained)'
+    generic_speaker_attribution = re.compile(
+        r'\b(?:one|a|an|the|some)\s+'           # Article
+        r'(?:\w+\s+)?'                           # Optional adjective: "influential", "noted"
+        r'' + GENERIC_SPEAKERS + r'\s+'         # Generic speaker noun
+        r'(?:once\s+)?'                          # Optional "once"
+        r'' + ATTRIBUTION_VERBS + r'\b',        # Attribution verb
+        re.IGNORECASE
+    )
+
+    # Pattern 6: "As/According to one scholar..." - generic framing
+    # Catches: "As one scholar noted,", "According to some researchers,"
+    as_generic_speaker = re.compile(
+        r'\b(?:as|according\s+to)\s+'           # "As" or "According to"
+        r'(?:one|some|a|an)\s+'                  # Article
+        r'(?:\w+\s+)?'                           # Optional adjective
+        r'' + GENERIC_SPEAKERS + r'\b',         # Generic speaker noun
+        re.IGNORECASE
+    )
+
     def is_attribution_sentence(sentence: str) -> tuple[bool, str]:
         """Check if sentence contains attribution wrapper. Returns (is_bad, pattern_type)."""
         if attribution_comma_capital.search(sentence):
@@ -2523,6 +2552,10 @@ def sanitize_speaker_framing(text: str) -> tuple[str, dict]:
             return True, "according_to"
         if as_name_verb_that.search(sentence):
             return True, "as_name_verb_that"
+        if generic_speaker_attribution.search(sentence):
+            return True, "generic_speaker_attribution"
+        if as_generic_speaker.search(sentence):
+            return True, "as_generic_speaker"
         return False, ""
 
     # Process paragraph by paragraph
@@ -2572,8 +2605,19 @@ def sanitize_speaker_framing(text: str) -> tuple[str, dict]:
         sentences = sentence_pattern.split(para)
         kept_sentences = []
 
+        # Orphan pronoun pattern - these need antecedent from previous sentence
+        ORPHAN_PRONOUNS = re.compile(r'^(?:It|This|These|They|That|Those)\s+', re.IGNORECASE)
+
         for sentence in sentences:
             is_bad, pattern_type = is_attribution_sentence(sentence)
+
+            # Mid-paragraph orphan-pronoun cleanup:
+            # If NO sentences have been kept yet and this one starts with It/This/They/These,
+            # the pronoun has no antecedent in this paragraph - drop it too
+            if not is_bad and len(kept_sentences) == 0 and ORPHAN_PRONOUNS.match(sentence.strip()):
+                is_bad = True
+                pattern_type = "orphan_pronoun_no_antecedent"
+
             if is_bad:
                 sentences_dropped += 1
                 drop_details.append({

@@ -4490,6 +4490,98 @@ Some prose here.
         # Core Claims preserved verbatim
         assert "Deutsch argues that progress matters" in result
 
+    def test_drops_generic_speaker_attribution_draft25(self):
+        """REGRESSION Draft 25: 'One scholar noted...' must be dropped.
+
+        Generic speaker attribution violates timeless essay style.
+        """
+        text = """## Chapter 1: First
+
+Progress is key. One scholar noted, The scientific method became a driving force. This changed everything.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_speaker_framing(text)
+
+        # Generic speaker attribution should be dropped
+        assert "One scholar noted" not in result
+        # Other sentences preserved
+        assert "Progress is key" in result
+        assert "This changed everything" in result
+        assert report["sentences_dropped"] >= 1
+
+    def test_drops_influential_thinker_remarked_draft25(self):
+        """REGRESSION Draft 25: 'An influential thinker once remarked,' must be dropped."""
+        text = """## Chapter 1: First
+
+The era began. An influential thinker once remarked, This insight changed history.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_speaker_framing(text)
+
+        # Generic speaker attribution should be dropped
+        assert "An influential thinker" not in result
+        assert "once remarked" not in result
+        # Other sentences preserved
+        assert "The era began" in result
+        assert report["sentences_dropped"] >= 1
+
+    def test_drops_as_one_scholar_noted(self):
+        """'As one scholar noted...' must be dropped."""
+        text = """## Chapter 1: First
+
+Science evolved. As one scholar noted, this was pivotal. Understanding grew.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_speaker_framing(text)
+
+        # As generic speaker should be dropped
+        assert "As one scholar noted" not in result
+        # Other sentences preserved
+        assert "Science evolved" in result
+        assert "Understanding grew" in result
+        assert report["sentences_dropped"] >= 1
+
+    def test_drops_orphan_pronoun_no_antecedent(self):
+        """If no sentences kept yet, orphan It/This/They should drop."""
+        text = """## Chapter 1: First
+
+One scholar noted the importance. It touched the core of potential. Understanding grew.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_speaker_framing(text)
+
+        # Generic speaker dropped (first sentence)
+        assert "One scholar noted" not in result
+        # Orphan "It" with no antecedent should also be dropped
+        assert "It touched" not in result
+        # Third sentence preserved (it's now the first kept sentence)
+        assert "Understanding grew" in result
+        # Should have dropped 2 sentences
+        assert report["sentences_dropped"] >= 2
+        # Check for orphan_pronoun_no_antecedent type
+        orphan_drops = [d for d in report["drop_details"] if d["type"] == "orphan_pronoun_no_antecedent"]
+        assert len(orphan_drops) >= 1
+
+    def test_preserves_pronoun_with_antecedent(self):
+        """Pronouns with antecedent (previous sentence kept) should be preserved."""
+        text = """## Chapter 1: First
+
+The Enlightenment changed everything. It marked a turning point. This was transformative.
+
+### Key Excerpts"""
+
+        result, report = draft_service.sanitize_speaker_framing(text)
+
+        # All sentences should be preserved (valid antecedents)
+        assert "The Enlightenment changed everything" in result
+        assert "It marked a turning point" in result
+        assert "This was transformative" in result
+        assert report["sentences_dropped"] == 0
+
 
 class TestSpeakerFramingInvariant:
     """Tests for enforce_speaker_framing_invariant - drop remaining speaker framing."""
