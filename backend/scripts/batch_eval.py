@@ -48,6 +48,7 @@ from services.entity_allowlist import (
     build_entity_allowlist,
     PersonBlacklist,
     EntityAllowlist,
+    DOMAIN_TOKENS,
 )
 
 
@@ -251,7 +252,20 @@ def count_entity_mentions(
             is_product = candidate.lower() in {n.lower() for n in entity_allowlist.product_names}
             is_acronym = candidate.upper() in entity_allowlist.acronyms or candidate in entity_allowlist.acronyms
 
-            if is_org or is_product:
+            # Domain acronyms (API, SDK, CRM, etc.) should be counted as acronyms, not brands
+            # even if they're in org_names due to DOMAIN_TOKENS classification
+            is_domain_acronym = (
+                candidate.isupper() and
+                len(candidate) <= 6 and
+                candidate.lower() in DOMAIN_TOKENS
+            )
+
+            if is_domain_acronym:
+                # Domain terms like API, SDK go to acronym bucket
+                metrics.acronym_mentions += 1
+                found_acronyms.add(candidate)
+            elif is_org or is_product:
+                # True brand names (Amazon Web Services, Salesforce, etc.)
                 metrics.brand_mentions += 1
                 found_brands.add(candidate)
             elif is_acronym:
