@@ -135,6 +135,40 @@ BANNED_SECTION_PATTERNS = [
 # Compile patterns for efficiency
 BANNED_SECTION_REGEXES = [re.compile(p, re.IGNORECASE | re.MULTILINE) for p in BANNED_SECTION_PATTERNS]
 
+# ==============================================================================
+# Canonical Placeholder Constants (Ideas Edition)
+# ==============================================================================
+# These are the ONLY acceptable placeholders for empty sections.
+# Any other "no claims/excerpts available" text is LLM-generated and must be rejected.
+
+NO_CLAIMS_PLACEHOLDER = "*No claims available.*"
+NO_EXCERPTS_PLACEHOLDER = "*No excerpts available.*"
+
+# LLM-generated placeholder patterns to REJECT (these indicate ownership failure)
+# The LLM sometimes generates its own "empty section" text instead of actual content.
+# These patterns catch common LLM-generated placeholders that slip through.
+LLM_PLACEHOLDER_PATTERNS = [
+    # Italic markdown wrappers (our placeholders use * for italic, but LLM might vary)
+    r'\*No (?:fully )?(?:grounded )?claims? (?:are )?available[^*]*\*',
+    r'\*No (?:fully )?(?:grounded )?excerpts? (?:are )?available[^*]*\*',
+    # Plain text variants
+    r'No (?:fully )?(?:grounded )?claims? (?:are )?available for this chapter',
+    r'No (?:fully )?(?:grounded )?excerpts? (?:are )?available for this chapter',
+    # Bullet-formatted LLM placeholders
+    r'- \*\*No (?:fully )?(?:grounded )?claims? (?:are )?available',
+    # "Unable to" variants
+    r'Unable to (?:extract|identify|find) (?:any )?(?:grounded )?claims?',
+    r'Unable to (?:extract|identify|find) (?:any )?(?:relevant )?excerpts?',
+    # "Could not" variants
+    r'Could not (?:extract|identify|find) (?:any )?(?:grounded )?claims?',
+    # Generic "none" statements
+    r'(?:There are )?[Nn]o (?:specific |relevant )?claims? (?:were )?(?:identified|found|extracted)',
+    r'(?:There are )?[Nn]o (?:specific |relevant )?excerpts? (?:were )?(?:identified|found|extracted)',
+]
+
+# Compile LLM placeholder patterns
+LLM_PLACEHOLDER_REGEXES = [re.compile(p, re.IGNORECASE) for p in LLM_PLACEHOLDER_PATTERNS]
+
 # Banned phrases to flag (for reporting, not auto-removal)
 # These are AI-telltale phrases that should be avoided
 BANNED_PHRASES = [
@@ -380,7 +414,7 @@ def compile_key_excerpts_section(
         Returns placeholder if whitelist is empty.
     """
     if not whitelist:
-        return "*No excerpts available.*"
+        return NO_EXCERPTS_PLACEHOLDER
 
     excerpts = select_deterministic_excerpts(whitelist, chapter_index, coverage_level)
 
@@ -390,7 +424,7 @@ def compile_key_excerpts_section(
             f"compile_key_excerpts_section: No excerpts selected for chapter {chapter_index} "
             f"despite whitelist having {len(whitelist)} quotes"
         )
-        return "*No excerpts available.*"
+        return NO_EXCERPTS_PLACEHOLDER
 
     return format_excerpts_markdown(excerpts)
 
@@ -1015,7 +1049,7 @@ def ensure_required_sections_exist(text: str) -> tuple[str, dict]:
 
             if not has_key_excerpts and not has_core_claims:
                 # Both missing - add both at end of chapter
-                chapter_text = chapter_text.rstrip() + '\n\n### Key Excerpts\n\n*No excerpts available.*\n\n### Core Claims\n\n*No claims available.*\n\n'
+                chapter_text = chapter_text.rstrip() + f'\n\n### Key Excerpts\n\n{NO_EXCERPTS_PLACEHOLDER}\n\n### Core Claims\n\n{NO_CLAIMS_PLACEHOLDER}\n\n'
                 inserted_sections.append({"chapter": chapter_num, "section": "Key Excerpts"})
                 inserted_sections.append({"chapter": chapter_num, "section": "Core Claims"})
 
@@ -1026,7 +1060,7 @@ def ensure_required_sections_exist(text: str) -> tuple[str, dict]:
                 after_key_excerpts = chapter_text[key_excerpts_pos:]
 
                 # Add Core Claims at end of chapter
-                chapter_text = chapter_text.rstrip() + '\n\n### Core Claims\n\n*No claims available.*\n\n'
+                chapter_text = chapter_text.rstrip() + f'\n\n### Core Claims\n\n{NO_CLAIMS_PLACEHOLDER}\n\n'
                 inserted_sections.append({"chapter": chapter_num, "section": "Core Claims"})
 
             elif not has_key_excerpts and has_core_claims:
@@ -1035,7 +1069,7 @@ def ensure_required_sections_exist(text: str) -> tuple[str, dict]:
                 before_core_claims = chapter_text[:core_claims_pos].rstrip()
                 from_core_claims = chapter_text[core_claims_pos:]
 
-                chapter_text = before_core_claims + '\n\n### Key Excerpts\n\n*No excerpts available.*\n\n' + from_core_claims
+                chapter_text = before_core_claims + f'\n\n### Key Excerpts\n\n{NO_EXCERPTS_PLACEHOLDER}\n\n' + from_core_claims
                 inserted_sections.append({"chapter": chapter_num, "section": "Key Excerpts"})
 
         result_parts.append(chapter_text)
@@ -2041,7 +2075,7 @@ def enforce_verbatim_leak_gate(
 
 
 def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
-    """Rewrite dangling attribution patterns to indirect speech.
+    """Rewrite dangling attribution patterns to indirect speech, DROP unrewritable ones.
 
     Detects patterns like:
     - "He says, This idea..." → "He says that this idea..."
@@ -2052,6 +2086,20 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
     the content wasn't properly quoted. Instead of dropping (which causes
     content collapse), we rewrite to indirect speech by inserting "that"
     and lowercasing the following word.
+
+    SENTENCE DROP (P0 - Draft 20 regression):
+    Some attribution patterns are unrewritable and indicate quote-introducer leaks.
+    These should DROP the entire sentence rather than attempt rewriting:
+    - "Deutsch mentions..., recalling, It's funny..." - double wrapper with recalled quote
+    - "..., remembering, <Capital>" - recall verb introducing unquoted content
+
+    Curated recall/memory verbs that trigger sentence drop:
+    - recalling, remembering, recollecting
+    - adding, continuing, joking, musing
+    - quipping, reflecting, wondering
+
+    These verbs typically introduce recalled speech that should have been quoted.
+    Rewriting to indirect speech creates awkward prose; dropping is safer.
 
     Args:
         text: The draft markdown text.
@@ -2122,8 +2170,36 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
         re.IGNORECASE
     )
 
+    # =========================================================================
+    # SENTENCE DROP PATTERNS (P0 - Draft 20 regression)
+    # =========================================================================
+    # These patterns indicate quote-introducer leaks that cannot be cleanly
+    # rewritten. The entire sentence should be DROPPED.
+    #
+    # Curated "recall" verbs - these typically introduce recalled speech that
+    # should have been quoted. Attempting indirect speech creates awkward prose.
+    RECALL_VERBS = {
+        'recalling', 'remembering', 'recollecting',  # Memory verbs
+        'joking', 'quipping', 'musing',              # Informal speech verbs
+        'reflecting', 'wondering', 'pondering',      # Contemplation verbs
+        'continuing', 'proceeding',                   # Continuation verbs
+    }
+
+    # Pattern: ", <recall_verb>, <Capital>" - double wrapper with recalled quote
+    # Example: "Deutsch mentions the exchange, recalling, It's funny..."
+    # This pattern catches quote introducers that leaked into prose.
+    recall_verb_pattern = re.compile(
+        r',\s*'                             # Leading comma
+        r'(' + '|'.join(RECALL_VERBS) + ')' # One of the recall verbs (group 1)
+        r'\s*,\s*'                          # Comma after verb
+        r'([A-Z])',                         # Capital letter (group 2)
+        re.IGNORECASE
+    )
+
     rewrite_count = 0
+    sentences_dropped = 0
     rewrite_details = []
+    drop_details = []
 
     # Words that should be lowercased after "that" (pronouns/determiners)
     # These are never proper nouns, so always safe to lowercase
@@ -2294,8 +2370,36 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
             result_paragraphs.append(para)
             continue
 
-        # Apply rewrites to narrative prose
+        # STEP 1: Drop sentences containing recall verb patterns (unrewritable leaks)
+        # These are P0 drops - the pattern indicates a quote-introducer leak
+        # Example: "Deutsch mentions the exchange, recalling, It's funny..."
         modified = para
+        if recall_verb_pattern.search(modified):
+            # Split into sentences and filter out bad ones
+            # Use conservative sentence splitting
+            sentence_pattern = re.compile(r'(?<=[.!?])\s+(?=[A-Z])')
+            sentences = sentence_pattern.split(modified)
+            kept_sentences = []
+
+            for sentence in sentences:
+                if recall_verb_pattern.search(sentence):
+                    # Drop this sentence
+                    sentences_dropped += 1
+                    drop_details.append({
+                        "type": "recall_verb_leak",
+                        "dropped_sentence": sentence[:100] + ("..." if len(sentence) > 100 else ""),
+                    })
+                else:
+                    kept_sentences.append(sentence)
+
+            # Rejoin remaining sentences
+            if kept_sentences:
+                modified = ' '.join(kept_sentences)
+            else:
+                # All sentences dropped - skip this paragraph entirely
+                continue
+
+        # STEP 2: Apply rewrites to narrative prose
         modified = rewrite_pattern.sub(rewrite_to_indirect, modified)
         modified = participial_pattern.sub(rewrite_to_indirect, modified)
         modified = colon_wrapper_pattern.sub(remove_colon_wrapper, modified)
@@ -2310,10 +2414,14 @@ def enforce_dangling_attribution_gate(text: str) -> tuple[str, dict]:
 
     if rewrite_count > 0:
         logger.info(f"Dangling attribution gate: rewrote {rewrite_count} patterns to indirect speech")
+    if sentences_dropped > 0:
+        logger.info(f"Dangling attribution gate: dropped {sentences_dropped} sentences with recall verb leaks")
 
     return result, {
         "rewrites_applied": rewrite_count,
         "rewrite_details": rewrite_details,
+        "sentences_dropped": sentences_dropped,
+        "drop_details": drop_details,
     }
 
 
@@ -2949,6 +3057,56 @@ def validate_structural_integrity(text: str) -> tuple[bool, dict]:
                 'chapter': chapter_num,
                 'context': f"Chapter {chapter_num} has no ### Core Claims section",
             })
+
+    # Check 6: LLM-generated placeholder text in Core Claims (ownership violation)
+    # Core Claims must be COMPILED, never LLM-authored. If the LLM generates its own
+    # "no claims available" text, it indicates the compiler failed and the LLM is
+    # filling in. This is a P0 violation - the section should have been populated
+    # by the compiler, or left empty (which triggers our canonical placeholder).
+    #
+    # Valid Core Claims content:
+    # - Bullet points: - **Claim**: "Supporting quote."
+    # - Our canonical placeholder: *No claims available.*
+    #
+    # Invalid (LLM-generated):
+    # - *No fully grounded claims available for this chapter.*
+    # - Unable to extract claims from this section.
+    # - No specific claims were identified.
+    for i, chapter_match in enumerate(chapters):
+        chapter_num = i + 1
+        chapter_start = chapter_match.start()
+        chapter_end = chapters[i + 1].start() if i + 1 < len(chapters) else len(text)
+        chapter_text = text[chapter_start:chapter_end]
+
+        # Extract Core Claims section content
+        core_claims_match = re.search(
+            r'### Core Claims\s*\n(.*?)(?=### |\Z)',
+            chapter_text,
+            re.DOTALL
+        )
+        if core_claims_match:
+            core_claims_content = core_claims_match.group(1).strip()
+
+            # Skip if it's our canonical placeholder (exactly)
+            if core_claims_content == NO_CLAIMS_PLACEHOLDER:
+                continue
+
+            # Skip if it's valid bullet content (starts with - **)
+            if core_claims_content.startswith('- **'):
+                continue
+
+            # Check for LLM-generated placeholder patterns
+            for pattern in LLM_PLACEHOLDER_REGEXES:
+                if pattern.search(core_claims_content):
+                    violations.append({
+                        'type': 'llm_generated_core_claims_placeholder',
+                        'chapter': chapter_num,
+                        'context': core_claims_content[:100] + ('...' if len(core_claims_content) > 100 else ''),
+                        'detail': 'Core Claims must be compiled, not LLM-authored. '
+                                  'This placeholder text was generated by the LLM instead of '
+                                  'actual claims or the canonical placeholder.',
+                    })
+                    break  # One violation per chapter is enough
 
     is_valid = len(violations) == 0
 

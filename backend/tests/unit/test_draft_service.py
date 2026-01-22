@@ -2809,6 +2809,65 @@ Science, as Deutsch notes, is about finding laws of nature. As He remarks, This 
         # But sentence-start introducer SHOULD be rewritten
         assert "remarks that this is key" in result
 
+    def test_drops_sentence_with_recalling_verb_draft20(self):
+        """REGRESSION Draft 20: 'recalling, <Capital>' must DROP the sentence.
+
+        Input: 'Deutsch mentions the famous exchange, recalling, It's funny...'
+        This is a double-wrapper pattern where the LLM generated an attribution
+        wrapper around recalled speech. Cannot be cleanly rewritten - must drop.
+        """
+        text = """## Chapter 1
+
+The Enlightenment marked a turning point in history. Deutsch mentions the famous exchange between Bohr and Einstein, recalling, It's funny you should mention the Bohr-Einstein debate. Such discussions drive the quest for knowledge.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # The sentence with "recalling, It's" should be dropped
+        assert "recalling, It's" not in result
+        assert "Deutsch mentions" not in result
+        # Other sentences should be preserved
+        assert "The Enlightenment marked a turning point" in result
+        assert "Such discussions drive the quest" in result
+        # Report should track the drop
+        assert report["sentences_dropped"] >= 1
+
+    def test_drops_sentence_with_remembering_verb(self):
+        """'remembering, <Capital>' triggers sentence drop."""
+        text = """## Chapter 1
+
+The speaker shared insights. He paused, remembering, When I first learned this concept. The audience listened.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # Sentence with recall verb should be dropped
+        assert "remembering, When" not in result
+        assert "He paused" not in result
+        # Other sentences preserved
+        assert "The speaker shared insights" in result
+        assert "The audience listened" in result
+        assert report["sentences_dropped"] >= 1
+
+    def test_preserves_sentences_without_recall_verbs(self):
+        """Sentences with normal attribution verbs should be rewritten, not dropped."""
+        text = """## Chapter 1
+
+Deutsch notes, This is important. He argues, The evidence supports this.
+
+### Key Excerpts"""
+
+        result, report = draft_service.enforce_dangling_attribution_gate(text)
+
+        # These should be REWRITTEN, not dropped
+        assert "notes that this is important" in result
+        assert "argues that the evidence" in result
+        # No sentences should be dropped for these normal verbs
+        assert report["sentences_dropped"] == 0
+        assert report["rewrites_applied"] >= 2
+
 
 class TestFixTruncatedAttributions:
     """Tests for fix_truncated_attributions - joins split attribution lines."""
@@ -3632,8 +3691,9 @@ More prose.
         assert is_valid
         assert report["violation_count"] == 0
 
-    def test_passes_core_claims_without_quotes(self):
-        """Core Claims without quotes (placeholder text) should pass."""
+    def test_passes_core_claims_with_canonical_placeholder(self):
+        """Core Claims with our canonical placeholder should pass."""
+        # Use the exact canonical placeholder from draft_service
         text = '''## Chapter 1
 
 Some prose.
@@ -3645,7 +3705,7 @@ Some prose.
 
 ### Core Claims
 
-*No fully grounded claims available for this chapter.*
+*No claims available.*
 
 ## Chapter 2
 
@@ -3658,7 +3718,7 @@ More prose.
 
 ### Core Claims
 
-*No claims for this chapter.*'''
+*No claims available.*'''
 
         is_valid, report = draft_service.validate_structural_integrity(text)
 
@@ -3790,3 +3850,68 @@ More prose.
 
         assert is_valid
         assert report["violation_count"] == 0
+
+    def test_detects_llm_generated_core_claims_placeholder_draft20(self):
+        """REGRESSION Draft 20: LLM-generated placeholder text must be detected.
+
+        Draft 20 had Chapter 4 with:
+            ### Core Claims
+            *No fully grounded claims available for this chapter.*
+
+        This is LLM-generated text, not our canonical placeholder. Core Claims
+        must be COMPILED, not LLM-authored. This is a P0 ownership violation.
+        """
+        text = '''## Chapter 1: Impact
+
+Prose here.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Valid claim**: "Support text."
+
+## Chapter 2: Human Potential
+
+More prose.
+
+### Key Excerpts
+
+> "Quote 2"
+> — Speaker
+
+### Core Claims
+
+*No fully grounded claims available for this chapter.*'''
+
+        is_valid, report = draft_service.validate_structural_integrity(text)
+
+        assert not is_valid
+        violations = report["violations"]
+        llm_violations = [v for v in violations if v["type"] == "llm_generated_core_claims_placeholder"]
+        assert len(llm_violations) >= 1
+        assert any(v.get("chapter") == 2 for v in llm_violations)
+
+    def test_detects_unable_to_extract_llm_placeholder(self):
+        """LLM-generated 'Unable to extract' text must be detected."""
+        text = '''## Chapter 1: First
+
+Prose.
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+Unable to extract any grounded claims from this section.'''
+
+        is_valid, report = draft_service.validate_structural_integrity(text)
+
+        assert not is_valid
+        violations = report["violations"]
+        assert any(v["type"] == "llm_generated_core_claims_placeholder" for v in violations)
