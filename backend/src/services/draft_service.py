@@ -968,6 +968,100 @@ def drop_claims_with_invalid_quotes(
     }
 
 
+def ensure_required_sections_exist(text: str) -> tuple[str, dict]:
+    """Ensure every chapter has both Key Excerpts and Core Claims sections.
+
+    If a section is completely missing (not just empty), this function inserts
+    the section header with a placeholder. This handles cases where:
+    - The LLM failed to generate the section
+    - A transform accidentally removed the entire section
+
+    This should run BEFORE strip_empty_section_headers to ensure headers exist.
+
+    Args:
+        text: The draft markdown text.
+
+    Returns:
+        Tuple of (updated_text, report_dict).
+    """
+    inserted_sections = []
+
+    # Find all chapter boundaries
+    chapter_pattern = re.compile(r'^## Chapter (\d+)[:\s]*(.*?)$', re.MULTILINE)
+    chapters = list(chapter_pattern.finditer(text))
+
+    if not chapters:
+        return text, {"sections_inserted": 0, "inserted": []}
+
+    result_parts = []
+    last_end = 0
+
+    for i, chapter_match in enumerate(chapters):
+        chapter_num = int(chapter_match.group(1))
+        chapter_start = chapter_match.start()
+        chapter_end = chapters[i + 1].start() if i + 1 < len(chapters) else len(text)
+        chapter_text = text[chapter_start:chapter_end]
+
+        has_key_excerpts = '### Key Excerpts' in chapter_text
+        has_core_claims = '### Core Claims' in chapter_text
+
+        # Add text before this chapter
+        result_parts.append(text[last_end:chapter_start])
+
+        # Rebuild chapter with missing sections if needed
+        if not has_key_excerpts or not has_core_claims:
+            # Find where to insert missing sections
+            # Structure should be: [prose] ### Key Excerpts [content] ### Core Claims [content]
+
+            if not has_key_excerpts and not has_core_claims:
+                # Both missing - add both at end of chapter
+                chapter_text = chapter_text.rstrip() + '\n\n### Key Excerpts\n\n*No excerpts available.*\n\n### Core Claims\n\n*No claims available.*\n\n'
+                inserted_sections.append({"chapter": chapter_num, "section": "Key Excerpts"})
+                inserted_sections.append({"chapter": chapter_num, "section": "Core Claims"})
+
+            elif has_key_excerpts and not has_core_claims:
+                # Only Core Claims missing - add after Key Excerpts content
+                # Find end of Key Excerpts section
+                key_excerpts_pos = chapter_text.find('### Key Excerpts')
+                after_key_excerpts = chapter_text[key_excerpts_pos:]
+
+                # Add Core Claims at end of chapter
+                chapter_text = chapter_text.rstrip() + '\n\n### Core Claims\n\n*No claims available.*\n\n'
+                inserted_sections.append({"chapter": chapter_num, "section": "Core Claims"})
+
+            elif not has_key_excerpts and has_core_claims:
+                # Only Key Excerpts missing - add before Core Claims
+                core_claims_pos = chapter_text.find('### Core Claims')
+                before_core_claims = chapter_text[:core_claims_pos].rstrip()
+                from_core_claims = chapter_text[core_claims_pos:]
+
+                chapter_text = before_core_claims + '\n\n### Key Excerpts\n\n*No excerpts available.*\n\n' + from_core_claims
+                inserted_sections.append({"chapter": chapter_num, "section": "Key Excerpts"})
+
+        result_parts.append(chapter_text)
+        last_end = chapter_end
+
+    # Add any remaining content
+    if last_end < len(text):
+        result_parts.append(text[last_end:])
+
+    result = ''.join(result_parts)
+
+    # Clean up extra blank lines
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    if inserted_sections:
+        logger.warning(
+            f"STRUCTURAL FIX: Inserted {len(inserted_sections)} missing section(s): "
+            f"{inserted_sections}"
+        )
+
+    return result, {
+        "sections_inserted": len(inserted_sections),
+        "inserted": inserted_sections,
+    }
+
+
 def drop_excerpts_with_invalid_quotes(
     text: str,
     transcript: str,
@@ -6112,6 +6206,20 @@ async def _generate_draft_task(
                     await update_job(job_id, constraint_warnings=constraint_warnings)
             except Exception as e:
                 logger.warning(f"Job {job_id}: Core Claims structure validation failed (non-fatal): {e}")
+
+        # Ensure required sections exist (Ideas Edition structural fix)
+        # If a chapter is missing Key Excerpts or Core Claims, insert placeholders
+        # This must run BEFORE strip_empty_section_headers to ensure headers exist
+        if content_mode == ContentMode.essay:
+            try:
+                final_markdown, sections_report = ensure_required_sections_exist(final_markdown)
+                if sections_report["sections_inserted"] > 0:
+                    logger.warning(
+                        f"Job {job_id}: Inserted {sections_report['sections_inserted']} missing section(s): "
+                        f"{sections_report['inserted']}"
+                    )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Section existence check failed (non-fatal): {e}")
 
         # Strip empty section headers (Ideas Edition render guard)
         # This is the render guard - empty Key Excerpts/Core Claims sections are removed

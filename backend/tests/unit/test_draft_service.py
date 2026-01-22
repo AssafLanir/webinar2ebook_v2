@@ -3469,6 +3469,89 @@ third orphan.
         assert report["fragments_removed"] == 3
 
 
+class TestEnsureRequiredSectionsExist:
+    """Tests for ensure_required_sections_exist - inserts missing section headers."""
+
+    def test_inserts_missing_core_claims_draft19(self):
+        """REGRESSION Draft 19: Missing Core Claims section should be inserted."""
+        text = '''## Chapter 1: The Impact
+
+Some prose.
+
+### Key Excerpts
+
+> "Quote 1"
+> — Speaker
+
+### Core Claims
+
+- **Claim 1**: "Support."
+
+## Chapter 2: Human Potential
+
+More prose.
+
+### Key Excerpts
+
+> "Quote 2"
+> — Speaker'''
+
+        result, report = draft_service.ensure_required_sections_exist(text)
+
+        # Chapter 2 should now have Core Claims (Ch1 already has it)
+        assert result.count("### Core Claims") == 2  # Ch1 existing + Ch2 inserted
+        assert "*No claims available.*" in result
+        assert report["sections_inserted"] == 1
+        assert any(s["chapter"] == 2 and s["section"] == "Core Claims" for s in report["inserted"])
+
+    def test_inserts_both_missing_sections(self):
+        """Chapter missing both sections should get both inserted."""
+        text = '''## Chapter 1: First
+
+Prose only, no sections.
+
+## Chapter 2: Second
+
+More prose.'''
+
+        result, report = draft_service.ensure_required_sections_exist(text)
+
+        # Both sections inserted for each chapter
+        assert result.count("### Key Excerpts") == 2
+        assert result.count("### Core Claims") == 2
+        assert report["sections_inserted"] == 4
+
+    def test_preserves_complete_chapters(self):
+        """Chapters with both sections should not be modified."""
+        text = '''## Chapter 1
+
+### Key Excerpts
+
+> "Quote"
+> — Speaker
+
+### Core Claims
+
+- **Claim**: "Support."
+
+## Chapter 2
+
+### Key Excerpts
+
+> "Quote 2"
+> — Speaker
+
+### Core Claims
+
+- **Claim 2**: "Support."'''
+
+        result, report = draft_service.ensure_required_sections_exist(text)
+
+        # No changes needed
+        assert report["sections_inserted"] == 0
+        assert result == text
+
+
 class TestStructuralIntegrityValidator:
     """Tests for validate_structural_integrity function - P0 hard gate."""
 
