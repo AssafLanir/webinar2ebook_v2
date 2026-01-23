@@ -9,6 +9,7 @@ on:
 jobs:
   quality-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: backend
@@ -43,4 +44,5 @@ jobs:
         with:
           name: quality-report
           path: backend/corpora/report.json
+          if-no-files-found: ignore
           retention-days: 30
