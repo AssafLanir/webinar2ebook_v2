@@ -22,22 +22,42 @@ DYNAMIC_NAME_POLICY_ENABLED=true python scripts/batch_eval.py \
   --ci
 ```
 
-## Target Corpus Diversity (10 transcripts)
+## Target Corpus: B2B Marketing Focus (10 transcripts)
 
-For meaningful threshold calibration, include these verticals:
+**Distribution**: 80% on-distribution (B2B marketing) + 20% adversarial-but-realistic
 
-| # | Type | What to look for |
-|---|------|------------------|
-| 1 | CTA-heavy marketing webinar | Heavy call-to-action, promotional language |
-| 2 | Panel discussion | Multiple speakers, cross-talk |
-| 3 | Q&A-heavy webinar | Short answers, speaker back-and-forth |
-| 4 | Devtools webinar | Acronym soup (API, SDK, CI/CD, etc.) |
-| 5 | Healthcare/finance compliance | Regulatory language (HIPAA, SOC2, etc.) |
-| 6 | Training/education style | Instructional, step-by-step |
-| 7 | Messy transcript | Disfluencies, poor diarization |
-| 8 | Long-form interview | Extended monologues |
-| 9 | Product demo | Feature walkthroughs, technical terms |
-| 10 | Thought leadership | Abstract concepts, philosophical |
+### On-Distribution: B2B Marketing Webinars (8)
+
+| # | Bucket | Key Stressors |
+|---|--------|---------------|
+| 1 | Product launch / feature announcement | High CTA density, product names |
+| 2 | Thought leadership / trends | Abstract concepts, industry jargon |
+| 3 | Customer success / case study | Company names, metrics, testimonials |
+| 4 | Demo / walkthrough | Technical terms, step-by-step narration |
+| 5 | Panel discussion | 3+ speakers, cross-talk, interruptions |
+| 6 | Expert interview | 2 speakers, long monologues |
+| 7 | How-to / tutorial | Instructional, imperative voice |
+| 8 | Industry report / research | Data-heavy, citations, acronyms |
+
+### Adversarial-but-Realistic (2)
+
+| # | Bucket | Key Stressors |
+|---|--------|---------------|
+| 9 | Messy ASR | Disfluencies, filler words, poor diarization |
+| 10 | Q&A-heavy | Short answers, audience questions, speaker ping-pong |
+
+### Stressor Tracking Template
+
+For each transcript, record:
+
+| Field | Description |
+|-------|-------------|
+| **Category** | Which bucket (1-10) |
+| **CTA density** | Low / Medium / High |
+| **Acronym density** | Low / Medium / High |
+| **# Speakers** | Count |
+| **Q&A %** | Estimated % of content that's Q&A |
+| **ASR quality** | Clean / Some noise / Messy |
 
 ## Reading the Results
 
