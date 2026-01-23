@@ -1,12 +1,23 @@
-# Ingesting Public Transcripts
+# Ingesting Transcripts for Evaluation
 
-How to convert YouTube/podcast transcripts into draft .md files for the quality harness.
+How to convert transcripts into draft .md files for the quality harness.
+
+## Important: Use Only Permitted Sources
+
+Only use transcripts you have permission to use for internal evaluation:
+
+1. **Customer-provided transcripts** — with permission for internal testing
+2. **Your own company's webinars** — internal content you control
+3. **Publicly licensed content** — CC-BY or similar explicit license
+4. **Explicit permission** — written consent from content owner
+
+Do NOT use unofficial transcript scraping tools or content without clear permission.
 
 ## Overview
 
 The batch evaluator expects **draft files** (markdown with `## Chapter N:` structure), not raw transcripts. For calibration purposes, we need to:
 
-1. Get raw transcript from source
+1. Obtain transcript from a permitted source
 2. Convert to draft format (or run through the actual pipeline)
 3. Place in `corpora/private/`
 
@@ -29,13 +40,11 @@ If you just want to test the harness on existing prose:
 
 ### Step 1: Get Raw Transcript
 
-**YouTube:**
-- Use browser extension (e.g., "YouTube Transcript")
-- Or: YouTube → ... → Show Transcript → Copy
-
-**Podcast:**
-- Check show notes for transcript
-- Or: Use Whisper/other ASR
+**Permitted sources:**
+- Customer-provided transcripts (with permission)
+- Your company's own webinar recordings
+- Content with explicit CC-BY or similar license
+- Platform-provided transcripts where ToS permits internal use
 
 ### Step 2: Convert to Draft Format
 

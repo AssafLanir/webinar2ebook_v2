@@ -28,36 +28,35 @@ DYNAMIC_NAME_POLICY_ENABLED=true python scripts/batch_eval.py \
 
 ### On-Distribution: B2B Marketing Webinars (8)
 
-| # | Bucket | Key Stressors |
-|---|--------|---------------|
-| 1 | Product launch / feature announcement | High CTA density, product names |
-| 2 | Thought leadership / trends | Abstract concepts, industry jargon |
-| 3 | Customer success / case study | Company names, metrics, testimonials |
-| 4 | Demo / walkthrough | Technical terms, step-by-step narration |
-| 5 | Panel discussion | 3+ speakers, cross-talk, interruptions |
-| 6 | Expert interview | 2 speakers, long monologues |
-| 7 | How-to / tutorial | Instructional, imperative voice |
-| 8 | Industry report / research | Data-heavy, citations, acronyms |
+| # | Bucket | Gate Stress Points |
+|---|--------|-------------------|
+| 1 | Demo / walkthrough | Product names, technical terms, step-by-step narration |
+| 2 | Customer case study | Customer + vendor names, metrics, testimonials |
+| 3 | Partner co-webinar | Two company names, cross-promotion, shared CTAs |
+| 4 | Technical marketing | Acronym soup (DevOps/Security/Data/AI), product names |
+| 5 | Compliance / trust | SOC2, HIPAA, GDPR, ISO mentions, regulatory language |
+| 6 | Thought leadership / POV | Exec narrative, abstract concepts, speaker framing |
+| 7 | ROI / pricing / business case | Numbers, metrics, value framing, competitor mentions |
+| 8 | CTA-heavy lead gen | Book demo, next steps, links, promotional language |
 
 ### Adversarial-but-Realistic (2)
 
-| # | Bucket | Key Stressors |
-|---|--------|---------------|
-| 9 | Messy ASR | Disfluencies, filler words, poor diarization |
-| 10 | Q&A-heavy | Short answers, audience questions, speaker ping-pong |
+| # | Bucket | Gate Stress Points |
+|---|--------|-------------------|
+| 9 | Messy ASR / diarization | Disfluencies, filler words, speaker overlap, poor segmentation |
+| 10 | Q&A-heavy ending | Short answers, audience questions, speaker ping-pong |
 
-### Stressor Tracking Template
+### Stressor Tracking (maps to quality gates)
 
-For each transcript, record:
+For each transcript, record these fields that correlate with gate behavior:
 
-| Field | Description |
-|-------|-------------|
-| **Category** | Which bucket (1-10) |
-| **CTA density** | Low / Medium / High |
-| **Acronym density** | Low / Medium / High |
-| **# Speakers** | Count |
-| **Q&A %** | Estimated % of content that's Q&A |
-| **ASR quality** | Clean / Some noise / Messy |
+| Field | Values | Relevant Gate |
+|-------|--------|---------------|
+| **cta_density** | Low / Med / High | Meta-discourse, CTA removal |
+| **acronym_density** | Low / Med / High | Entity allowlist |
+| **speaker_count** | 1 / 2 / 3+ | Person blacklist, speaker framing |
+| **qna_ratio** | Low / Med / High | Prose thinness, fallback usage |
+| **entity_load** | Low / Med / High | Entity allowlist (brands/products per minute) |
 
 ## Reading the Results
 
