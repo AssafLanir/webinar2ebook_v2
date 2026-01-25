@@ -77,6 +77,7 @@ export const STYLE_PRESETS: StylePreset[] = [
         perspective: "you",
         reading_level: "standard",
         book_format: "guide",
+        content_mode: "essay",
         chapter_count_target: 8,
         chapter_length_target: "medium",
         total_length_preset: "standard",
@@ -112,6 +113,7 @@ export const STYLE_PRESETS: StylePreset[] = [
       preset_id: "saas_marketing_ebook_v1",
       style: {
         book_format: "ebook_marketing",
+        content_mode: "essay",
         primary_goal: "persuade",
         reader_role: "marketer",
         target_audience: "mixed",
@@ -148,6 +150,7 @@ export const STYLE_PRESETS: StylePreset[] = [
       preset_id: "training_tutorial_handbook_v1",
       style: {
         book_format: "tutorial",
+        content_mode: "essay",
         primary_goal: "teach",
         reader_role: "educator",
         target_audience: "beginners",
@@ -184,6 +187,7 @@ export const STYLE_PRESETS: StylePreset[] = [
       preset_id: "executive_brief_v1",
       style: {
         book_format: "executive_brief",
+        content_mode: "essay",
         primary_goal: "inform",
         reader_role: "founder",
         target_audience: "intermediate",
@@ -223,6 +227,7 @@ export const STYLE_PRESETS: StylePreset[] = [
       preset_id: "course_notes_v1",
       style: {
         book_format: "course_notes",
+        content_mode: "essay",
         primary_goal: "teach",
         reader_role: "general",
         target_audience: "mixed",
@@ -261,6 +266,7 @@ export const STYLE_PRESETS: StylePreset[] = [
       preset_id: "interview_qa_v1",
       style: {
         book_format: "interview_qa",
+        content_mode: "interview",
         primary_goal: "inform",
         reader_role: "general",
         target_audience: "mixed",
