@@ -34,3 +34,7 @@ env/
 
 # Worktrees
 .worktrees/
+
+# Private corpus (real transcripts - never commit)
+corpora_private/
+backend/corpora_private/

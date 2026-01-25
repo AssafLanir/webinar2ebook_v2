@@ -5,12 +5,32 @@ Validates that:
 2. Core Claims have supporting quotes that exist in the transcript
 
 This catches "invented quotes" and ensures output is grounded in source material.
+
+Feature Flag:
+    GROUNDEDNESS_ENABLED: Set to "true" to enable groundedness checking in production.
+                          Default: "false" (disabled in production, tests run regardless)
 """
 
+import logging
+import os
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+# Feature flag: OFF by default in production
+GROUNDEDNESS_ENABLED = os.environ.get("GROUNDEDNESS_ENABLED", "false").lower() == "true"
+
+
+def is_groundedness_enabled() -> bool:
+    """Check if groundedness checking is enabled.
+
+    Returns True if GROUNDEDNESS_ENABLED env var is "true".
+    Tests bypass this check and run regardless.
+    """
+    return GROUNDEDNESS_ENABLED
 
 
 # =============================================================================
@@ -404,3 +424,339 @@ def check_groundedness(
         claim_support=claim_result,
         overall_verdict=overall,
     )
+
+
+# =============================================================================
+# Snap-to-Transcript Repair
+# =============================================================================
+
+
+@dataclass
+class TranscriptSpan:
+    """A span of text from the transcript."""
+    text: str
+    start: int
+    end: int
+    score: float
+
+
+@dataclass
+class ClaimRepairResult:
+    """Result of repairing Core Claims evidence."""
+    claims_total: int = 0
+    claims_repaired: int = 0
+    claims_dropped: int = 0
+    claims_unchanged: int = 0
+    repaired_markdown: str = ""
+    repair_details: list = field(default_factory=list)
+    drop_details: list = field(default_factory=list)
+
+
+def find_best_transcript_span(
+    evidence: str,
+    transcript: str,
+    fuzzy_threshold: float = 0.85,
+    max_span_words: int = 40,
+) -> Optional[TranscriptSpan]:
+    """Find the best matching transcript span for an evidence quote.
+
+    Uses sliding window search to find the transcript substring that
+    best matches the evidence, then extracts it verbatim.
+
+    Args:
+        evidence: The evidence string to match
+        transcript: Source transcript text
+        fuzzy_threshold: Minimum similarity score to consider a match
+        max_span_words: Maximum words to include in returned span
+
+    Returns:
+        TranscriptSpan with verbatim text, or None if no good match
+    """
+    evidence_normalized = normalize_for_matching(evidence)
+    transcript_normalized = normalize_for_matching(transcript)
+
+    # Fast path: exact match
+    if evidence_normalized in transcript_normalized:
+        start = transcript_normalized.find(evidence_normalized)
+        # Map back to original transcript (approximate)
+        # Find the corresponding position in original text
+        original_start = _map_normalized_to_original(transcript, transcript_normalized, start)
+        original_end = _map_normalized_to_original(
+            transcript, transcript_normalized, start + len(evidence_normalized)
+        )
+        return TranscriptSpan(
+            text=transcript[original_start:original_end].strip(),
+            start=original_start,
+            end=original_end,
+            score=1.0,
+        )
+
+    # Sliding window fuzzy match
+    window_size = len(evidence_normalized) + 50
+    best_score = 0.0
+    best_start = None
+    best_end = None
+
+    step = max(1, len(transcript_normalized) // 200)  # Finer granularity for repair
+
+    for i in range(0, max(1, len(transcript_normalized) - window_size), step):
+        window = transcript_normalized[i:i + window_size]
+        ratio = SequenceMatcher(None, evidence_normalized, window).ratio()
+        if ratio > best_score:
+            best_score = ratio
+            best_start = i
+            best_end = i + window_size
+
+    if best_score >= fuzzy_threshold and best_start is not None:
+        # Map back to original and extract verbatim
+        original_start = _map_normalized_to_original(transcript, transcript_normalized, best_start)
+        original_end = _map_normalized_to_original(transcript, transcript_normalized, best_end)
+
+        # Trim to sentence boundaries if possible
+        span_text = transcript[original_start:original_end].strip()
+        span_text = _trim_to_sentence_boundary(span_text, max_words=max_span_words)
+
+        return TranscriptSpan(
+            text=span_text,
+            start=original_start,
+            end=original_end,
+            score=best_score,
+        )
+
+    return None
+
+
+def _map_normalized_to_original(original: str, normalized: str, norm_pos: int) -> int:
+    """Map a position in normalized text back to original text.
+
+    Uses a simple word-counting approach: count words in normalized up to
+    norm_pos, then find that many words in original.
+    """
+    # Count how many complete words are before norm_pos in normalized
+    norm_before = normalized[:norm_pos]
+    word_count = len(norm_before.split())
+
+    # Find that many words in original
+    words_found = 0
+    for i, char in enumerate(original):
+        if char.isspace() and i > 0 and not original[i-1].isspace():
+            words_found += 1
+            if words_found >= word_count:
+                return i
+
+    return len(original)
+
+
+def _trim_to_sentence_boundary(text: str, max_words: int = 40) -> str:
+    """Trim text to end at a sentence boundary, respecting max words."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+
+    # Take first max_words and try to end at sentence boundary
+    truncated = ' '.join(words[:max_words])
+
+    # Find last sentence-ending punctuation
+    for end_char in ['.', '!', '?']:
+        last_end = truncated.rfind(end_char)
+        if last_end > len(truncated) // 2:  # Must be past halfway
+            return truncated[:last_end + 1]
+
+    # No good boundary, just return truncated
+    return truncated
+
+
+def repair_core_claims_evidence(
+    markdown: str,
+    transcript: str,
+    fuzzy_threshold: float = 0.85,
+    min_claims_per_chapter: int = 2,
+) -> ClaimRepairResult:
+    """Repair Core Claims evidence by snapping to transcript.
+
+    For each Core Claim with evidence:
+    1. Find best transcript span matching the evidence
+    2. If score >= threshold: replace evidence with exact transcript text
+    3. If score < threshold: drop the claim
+
+    Args:
+        markdown: Draft markdown with Core Claims sections
+        transcript: Source transcript
+        fuzzy_threshold: Minimum score to repair (default 0.85)
+        min_claims_per_chapter: Minimum claims to keep per chapter
+
+    Returns:
+        ClaimRepairResult with repaired markdown and details
+    """
+    result = ClaimRepairResult()
+    repaired_md = markdown
+
+    # Find all Core Claims sections and their claims
+    sections = re.split(r'(^### Core Claims.*?)(?=^### |\Z)', markdown, flags=re.MULTILINE | re.DOTALL)
+
+    claims_processed = []
+
+    for i, section in enumerate(sections):
+        if not section.strip().startswith('### Core Claims'):
+            continue
+
+        # Find all claims in this section
+        claim_pattern = r'(-\s*\*\*(.+?)\*\*:\s*)(["""](.+?)[""])'
+        matches = list(re.finditer(claim_pattern, section))
+
+        result.claims_total += len(matches)
+
+        for match in matches:
+            full_match = match.group(0)
+            claim_prefix = match.group(1)  # "- **Claim title**: "
+            claim_title = match.group(2)
+            quote_with_quotes = match.group(3)  # '"evidence"'
+            evidence = match.group(4)  # 'evidence' (without quotes)
+
+            # Find best transcript span
+            span = find_best_transcript_span(evidence, transcript, fuzzy_threshold)
+
+            if span:
+                if span.score == 1.0:
+                    # Exact match, no repair needed
+                    result.claims_unchanged += 1
+                else:
+                    # Repair: replace evidence with transcript span
+                    new_claim = f'{claim_prefix}"{span.text}"'
+                    repaired_md = repaired_md.replace(full_match, new_claim, 1)
+                    result.claims_repaired += 1
+                    result.repair_details.append({
+                        'claim': claim_title[:50],
+                        'original': evidence[:60],
+                        'repaired': span.text[:60],
+                        'score': span.score,
+                    })
+            else:
+                # No match found - drop the claim
+                # Remove the entire bullet line
+                repaired_md = repaired_md.replace(full_match + '\n', '', 1)
+                if full_match in repaired_md:  # Fallback if no newline
+                    repaired_md = repaired_md.replace(full_match, '', 1)
+                result.claims_dropped += 1
+                result.drop_details.append({
+                    'claim': claim_title[:50],
+                    'evidence': evidence[:60],
+                    'reason': 'no_transcript_match',
+                })
+
+    result.repaired_markdown = repaired_md
+    return result
+
+
+def check_and_repair_groundedness(
+    markdown: str,
+    transcript: str,
+    fuzzy_threshold: float = 0.85,
+    min_claims_per_chapter: int = 2,
+) -> tuple[GroundednessReport, ClaimRepairResult, str]:
+    """Check groundedness and repair Core Claims evidence.
+
+    Policy:
+    - Key Excerpts: Hard FAIL if any missing (no repair)
+    - Core Claims: Attempt repair via snap-to-transcript
+      - If repaired: PASS
+      - If dropped but enough claims remain: WARN
+      - If too many dropped: FAIL
+
+    Args:
+        markdown: Draft markdown
+        transcript: Source transcript
+        fuzzy_threshold: Minimum score for repair
+        min_claims_per_chapter: Minimum claims after repair
+
+    Returns:
+        Tuple of (GroundednessReport, ClaimRepairResult, repaired_markdown)
+    """
+    # First check excerpts (hard gate, no repair)
+    excerpt_result = check_excerpt_provenance(markdown, transcript, strict=True)
+
+    # Then repair claims
+    repair_result = repair_core_claims_evidence(
+        markdown, transcript, fuzzy_threshold, min_claims_per_chapter
+    )
+
+    # Re-check claims after repair
+    claim_result = check_claim_support(
+        repair_result.repaired_markdown, transcript, strict=True
+    )
+
+    # Determine verdict
+    if excerpt_result.verdict == "FAIL":
+        overall = "FAIL"
+    elif repair_result.claims_dropped > 0 and claim_result.verdict == "FAIL":
+        overall = "FAIL"
+    elif repair_result.claims_dropped > 0:
+        overall = "WARN"  # Some claims dropped but enough remain
+    else:
+        overall = "PASS"
+
+    report = GroundednessReport(
+        excerpt_provenance=excerpt_result,
+        claim_support=claim_result,
+        overall_verdict=overall,
+    )
+
+    # Emit metrics for observability
+    _log_groundedness_metrics(report, repair_result)
+
+    return report, repair_result, repair_result.repaired_markdown
+
+
+def _log_groundedness_metrics(
+    report: GroundednessReport,
+    repair_result: ClaimRepairResult,
+) -> None:
+    """Log groundedness metrics for observability.
+
+    Emits structured log entries for:
+    - Excerpt provenance rate
+    - Claim repair/drop counts
+    - Overall verdict
+    """
+    ep = report.excerpt_provenance
+    cs = report.claim_support
+
+    # Log summary metrics
+    logger.info(
+        "groundedness_check_complete",
+        extra={
+            "verdict": report.overall_verdict,
+            "excerpts_total": ep.excerpts_total,
+            "excerpts_found": ep.excerpts_found,
+            "excerpts_missing": ep.excerpts_not_found,
+            "excerpt_provenance_rate": ep.provenance_rate,
+            "claims_total": repair_result.claims_total,
+            "claims_unchanged": repair_result.claims_unchanged,
+            "claims_repaired": repair_result.claims_repaired,
+            "claims_dropped": repair_result.claims_dropped,
+            "claim_provenance_rate": cs.evidence_provenance_rate,
+        }
+    )
+
+    # Log individual drops for debugging
+    if repair_result.claims_dropped > 0:
+        for drop in repair_result.drop_details:
+            logger.warning(
+                "groundedness_claim_dropped",
+                extra={
+                    "claim": drop.get("claim"),
+                    "evidence_sample": drop.get("evidence", "")[:40],
+                    "reason": drop.get("reason"),
+                }
+            )
+
+    # Log repairs for debugging
+    if repair_result.claims_repaired > 0:
+        for repair in repair_result.repair_details:
+            logger.info(
+                "groundedness_claim_repaired",
+                extra={
+                    "claim": repair.get("claim"),
+                    "score": repair.get("score"),
+                }
+            )

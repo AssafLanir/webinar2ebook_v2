@@ -1146,6 +1146,12 @@ CRITICAL: Every supporting quote MUST be wrapped in quotation marks.
 WRONG: - **Claim**: the thing is, humans can decide...
 RIGHT: - **Claim**: "The thing is, humans can decide..."
 
+VERBATIM EVIDENCE RULE (CRITICAL):
+- Evidence quotes MUST be copied VERBATIM from the transcript (8–25 words)
+- NEVER paraphrase, summarize, or rephrase evidence
+- If you cannot find an exact verbatim quote to support a claim, OMIT the claim entirely
+- The groundedness checker will REJECT paraphrased evidence
+
 ---
 
 EVIDENCE DENSITY REQUIREMENTS:
@@ -1160,7 +1166,7 @@ STRICT CONTENT RULES:
 - NEVER add poetic embellishments ("as if nature mocked humanity", "vigilant stewards")
 - NEVER add biographical details not in the transcript ("noted physicist", "renowned philosopher")
 - If the transcript doesn't say it, you cannot say it
-- Key Excerpts must be EXACT verbatim quotes - no paraphrasing, no ellipsis
+- Key Excerpts must be EXACT verbatim quotes copied from transcript - no paraphrasing, no ellipsis, no word substitutions (groundedness checker will REJECT non-verbatim excerpts)
 
 SYNTHESIS GUIDELINES:
 - Present the speaker's main argument clearly using their words
