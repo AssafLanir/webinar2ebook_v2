@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
@@ -85,6 +86,24 @@ async def validation_error_handler(request: Request, exc: ValidationError) -> JS
     return JSONResponse(
         status_code=400,
         content=error_response("VALIDATION_ERROR", exc.message),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Handle FastAPI/Pydantic request validation errors."""
+    errors = exc.errors()
+    if errors:
+        # Extract user-friendly message from first error
+        first_error = errors[0]
+        field = ".".join(str(loc) for loc in first_error.get("loc", []))
+        msg = first_error.get("msg", "Validation error")
+        message = f"{field}: {msg}" if field else msg
+    else:
+        message = "Request validation error"
+    return JSONResponse(
+        status_code=422,
+        content=error_response("VALIDATION_ERROR", message),
     )
 
 

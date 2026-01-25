@@ -66,8 +66,8 @@ class TestCleanTranscriptEndpoint:
 
     def test_clean_transcript_too_long(self):
         """Test that transcript exceeding max length returns validation error."""
-        # Create a transcript that exceeds 50,000 characters
-        long_transcript = "a" * 50001
+        # Create a transcript that exceeds 500,000 characters
+        long_transcript = "a" * 500001
 
         response = client.post(
             "/api/ai/clean-transcript",
@@ -93,8 +93,8 @@ class TestCleanTranscriptEndpoint:
             mock_client.generate = AsyncMock(return_value=mock_response)
             mock_client_class.return_value = mock_client
 
-            # Create transcript at exactly 50,000 characters
-            max_transcript = "a" * 50000
+            # Create transcript at exactly 500,000 characters
+            max_transcript = "a" * 500000
 
             response = client.post(
                 "/api/ai/clean-transcript",
@@ -229,7 +229,7 @@ class TestSuggestOutlineEndpoint:
 
     def test_suggest_outline_too_long(self):
         """Test that transcript exceeding max length returns validation error."""
-        long_transcript = "a" * 50001
+        long_transcript = "a" * 500001
 
         response = client.post(
             "/api/ai/suggest-outline",
@@ -371,7 +371,7 @@ class TestSuggestResourcesEndpoint:
 
     def test_suggest_resources_too_long(self):
         """Test that transcript exceeding max length returns validation error."""
-        long_transcript = "a" * 50001
+        long_transcript = "a" * 500001
 
         response = client.post(
             "/api/ai/suggest-resources",
