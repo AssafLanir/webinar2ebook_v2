@@ -38,6 +38,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -60,10 +61,27 @@ MIN_WORDS = 1200
 MIN_TIMESTAMP_LINES = 25
 MIN_SPEAKER_TURNS = 40
 
+# HTTP settings
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+MAX_RETRIES = 3
+RETRY_BACKOFF = [1, 3, 10]  # seconds
+
 # Regex patterns for normalization
 TS_BRACKET = re.compile(r"^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$")
 TS_SPEAKER = re.compile(r"^(\d{2}:\d{2}:\d{2})\s+(.+?):\s*(.+)$")
 SPEAKER_ONLY = re.compile(r"^([A-Z][\w\s.\-']{1,60}):\s*(.+)$")
+
+# Cloudsmith-style: "1. 00:00:00" on its own line, followed by "Name: text"
+CLOUDSMITH_TS = re.compile(r"^\s*\d+\.\s+(\d{1,2}:\d{2}:\d{2})\s*$")
+
+# "Speaker 1:", "Speaker 2:", etc. (Aerospike style)
+SPEAKER_N = re.compile(r"^(Speaker\s+\d+):\s*(.*)$", re.I)
+
+# "Speaking: Name" pattern (MarkMonitor style)
+SPEAKING_PATTERN = re.compile(r"^Speaking:\s*(.+)$", re.I)
 
 
 # =============================================================================
@@ -94,21 +112,57 @@ def sha256_file(path: Path) -> str:
 def fetch_url(url: str, format_type: str) -> tuple[Optional[str], Optional[bytes]]:
     """Fetch URL content, returning (text, None) or (None, bytes) based on format.
 
-    Fixes: PDF URLs must be fetched as bytes, not decoded as UTF-8.
+    Features:
+    - Browser-like User-Agent to avoid bot blocking (403s)
+    - Retry with exponential backoff for rate limits (429)
+    - Binary handling for PDFs
     """
     import urllib.request
+    import urllib.error
 
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "webinar2ebook-corpus-ingest/1.0"}
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = resp.read()
+    headers = {
+        "User-Agent": BROWSER_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
 
-    if format_type.lower() in BINARY_FORMATS:
-        return None, data
-    else:
-        return data.decode("utf-8", errors="replace"), None
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read()
+
+            if format_type.lower() in BINARY_FORMATS:
+                return None, data
+            else:
+                return data.decode("utf-8", errors="replace"), None
+
+        except urllib.error.HTTPError as e:
+            last_error = e
+            if e.code == 429:
+                # Rate limited - retry with backoff
+                wait_time = RETRY_BACKOFF[min(attempt, len(RETRY_BACKOFF) - 1)]
+                print(f"  Rate limited (429), waiting {wait_time}s before retry {attempt + 1}/{MAX_RETRIES}...",
+                      file=sys.stderr)
+                time.sleep(wait_time)
+                continue
+            elif e.code == 403:
+                # Forbidden - might be Cloudflare, no point retrying
+                raise
+            else:
+                raise
+        except urllib.error.URLError as e:
+            last_error = e
+            # Network error - retry with backoff
+            wait_time = RETRY_BACKOFF[min(attempt, len(RETRY_BACKOFF) - 1)]
+            print(f"  Network error, waiting {wait_time}s before retry {attempt + 1}/{MAX_RETRIES}...",
+                  file=sys.stderr)
+            time.sleep(wait_time)
+            continue
+
+    # All retries exhausted
+    raise last_error
 
 
 # =============================================================================
@@ -143,16 +197,30 @@ def extract_text_html(html_content: str) -> str:
             "[class*='event-transcript']",
         ]
 
+        # Find container with actual transcript content (not empty elements)
         container = None
+        min_content_length = 500  # Minimum chars to consider a valid transcript container
+
         for selector in transcript_selectors:
-            found = soup.select_one(selector)
-            if found:
-                container = found
+            for found in soup.select(selector):  # select() returns all matches
+                text = found.get_text(strip=True)
+                if len(text) >= min_content_length:
+                    container = found
+                    break
+            if container:
                 break
 
         # Fallback to article or main
         if not container:
-            container = soup.find("article") or soup.find("main") or soup.body or soup
+            for fallback in [soup.find("article"), soup.find("main"), soup.body, soup]:
+                if fallback:
+                    text = fallback.get_text(strip=True)
+                    if len(text) >= min_content_length:
+                        container = fallback
+                        break
+
+        if not container:
+            container = soup.body or soup
 
         # Get text
         text = container.get_text(separator="\n") if container else ""
@@ -306,12 +374,37 @@ def normalize_transcript(extracted: str) -> str:
     - "[HH:MM:SS] text" → adds "Speaker Unknown:" if no speaker
     - "HH:MM:SS Speaker: text" → converts to bracket format
     - "Speaker: text" → adds placeholder [00:00:00] timestamp
+    - Cloudsmith-style: "1. 00:00:00" on own line, next line is "Name: text"
+    - "Speaker 1:" / "Speaker 2:" patterns (Aerospike)
+    - "Speaking: Name" patterns (MarkMonitor)
     """
     norm = []
+    lines = extracted.replace("\r\n", "\n").split("\n")
+    pending_timestamp = None  # For Cloudsmith-style multi-line
+    current_speaker = None  # Track speaker from "Speaking: Name" lines
 
-    for raw in extracted.replace("\r\n", "\n").split("\n"):
-        line = raw.strip()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        i += 1
+
         if not line:
+            continue
+
+        # Cloudsmith-style: "1. 00:00:00" on its own line
+        m = CLOUDSMITH_TS.match(line)
+        if m:
+            ts = m.group(1)
+            # Normalize to HH:MM:SS (add leading zero if needed)
+            parts = ts.split(":")
+            if len(parts) == 3:
+                pending_timestamp = f"{int(parts[0]):02d}:{parts[1]}:{parts[2]}"
+            continue
+
+        # "Speaking: Name" pattern (MarkMonitor) - sets current speaker for following lines
+        m = SPEAKING_PATTERN.match(line)
+        if m:
+            current_speaker = m.group(1).strip()
             continue
 
         # Pattern: "00:00:00 Speaker: text" (no brackets, common in HTML transcripts)
@@ -319,6 +412,7 @@ def normalize_transcript(extracted: str) -> str:
         if m:
             t, spk, txt = m.group(1), m.group(2).strip(), m.group(3).strip()
             norm.append(f"[{t}] {spk}: {txt}")
+            pending_timestamp = None
             continue
 
         # Pattern: "[00:00:00] text" or "[00:00:00] Speaker: text" (SRT/VTT extracted)
@@ -326,22 +420,48 @@ def normalize_transcript(extracted: str) -> str:
         if m:
             t, rest = m.group(1), m.group(2).strip()
             if SPEAKER_ONLY.match(rest):
-                # Already has speaker label
                 norm.append(f"[{t}] {rest}")
             else:
-                # No speaker, add placeholder
                 norm.append(f"[{t}] Speaker Unknown: {rest}")
+            pending_timestamp = None
+            continue
+
+        # "Speaker 1:", "Speaker 2:" pattern (Aerospike style)
+        m = SPEAKER_N.match(line)
+        if m:
+            spk, txt = m.group(1), m.group(2).strip()
+            ts = pending_timestamp or "00:00:00"
+            if txt:
+                norm.append(f"[{ts}] {spk}: {txt}")
+            else:
+                # Speaker label only, text on next line(s)
+                current_speaker = spk
+            pending_timestamp = None
             continue
 
         # Pattern: "Speaker: text" (no timestamp, common in cleaned transcripts)
         m = SPEAKER_ONLY.match(line)
         if m:
             spk, txt = m.group(1).strip(), m.group(2).strip()
-            norm.append(f"[00:00:00] {spk}: {txt}")
+            ts = pending_timestamp or "00:00:00"
+            norm.append(f"[{ts}] {spk}: {txt}")
+            pending_timestamp = None
+            current_speaker = None
+            continue
+
+        # If we have a pending timestamp or current speaker, apply to this line
+        if pending_timestamp and current_speaker:
+            norm.append(f"[{pending_timestamp}] {current_speaker}: {line}")
+            pending_timestamp = None
+            continue
+        elif current_speaker and line and not line.startswith(("#", "-", "*")):
+            # Continuation of current speaker's text (MarkMonitor style)
+            norm.append(f"[00:00:00] {current_speaker}: {line}")
             continue
 
         # Plain text line (keep as-is, may be prose intro or headers)
         norm.append(line)
+        pending_timestamp = None
 
     return "\n".join(norm)
 
