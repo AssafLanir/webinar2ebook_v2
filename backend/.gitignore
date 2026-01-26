@@ -49,3 +49,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Corpus runner output
+corpus_output/
+corpus_cache/

@@ -464,6 +464,86 @@ backend/
 - Default: only process Type1 transcripts (the baseline evaluation target)
 - Override: `--types Type1,Type2` or `--types Type1,Type2,Adversarial`
 
+## Usage
+
+### Canonical Commands
+
+**Two-transcript smoke test (recommended for development):**
+```bash
+cd backend
+python scripts/run_corpus.py \
+  --corpus corpora/index.jsonl \
+  --out corpus_output/smoke \
+  --only T0002_hracuity_kpi,T0010_aerospike_phonepe \
+  --content-mode essay \
+  --require-preflight
+```
+
+**Full Type1 corpus run:**
+```bash
+python scripts/run_corpus.py \
+  --corpus corpora/index.jsonl \
+  --out corpus_output/baseline \
+  --content-mode essay \
+  --require-preflight
+```
+
+**HTTP backend (requires running server):**
+```bash
+python scripts/run_corpus.py \
+  --corpus corpora/index.jsonl \
+  --backend http \
+  --base-url http://localhost:8000/api \
+  --out corpus_output/http_run
+```
+
+**CI mode (exits non-zero if gate fails):**
+```bash
+python scripts/run_corpus.py \
+  --corpus corpora/index.jsonl \
+  --out corpus_output/ci \
+  --ci
+```
+
+### Cache Usage
+
+Drafts are cached in `corpus_cache/` by default:
+- Cache key: `{transcript_hash}_{content_mode}_c{candidate_count}_{config_hash}`
+- Validators always re-run (not cached)
+
+**Force regeneration (ignore cache):**
+```bash
+python scripts/run_corpus.py --corpus corpora/index.jsonl --regen
+```
+
+**Disable caching entirely:**
+```bash
+python scripts/run_corpus.py --corpus corpora/index.jsonl --cache off
+```
+
+### Expected Behavior Without LLM Providers
+
+When running without configured LLM providers (e.g., no `OPENAI_API_KEY`), the runner will:
+1. Attempt generation
+2. Fail with clear error: `"No providers available"` / `"PREFLIGHT GATE BLOCKED"`
+3. Write `request.json` and `gate_row.json` with `verdict=FAIL`
+4. Continue to next transcript
+
+This is **expected behavior** in CI environments. The 61 unit tests run without providers and verify all validator/reporter logic.
+
+### Adding a New Transcript
+
+1. Add transcript file to `corpora_private/{id}/normalized.txt`
+2. Add entry to `corpora/index.jsonl`:
+   ```json
+   {"id": "T0013_new_transcript", "classification": "Type1", "source": "..."}
+   ```
+3. Run smoke test on new transcript:
+   ```bash
+   python scripts/run_corpus.py --corpus corpora/index.jsonl --only T0013_new_transcript
+   ```
+4. Review output in `corpus_output/T0013_new_transcript/`
+
 ---
 
 *This design is scoped for baseline establishment. Histograms, failure bins, and production integration are deferred until baseline results inform priorities.*

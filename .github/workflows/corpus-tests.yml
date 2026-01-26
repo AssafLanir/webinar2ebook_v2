@@ -1,0 +1,41 @@
+name: Corpus Runner Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/src/corpus/**'
+      - 'backend/tests/unit/test_corpus_*.py'
+      - 'backend/scripts/run_corpus.py'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/src/corpus/**'
+      - 'backend/tests/unit/test_corpus_*.py'
+      - 'backend/scripts/run_corpus.py'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e .[dev]
+
+      - name: Run corpus tests
+        run: |
+          python -m pytest tests/unit/test_corpus_*.py -v --tb=short
