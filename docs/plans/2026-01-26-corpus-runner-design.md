@@ -352,6 +352,11 @@ python -m corpus.runner \
 | `--only` | None | Comma-separated transcript IDs to include |
 | `--skip` | None | Comma-separated transcript IDs to exclude |
 | `--timeout` | `600` | Per-transcript timeout in seconds |
+| `--types` | `Type1` | Transcript types to include (e.g., `Type1,Type2`) |
+| `--workers` | `1` | Parallel workers (1 = sequential) |
+| `--cache` | `drafts` | Cache mode: `drafts` or `off` |
+| `--regen` | `False` | Force regeneration (ignore cache) |
+| `--outline-mode` | `default` | `default` (3-chapter) or `corpus` (from metadata) |
 
 ## Default Outline
 
@@ -381,11 +386,16 @@ backend/
 │       ├── runner.py         # Main corpus runner logic
 │       ├── thresholds.py     # Centralized threshold definitions
 │       ├── validators.py     # Structure + yield validators
-│       └── reporters.py      # Report generation
+│       ├── reporters.py      # Report generation
+│       └── cache.py          # Draft caching logic
 ├── scripts/
 │   └── run_corpus.py         # CLI entrypoint (thin wrapper)
-└── corpora/
-    └── index.jsonl           # Corpus manifest
+├── corpora/
+│   └── index.jsonl           # Corpus manifest
+└── corpus_cache/             # Draft cache directory (gitignored)
+    └── {cache_key}/
+        ├── draft.md
+        └── draft_meta.json
 ```
 
 ## Acceptance Criteria
@@ -424,11 +434,35 @@ backend/
    - CI workflow for gate enforcement
    - Documentation
 
-## Open Questions
+## Resolved Decisions
 
-1. **Outline storage:** Should we allow per-transcript custom outlines in corpus metadata?
-2. **Parallel execution:** Run transcripts in parallel (faster) or sequential (simpler debugging)?
-3. **Caching:** Cache successful drafts to avoid re-generation on re-runs?
+### 1. Per-transcript custom outlines
+**Decision:** Optional, off-by-default.
+
+- v1 behavior: use `DEFAULT_OUTLINE` unless entry explicitly provides outline
+- Metadata shape: allow `outline: [...]` inline or `outline_path: "path/to/outline.json"`
+- CLI: `--outline-mode default|corpus` (default = deterministic 3-chapter)
+
+### 2. Parallel vs sequential execution
+**Decision:** Default sequential; bounded parallelism as optional flag.
+
+- Default: `--workers 1` for simpler debugging + deterministic logs
+- Optional: `--workers N` with semaphore-bounded concurrency
+- Rationale: generation can be rate-limited; parallel failures make debugging painful
+
+### 3. Draft caching
+**Decision:** Cache generation output only, always re-run validators.
+
+- Cache key: `normalized_sha256 + content_mode + candidate_count + config_hash`
+- On cache hit: reuse `draft.md` + `draft_meta.json`
+- Always re-run: structure/groundedness/yield/gate_row (validator logic evolves)
+- Flags: `--cache drafts|off` (default `drafts`), `--regen` to force regeneration
+
+### 4. Type filtering
+**Decision:** Filter Type1 by default.
+
+- Default: only process Type1 transcripts (the baseline evaluation target)
+- Override: `--types Type1,Type2` or `--types Type1,Type2,Adversarial`
 
 ---
 
