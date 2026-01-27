@@ -2,3 +2,6 @@
 report.json
 calibration_report.json
 *_report.json
+
+# Private corpus (real customer transcripts - never commit)
+private/

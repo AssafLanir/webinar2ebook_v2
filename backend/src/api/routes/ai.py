@@ -23,7 +23,7 @@ router = APIRouter(prefix="/ai", tags=["AI"])
 class CleanTranscriptRequest(BaseModel):
     """Request body for transcript cleanup."""
 
-    transcript: Annotated[str, Field(min_length=1, max_length=50000)]
+    transcript: Annotated[str, Field(min_length=1, max_length=500000)]
 
 
 class CleanTranscriptResponse(BaseModel):
@@ -35,7 +35,7 @@ class CleanTranscriptResponse(BaseModel):
 class SuggestOutlineRequest(BaseModel):
     """Request body for outline suggestion."""
 
-    transcript: Annotated[str, Field(min_length=1, max_length=50000)]
+    transcript: Annotated[str, Field(min_length=1, max_length=500000)]
 
 
 class SuggestedOutlineItemResponse(BaseModel):
@@ -55,7 +55,7 @@ class SuggestOutlineResponse(BaseModel):
 class SuggestResourcesRequest(BaseModel):
     """Request body for resources suggestion."""
 
-    transcript: Annotated[str, Field(min_length=1, max_length=50000)]
+    transcript: Annotated[str, Field(min_length=1, max_length=500000)]
 
 
 class SuggestedResourceResponse(BaseModel):

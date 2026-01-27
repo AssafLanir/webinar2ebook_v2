@@ -1,0 +1,54 @@
+# Transcript Metadata Template
+# Copy this file to corpora_private/T00XX_company_topic/meta.yaml
+
+# Unique identifier (format: T00XX_company_topic)
+id: "T0000_template"
+
+# Bucket category (1-10, see README.md for definitions)
+bucket: 0
+
+# Webinar metadata
+title: "Webinar Title Here"
+publisher: "Company Name"
+source_url: "https://example.com/webinar-transcript"
+
+# Capture info
+retrieved_at: "2026-01-25"  # ISO date when raw was captured
+raw_snapshot_present: true   # Confirms we have the original file
+
+# Format and classification
+format: "HTML"  # HTML, PDF, SRT, VTT, TXT
+classification: "Type1"  # Type1 (raw), Type2 (lightly edited), Adversarial
+
+# Access and licensing
+access_friction: "none"  # none, form-gated, login-required
+license_note: "no explicit reuse license found"
+
+# Processing notes
+ingest_notes:
+  - "Note any special handling required"
+  - "E.g., 'strip SRT timestamps for normalized.txt'"
+  - "E.g., 'keep timecodes in extracted.txt'"
+
+# Content hashes for reproducibility (SHA256)
+hashes:
+  raw_sha256: ""       # shasum -a 256 raw.*
+  extracted_sha256: "" # shasum -a 256 extracted.txt
+  normalized_sha256: "" # shasum -a 256 normalized.txt
+
+# Transcript statistics
+stats:
+  approx_words: 0       # wc -w normalized.txt
+  approx_minutes: 0     # Estimated runtime if known
+  speaker_count: 1      # Number of distinct speakers
+  has_qa_section: false # True if includes Q&A segment
+
+# Stressors present in this transcript (for test coverage tracking)
+stressors:
+  - "multi-speaker"     # Multiple speakers trading off
+  - "technical-jargon"  # Heavy domain terminology
+  - "cta-heavy"         # Promotional calls-to-action
+  - "qa-section"        # Audience Q&A segment
+  - "asr-errors"        # Transcription artifacts
+  - "timestamps"        # Inline timestamps present
+  - "overlapping-speech" # Speaker interruptions

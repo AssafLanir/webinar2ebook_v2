@@ -6676,11 +6676,25 @@ async def _generate_draft_task(
 
         # Extract content mode from style config
         style_dict = request.style_config.get("style", request.style_config) if isinstance(request.style_config, dict) else {}
-        content_mode_str = style_dict.get("content_mode", "interview")
-        try:
-            content_mode = ContentMode(content_mode_str)
-        except ValueError:
-            content_mode = ContentMode.interview
+        content_mode_str = style_dict.get("content_mode")
+        book_format = style_dict.get("book_format", "guide")
+
+        # Infer content_mode from book_format if not explicitly set (defensive)
+        if content_mode_str is None:
+            # interview_qa book_format → interview mode, everything else → essay mode
+            if book_format == "interview_qa":
+                content_mode = ContentMode.interview
+                logger.info(f"Job {job_id}: content_mode inferred as 'interview' from book_format='interview_qa'")
+            else:
+                content_mode = ContentMode.essay
+                logger.info(f"Job {job_id}: content_mode inferred as 'essay' from book_format='{book_format}'")
+        else:
+            try:
+                content_mode = ContentMode(content_mode_str)
+            except ValueError:
+                # Invalid content_mode value - infer from book_format instead of defaulting to interview
+                content_mode = ContentMode.interview if book_format == "interview_qa" else ContentMode.essay
+                logger.warning(f"Job {job_id}: Invalid content_mode '{content_mode_str}', inferred '{content_mode.value}' from book_format")
         strict_grounded = style_dict.get("strict_grounded", True)
 
         # Detect content type and generate warning if mismatch
@@ -7943,6 +7957,50 @@ async def _generate_draft_task(
                     # raise ValueError(f"Structural integrity check failed: {struct_report['violation_count']} violations")
             except Exception as e:
                 logger.error(f"Job {job_id}: Structural integrity check failed: {e}", exc_info=True)
+
+            # IDEAS EDITION OUTPUT CONTRACT VALIDATION
+            # Ensures Ideas Edition output has proper structure and no interview template leakage
+            try:
+                import re
+                has_chapters = bool(re.search(r'(?m)^## Chapter \d+:', final_markdown))
+                has_excerpts = '### Key Excerpts' in final_markdown
+                has_claims = '### Core Claims' in final_markdown
+                has_interview_leak = bool(re.search(r'(?m)^\*Interviewer:\*', final_markdown))
+                has_format_interview = '*Format:* Interview' in final_markdown
+                has_conversation_header = '### The Conversation' in final_markdown
+
+                contract_violations = []
+                if not has_chapters:
+                    contract_violations.append("Missing chapter structure (## Chapter N:)")
+                if not has_excerpts:
+                    contract_violations.append("Missing Key Excerpts sections")
+                if not has_claims:
+                    contract_violations.append("Missing Core Claims sections")
+                if has_interview_leak:
+                    contract_violations.append("Interview template leakage (*Interviewer:*)")
+                if has_format_interview:
+                    contract_violations.append("Interview format marker (*Format:* Interview)")
+                if has_conversation_header:
+                    contract_violations.append("Interview conversation header (### The Conversation)")
+
+                if contract_violations:
+                    logger.error(
+                        f"Job {job_id}: IDEAS EDITION OUTPUT CONTRACT VIOLATION - "
+                        f"{len(contract_violations)} issue(s) detected"
+                    )
+                    for violation in contract_violations:
+                        logger.error(f"  - {violation}")
+                        constraint_warnings.append(f"OUTPUT CONTRACT: {violation}")
+                    await update_job(job_id, constraint_warnings=constraint_warnings)
+                    # HARD FAIL: Ideas Edition output contract is a P0 invariant.
+                    # Shipping malformed output wastes user trust and review cycles.
+                    raise ValueError(
+                        f"Ideas Edition output contract violated: {'; '.join(contract_violations)}"
+                    )
+                else:
+                    logger.info(f"Job {job_id}: Ideas Edition output contract validated successfully")
+            except Exception as e:
+                logger.error(f"Job {job_id}: Output contract validation failed: {e}", exc_info=True)
 
         await update_job(
             job_id,

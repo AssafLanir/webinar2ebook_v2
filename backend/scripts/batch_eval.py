@@ -193,6 +193,9 @@ class BatchReport:
     # Top drop reasons across corpus
     top_drop_reasons: dict = field(default_factory=dict)
 
+    # Fallback usage histogram (diagnostic)
+    fallback_histogram: dict = field(default_factory=dict)
+
     # Per-transcript results (sorted by verdict)
     results: list = field(default_factory=list)
 
@@ -685,6 +688,20 @@ def run_batch_evaluation(
     report.top_drop_reasons = dict(all_drop_reasons.most_common(10))
     report.top_failure_causes = dict(all_failure_causes.most_common(5))
 
+    # Fallback usage histogram
+    fallback_bins = {"0%": 0, "1-10%": 0, "10-25%": 0, "25%+": 0}
+    for r in valid_results:
+        fb = r.fallback_ratio
+        if fb == 0:
+            fallback_bins["0%"] += 1
+        elif fb <= 0.10:
+            fallback_bins["1-10%"] += 1
+        elif fb <= 0.25:
+            fallback_bins["10-25%"] += 1
+        else:
+            fallback_bins["25%+"] += 1
+    report.fallback_histogram = fallback_bins
+
     # Overall verdict
     if report.fail_count > 0:
         report.overall_verdict = "FAIL"
@@ -749,6 +766,12 @@ def print_summary(report: BatchReport) -> None:
     print(f"  Avg drop ratio: {report.avg_drop_ratio:.1%}")
     print(f"  Avg fallback ratio: {report.avg_fallback_ratio:.1%}")
     print(f"  Avg prose words/chapter: {report.avg_prose_words_per_chapter:.0f}")
+
+    if report.fallback_histogram:
+        print(f"\n--- Fallback Usage Histogram ---")
+        for bucket, count in report.fallback_histogram.items():
+            bar = "█" * count
+            print(f"  {bucket:>6}: {count:>2} {bar}")
 
     print(f"\n--- Prose Distribution (for threshold tuning) ---")
     print(f"  P10 prose words/chapter: {report.p10_prose_words:.0f}")
